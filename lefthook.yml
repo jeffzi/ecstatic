@@ -1,0 +1,42 @@
+pre-commit:
+  commands:
+    check:
+      glob: "**/*.{ts,js,json}"
+      run: npx biome check --staged --write --no-errors-on-unmatched
+      stage_fixed: true
+    dprint:
+      glob: "**/*.md"
+      run: npx dprint fmt {staged_files}
+      stage_fixed: true
+    markdownlint:
+      glob: "**/*.md"
+      run: npx markdownlint-cli2 {staged_files} --fix
+      stage_fixed: true
+    typecheck:
+      glob: "**/*.ts"
+      run: npx tsc -b tsconfig.build.json
+    fallow:
+      glob: "**/*.{ts,js,json}"
+      run: npx fallow audit --quiet --dead-code-baseline fallow-baselines/dead-code.json --health-baseline fallow-baselines/health.json --dupes-baseline fallow-baselines/dupes.json
+    spelling:
+      glob: "**/*.md"
+      run: npx cspell --no-progress --no-summary {staged_files}
+    typelint:
+      glob: "**/*.ts"
+      run: npx oxlint --type-aware src
+    actionlint:
+      glob: ".github/workflows/*.yml"
+      run: actionlint
+
+commit-msg:
+  commands:
+    commitlint:
+      run: npx commitlint --edit {1}
+
+pre-push:
+  commands:
+    test:
+      glob: "src/**/*.ts"
+      run: npx vitest run --coverage
+    package:
+      run: npm run check:package

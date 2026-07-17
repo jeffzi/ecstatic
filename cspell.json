@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
+  "version": "0.2",
+  "language": "en",
+  "files": ["**/*.md"],
+  "ignorePaths": ["node_modules", "CHANGELOG.md"],
+  "words": [
+    "archetype",
+    "archetypes",
+    "archs",
+    "bitmask",
+    "despawn",
+    "despawned",
+    "despawning",
+    "despawns",
+    "ecstatic",
+    "fallowrc",
+    "gamedev",
+    "respawn",
+    "respawned",
+    "respawns"
+  ]
+}
