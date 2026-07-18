@@ -1,0 +1,63 @@
+{
+  "name": "ecstatic",
+  "version": "0.1.0",
+  "description": "Archetype-based ECS in TypeScript",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "author": "jeffzi",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeffzi/ecstatic.git"
+  },
+  "keywords": [
+    "ecs",
+    "entity-component-system",
+    "typescript",
+    "gamedev"
+  ],
+  "scripts": {
+    "prepare": "npm run build && (test -d .git && lefthook install || true)",
+    "build": "tsc -b tsconfig.build.json",
+    "test": "vitest run --coverage",
+    "test:types": "vitest run --project types",
+    "check": "biome check --fix . && markdownlint-cli2 'README.md' 'CHANGELOG.md' 'docs/**/*.md' && tsc -b tsconfig.build.json && npm run check:fallow && npm run check:spelling && npm run check:typelint",
+    "check:package": "publint && attw --pack .",
+    "check:fallow": "fallow audit --quiet --dead-code-baseline fallow-baselines/dead-code.json --health-baseline fallow-baselines/health.json --dupes-baseline fallow-baselines/dupes.json",
+    "check:typelint": "oxlint --type-aware src",
+    "check:spelling": "cspell --no-progress --no-summary",
+    "prepublishOnly": "npm run build && npm run check && npm test"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.0",
+    "@biomejs/biome": "^2.5.0",
+    "@commitlint/cli": "^21.2.0",
+    "@commitlint/config-conventional": "^21.2.0",
+    "@types/node": "^26.1.0",
+    "@vitest/coverage-v8": "^4.1.0",
+    "cspell": "^10.0.0",
+    "dprint": "^0.55.0",
+    "fallow": "^3.6.0",
+    "lefthook": "^2.1.0",
+    "markdownlint-cli2": "^0.23.0",
+    "oxlint": "^1.74.0",
+    "oxlint-tsgolint": "^0.25.0",
+    "publint": "^0.3.0",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.0",
+    "vitest": "^4.1.0"
+  }
+}
