@@ -23,6 +23,7 @@ export {
 } from "./component.js";
 // Entity operations
 export { alive } from "./entity/common.js";
+export { despawn } from "./entity/despawn.js";
 export { spawn } from "./entity/spawn.js";
 // Entity IDs
 export type { EntityId } from "./entity-id.js";
