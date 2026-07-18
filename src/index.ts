@@ -21,7 +21,9 @@ export {
   u16,
   u32,
 } from "./component.js";
-
+// Entity operations
+export { alive } from "./entity/common.js";
+export { spawn } from "./entity/spawn.js";
 // Entity IDs
 export type { EntityId } from "./entity-id.js";
 export { entityGen, entityIndex, initialEntityId, MAX_INDEX } from "./entity-id.js";
