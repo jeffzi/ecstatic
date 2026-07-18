@@ -23,11 +23,11 @@ export {
 } from "./component.js";
 // Entity operations
 export { alive } from "./entity/common.js";
-export { despawn } from "./entity/despawn.js";
+export { despawn, despawnMany } from "./entity/despawn.js";
 export { spawn, spawnMany } from "./entity/spawn.js";
 // Entity IDs
 export type { EntityId } from "./entity-id.js";
 export { entityGen, entityIndex, initialEntityId, MAX_INDEX } from "./entity-id.js";
 export type { World } from "./world.js";
 // World system
-export { createWorld, getStorage, register } from "./world.js";
+export { createWorld, destroyWorld, getStorage, register } from "./world.js";
