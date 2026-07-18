@@ -124,15 +124,18 @@ id = generation * (2^24) + index
    = generation * 16777216 + index
 ```
 
-The world's `generation` array stores the generation **pre-shifted** (already multiplied by
-2^24), so the hot-path operations are single additions and comparisons:
+The world's `generation` array stores the current occupant's **full packed ID** at each
+index, so the hot-path operations are single reads and comparisons:
 
-**Packing**: `id = generation[index] + index`
+**Packing**: on spawn, `id = generation[index]` — a plain read; the slot's next ID is
+precomputed
 
-**Unpacking**: `index = id % 2^24`; the ID is live iff `id - index === generation[index]`
+**Unpacking**: `index = id % 2^24`; the ID is live iff `generation[index] === id`
 
-**Generation advance** (on despawn): `generation[index] += 2^24`, wrapping back to 2^24
-(generation 1) after 2^29 − 1 generations.
+**Fresh slot init**: `generation[index] = 2^24 + index` (generation 1)
+
+**Generation advance** (on despawn): `generation[index] += 2^24`, wrapping back to
+generation 1 (`2^24 + index`) when the generation would reach 2^29.
 
 **Limits**:
 
@@ -170,9 +173,9 @@ unless used as data-carrying optionals.
 interface WorldState {
   archetypes: Archetype[];                // all registered archetypes
   entityArch: (Archetype | undefined)[]  // sparse entity index → archetype
-  generation: Float64Array                // pre-shifted generation (gen * 2^24) per index
+  generation: Float64Array                // full packed ID of the current occupant per index
+  sparse: Int32Array                      // index → dense row; dead slots hold the freelist next pointer
   freeHead: number                        // LIFO freelist head (−1 = empty)
-  freeNext: number[]                      // sparse index → next free index
   nextIndex: number                       // next fresh sparse index
   queryCache: Map<string, Archetype[]>   // component-set key → cached archetypes
   resources: Map<number, object>          // resource ID → data
@@ -190,7 +193,7 @@ Allocates a new entity in the archetype.
 ```text
 spawn(storage, overrides?)
   1. Allocate sparse index (from freelist or fresh)
-  2. Pack entity ID: id = generation[index] + index
+  2. Read entity ID: id = generation[index] (the slot's packed ID is precomputed)
   3. Append dense row
   4. Write entity ID and initialize all columns from defaults or overrides
   5. Initialize mask from overrides (optionals may be enabled at spawn; otherwise 0)
@@ -206,14 +209,14 @@ Removes an entity using swap-and-pop deletion.
 ```text
 despawn(world, id)
   1. Unpack: index = id % 2^24
-  2. Validate: id - index === generation[index] (stale ID → no-op)
+  2. Validate: generation[index] === id (stale ID → no-op)
   3. Resolve archetype and dense row index
   4. If not the last row, swap-and-pop:
      - Copy last row into the hole (entities, all columns, mask, matched)
      - Update sparse mapping for the swapped entity (its sparse index = entities[hole] % 2^24)
   5. Decrement archetype.n
   6. Free the sparse index:
-     - generation[index] += 2^24 (wrap to 2^24 after 2^29 − 1 generations)
+     - generation[index] += 2^24 (wrap to generation 1 when the generation would reach 2^29)
      - Push index onto freelist
      - Clear entityArch[index]
 ```
