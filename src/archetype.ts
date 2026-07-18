@@ -12,6 +12,9 @@
 import type { ComponentDescriptor } from "./component.js";
 import { isComponentDescriptor } from "./component.js";
 
+// Re-export for convenience
+export type { ComponentDescriptor } from "./component.js";
+
 /** Archetype descriptor stored in the cache and returned to users */
 export interface ArchetypeDescriptor {
   readonly id: number;
