@@ -38,7 +38,7 @@
     "check:package": "publint && attw --pack .",
     "check:fallow": "fallow audit --quiet --dead-code-baseline fallow-baselines/dead-code.json --health-baseline fallow-baselines/health.json --dupes-baseline fallow-baselines/dupes.json",
     "check:typelint": "oxlint --type-aware src",
-    "check:spelling": "cspell --no-progress --no-summary '**/*.md'",
+    "check:spelling": "cspell --no-progress --no-summary",
     "prepublishOnly": "npm run build && npm run check && npm test"
   },
   "devDependencies": {
