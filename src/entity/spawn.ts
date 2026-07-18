@@ -3,7 +3,7 @@
  */
 
 import type { EntityId } from "../entity-id.js";
-import { assertEntityIndex, initialEntityId } from "../entity-id.js";
+import { assertEntityIndex, initialEntityId, MAX_INDEX, OVERFLOW_MSG } from "../entity-id.js";
 import type { Storage, TypedArray, WorldState } from "../world.js";
 
 /**
@@ -58,7 +58,7 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   state.sparse[index] = di;
   state.entityArch[index] = storage;
 
-  initSoaFields(storage, di, overrides);
+  initComponentFields(storage, di, 1, overrides);
   storage.mask[di] = 0;
 
   return eid;
@@ -118,11 +118,17 @@ function growStorageArrays(storage: Storage): void {
 }
 
 /**
- * Initialize SoA fields for a spawned entity: per required component, write
- * the override value when present (`!== undefined`), else the default for
- * non-ref fields. Ref fields with no override stay undefined.
+ * Initialize SoA fields for `count` dense rows starting at `denseStart`:
+ * per required component, per field (column-major), write the override value
+ * when present (`!== undefined`), else the default for non-ref fields.
+ * Ref fields with no override stay undefined (despawn cleared the slot).
  */
-function initSoaFields(storage: Storage, di: number, overrides?: SpawnOverrides): void {
+function initComponentFields(
+  storage: Storage,
+  denseStart: number,
+  count: number,
+  overrides?: SpawnOverrides,
+): void {
   for (const comp of storage.archetype.components) {
     const fieldOverrides = resolveRequiredOverride(comp.__ecstatic_name, overrides);
 
@@ -131,16 +137,178 @@ function initSoaFields(storage: Storage, di: number, overrides?: SpawnOverrides)
     const defaultValues = comp.__ecstatic_default_values;
     const isRef = comp.__ecstatic_is_reference;
 
-    for (let i = 0; i < fields.length; i++) {
-      const fieldName = fields[i]!;
-      const override = fieldOverrides?.[fieldName];
-      if (override !== undefined) {
-        soa[fieldName]![di] = override;
-      } else if (isRef[i] !== true) {
-        soa[fieldName]![di] = defaultValues[i];
+    for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
+      const col = soa[fields[fieldIdx]!]!;
+      const override = fieldOverrides?.[fields[fieldIdx]!];
+
+      for (let i = 0; i < count; i++) {
+        const di = denseStart + i;
+        if (override !== undefined) {
+          col[di] = override;
+        } else if (isRef[fieldIdx] !== true) {
+          col[di] = defaultValues[fieldIdx];
+        }
       }
-      // Ref fields without an override stay undefined (despawn cleared the slot)
     }
+  }
+}
+
+/**
+ * Allocate entity indices for a batch spawn: precheck overflow, allocate from
+ * freelist and fresh slots, initialize generation values. Returns the sparse
+ * indices and whether world arrays grew (caller must refresh aliases if true).
+ * Called only after atomic overflow pre-check has passed.
+ */
+function allocateIndices(
+  state: WorldState,
+  count: number,
+): { indices: number[]; worldGrew: boolean } {
+  const indices: number[] = [];
+  let worldGrew = false;
+
+  for (let i = 0; i < count; i++) {
+    let index: number;
+    if (state.freeHead !== -1) {
+      // Pop from freelist
+      index = state.freeHead;
+      state.freeHead = state.sparse[index]!;
+    } else {
+      // Fresh allocation
+      index = state.nextIndex;
+      state.nextIndex = index + 1;
+      if (index >= state.generation.length) {
+        growWorldArrays(state);
+        worldGrew = true;
+      }
+      // Fresh slot init: gen 1 (gen 0 is the never-allocated sentinel)
+      state.generation[index] = initialEntityId(index);
+    }
+    indices.push(index);
+  }
+
+  return { indices, worldGrew };
+}
+
+/**
+ * Fill dense rows and SoA fields for a batch of allocated entities.
+ * Assumes indices have been allocated, storage.n is the start of the batch.
+ */
+function fillBatch(
+  storage: Storage,
+  count: number,
+  indices: number[],
+  overrides: SpawnOverrides | undefined,
+): EntityId[] {
+  const state = storage.world;
+  const denseStart = storage.n - count;
+  const result: EntityId[] = [];
+
+  // Build entity ID array and update sparse mapping
+  for (let i = 0; i < count; i++) {
+    const index = indices[i]!;
+    const eid = state.generation[index] as EntityId;
+    const di = denseStart + i;
+
+    result[i] = eid;
+    storage.entities[di] = eid;
+    state.sparse[index] = di;
+    state.entityArch[index] = storage;
+    storage.mask[di] = 0;
+  }
+
+  // Initialize component fields (column-major: per component, per field, loop rows)
+  initComponentFields(storage, denseStart, count, overrides);
+
+  return result;
+}
+
+/**
+ * Spawn multiple entities in one call.
+ *
+ * Allocates count entity indices (LIFO freelist first, then fresh), reads
+ * each slot's precomputed packed ID, appends dense rows, and initializes
+ * component fields with the same defaults or override values applied to all.
+ *
+ * The 3rd argument disambiguates based on type:
+ * - Array → out buffer (reused and returned)
+ * - Object → overrides record (defaults otherwise)
+ * - Omitted → fresh array returned
+ *
+ * The optional 4th argument is an out buffer (ignored if 3rd is already an array).
+ *
+ * Atomic: if allocation would overflow MAX_INDEX, no mutation occurs.
+ *
+ * @throws If the batch would exceed entity index capacity
+ */
+export function spawnMany(
+  storage: Storage,
+  count: number,
+  overridesOrOut?: SpawnOverrides | EntityId[],
+  out?: EntityId[],
+): EntityId[] {
+  // Disambiguate 3rd argument
+  const isOutBuffer = Array.isArray(overridesOrOut);
+  const overrides = isOutBuffer ? undefined : overridesOrOut;
+  const outBuffer = isOutBuffer ? overridesOrOut : out;
+
+  const state = storage.world;
+
+  // Fast path: count 0 means empty result
+  if (count === 0) {
+    if (outBuffer) {
+      outBuffer.length = 0;
+      return outBuffer;
+    }
+    return [];
+  }
+
+  assertBatchCapacity(state, count);
+
+  // Grow storage arrays for dense rows in one shot (after we know count)
+  const denseStart = storage.n;
+  const denseEnd = denseStart + count;
+  while (denseEnd > storage.entities.length) {
+    growStorageArrays(storage);
+  }
+
+  // Allocate indices (may grow world arrays)
+  const { indices } = allocateIndices(state, count);
+
+  // Update storage entity count before filling
+  storage.n = denseEnd;
+
+  // Fill dense rows and component fields
+  const ids = fillBatch(storage, count, indices, overrides);
+
+  // Populate result array
+  const result = outBuffer ?? ids;
+  if (outBuffer) {
+    outBuffer.length = count;
+    for (let i = 0; i < count; i++) {
+      outBuffer[i] = ids[i]!;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Atomic overflow pre-check for a batch spawn: only the cold near-ceiling
+ * path walks the freelist to count recycled slots; the common case is a
+ * single comparison. Throws before any mutation.
+ */
+function assertBatchCapacity(state: WorldState, count: number): void {
+  if (state.nextIndex + count - 1 < MAX_INDEX) {
+    return;
+  }
+  let freeCount = 0;
+  let freeWalk = state.freeHead;
+  while (freeWalk !== -1 && freeCount < count) {
+    freeCount++;
+    freeWalk = state.sparse[freeWalk]!;
+  }
+  if (state.nextIndex + (count - freeCount) > MAX_INDEX) {
+    throw new Error(OVERFLOW_MSG);
   }
 }
 

@@ -27,7 +27,7 @@ export const MAX_INDEX = 2 ** INDEX_BITS;
  */
 export const MAX_GEN = 2 ** (53 - INDEX_BITS);
 
-const OVERFLOW_MSG = `entity index overflow (max ${MAX_INDEX - 1} per world)`;
+export const OVERFLOW_MSG = `entity index overflow (max ${MAX_INDEX - 1} per world)`;
 
 /**
  * Assert that an entity index is within valid bounds.
