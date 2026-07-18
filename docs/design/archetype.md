@@ -174,8 +174,8 @@ interface WorldState {
   archetypes: Archetype[];                // all registered archetypes
   entityArch: (Archetype | undefined)[]  // sparse entity index → archetype
   generation: Float64Array                // full packed ID of the current occupant per index
+  sparse: Int32Array                      // index → dense row; dead slots hold the freelist next pointer
   freeHead: number                        // LIFO freelist head (−1 = empty)
-  freeNext: number[]                      // sparse index → next free index
   nextIndex: number                       // next fresh sparse index
   queryCache: Map<string, Archetype[]>   // component-set key → cached archetypes
   resources: Map<number, object>          // resource ID → data
