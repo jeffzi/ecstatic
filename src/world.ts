@@ -32,7 +32,7 @@ export interface WorldState {
   /** Entity ID table: stores the full packed ID per index for staleness checks */
   generation: Float64Array;
 
-  /** Sparse index table: dense row index → entity index (used to locate storage rows) */
+  /** Sparse table: entity index → dense row; dead slots hold the freelist next pointer */
   sparse: Int32Array;
 
   /** Freelist head: -1 if empty, otherwise first free index */
@@ -51,7 +51,7 @@ export interface WorldState {
  */
 export type SoAColumns = Record<string, TypedArray | Array<unknown>>;
 
-type TypedArray =
+export type TypedArray =
   | Float64Array
   | Float32Array
   | Int32Array
@@ -93,11 +93,9 @@ export interface Storage {
   generation: Float64Array;
   sparse: Int32Array;
 
-  /** Despawn-time cleanup: ref-marked column indices needing clear */
-  despawnClear: {
-    refs: number[][];
-    hasDespawnClear: boolean;
-  };
+  /** Ref-marked columns whose freed slots are cleared on despawn (GC release) */
+  despawnClear: Array<unknown>[];
+  hasDespawnClear: boolean;
 
   /** Cached descriptor lookups for all components (required + optional) */
   readonly componentByName: Map<string, ComponentDescriptor>;
@@ -199,10 +197,7 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
   const flatColumns: (TypedArray | Array<unknown>)[] = [];
 
   // Despawn-time cleanup tracking (ref-marked fields)
-  const despawnClear: { refs: number[][]; hasDespawnClear: boolean } = {
-    refs: [],
-    hasDespawnClear: false,
-  };
+  const despawnClear: Array<unknown>[] = [];
 
   // Add columns for required and optional components
   const allComps = [
@@ -220,8 +215,7 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
 
     for (let i = 0; i < fields.length; i++) {
       if (isRef[i] === true) {
-        despawnClear.refs.push([columns.size - 1, i]);
-        despawnClear.hasDespawnClear = true;
+        despawnClear.push(soa[fields[i]!] as Array<unknown>);
       }
     }
 
@@ -244,6 +238,7 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
     generation: state.generation,
     sparse: state.sparse,
     despawnClear,
+    hasDespawnClear: despawnClear.length > 0,
     componentByName: arch.componentByName,
     componentLookup: arch.componentLookup,
     optionalBitLookup: arch.optionalBitLookup,
@@ -271,7 +266,6 @@ function createSoA(comp: ComponentDescriptor, capacity: number): SoAColumns {
   const soa: SoAColumns = {};
 
   for (let i = 0; i < fields.length; i++) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const fieldName = fields[i]!;
     const ctor = columnCtors[i];
 
