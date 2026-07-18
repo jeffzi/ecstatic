@@ -7,6 +7,7 @@
  */
 
 import type { ArchetypeDescriptor, ComponentDescriptor } from "./archetype.js";
+import { despawnMany } from "./entity/despawn.js";
 import { ERROR_WORLD_DESTROYED } from "./errors.js";
 
 /**
@@ -279,4 +280,39 @@ function createSoA(comp: ComponentDescriptor, capacity: number): SoAColumns {
   }
 
   return soa;
+}
+
+/**
+ * Destroy a world: despawn all entities, reset state, mark as destroyed.
+ *
+ * Subsequent calls to register() or getStorage() will error unconditionally.
+ * Calling destroyWorld twice is a no-op (not an error).
+ *
+ * @param world - The world to destroy
+ */
+export function destroyWorld(world: World): void {
+  const state = world as WorldState;
+
+  // No-op if already destroyed
+  if (state.destroyed) {
+    return;
+  }
+
+  // Despawn all entities from all storages (advance generations to invalidate
+  // IDs), then disconnect each storage so operations on a detached storage fail.
+  for (const storage of state.storages.values()) {
+    despawnMany(storage);
+    (storage as unknown as { world: WorldState | undefined }).world = undefined;
+  }
+
+  // Reset world state to initial capacity
+  state.storages.clear();
+  state.entityArch = new Array(INITIAL_WORLD_CAPACITY);
+  state.generation = new Float64Array(INITIAL_WORLD_CAPACITY);
+  state.sparse = new Int32Array(INITIAL_WORLD_CAPACITY);
+  state.freeHead = -1;
+  state.nextIndex = 0;
+
+  // Mark as destroyed so register/getStorage will error
+  state.destroyed = true;
 }
