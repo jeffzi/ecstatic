@@ -41,6 +41,9 @@ let nextArchetypeId = 0;
 /** Module-level canonicalization cache: concatenated key → descriptor */
 const archetypeCache = new Map<string, ArchetypeDescriptor>();
 
+/** Maximum number of optional components per archetype (32-bit bitmask limit). */
+const MAX_OPTIONAL_COMPONENTS = 32;
+
 /** Field names and properties reserved by the archetype storage itself */
 const RESERVED_NAMES = new Set<string>([
   // Storage structure fields
@@ -76,15 +79,9 @@ function computeArchetypeKey(
   required: readonly ComponentDescriptor[],
   optionals: readonly ComponentDescriptor[],
 ): string {
-  const reqParts: string[] = [];
-  for (const comp of required) {
-    reqParts.push(comp.__ecstatic_component_key);
-  }
-  const optParts: string[] = [];
-  for (const comp of optionals) {
-    optParts.push(comp.__ecstatic_component_key);
-  }
-  return `req:${reqParts.join("")}|opt:${optParts.join("")}`;
+  const reqParts = required.map((comp) => comp.__ecstatic_component_key).join("");
+  const optParts = optionals.map((comp) => comp.__ecstatic_component_key).join("");
+  return `req:${reqParts}|opt:${optParts}`;
 }
 
 /**
@@ -136,8 +133,8 @@ function validateArchetype(
   optionals: readonly ComponentDescriptor[],
 ): void {
   // Check optional count limit
-  if (optionals.length > 32) {
-    throw new Error("archetype supports at most 32 optional components");
+  if (optionals.length > MAX_OPTIONAL_COMPONENTS) {
+    throw new Error(`archetype supports at most ${MAX_OPTIONAL_COMPONENTS} optional components`);
   }
 
   // Collect all component names and check for duplicates
