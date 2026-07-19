@@ -36,7 +36,7 @@
     "check:quality": "fallow --fail-on-issues --quiet",
     "check:security": "fallow security",
     "check:spelling": "cspell --no-progress \"**/*.{ts,tsx,mts,cts,md}\"",
-    "check:type": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.examples.json --noEmit",
+    "check:type": "tsc -p tsconfig.json --noEmit && tsc -p examples/tsconfig.json --noEmit",
     "check:typelint": "oxlint --type-aware",
     "check": "run-s -c check:lint check:md check:fmt check:actions check:typelint check:quality check:spelling check:type",
     "examples": "npm run build && tsx examples/basics.ts && tsx examples/iteration.ts && tsx examples/component-sets.ts && tsx examples/relationships.ts",
