@@ -2,7 +2,7 @@
  * Field access: read and write individual component fields on entities.
  */
 
-import type { ComponentDescriptor, FieldDescriptor } from "../component.js";
+import type { ComponentDescriptor, ComponentFields, FieldDescriptor } from "../component.js";
 import { isFieldDescriptor } from "../component.js";
 import type { EntityId } from "../entity-id.js";
 import { entityIndex } from "../entity-id.js";
@@ -64,6 +64,7 @@ function writeField(
  * @throws If the entity ID is stale or from another storage (under DEBUG)
  * @throws If the component or field cannot be resolved on the archetype
  */
+export function get<V>(storageOrWorld: Storage | World, id: EntityId, field: FieldDescriptor<V>): V;
 export function get(
   storageOrWorld: Storage | World,
   id: EntityId,
@@ -82,17 +83,19 @@ export function get(
   return value;
 }
 
-export function set(
+export function set<V>(
   storageOrWorld: Storage | World,
   id: EntityId,
-  field: FieldDescriptor,
-  value: unknown,
+  field: FieldDescriptor<V>,
+  // NoInfer: the field descriptor alone fixes V, so a mismatched value is an
+  // error instead of widening V (e.g. `undefined` must not widen number fields)
+  value: NoInfer<V>,
 ): void;
-export function set(
+export function set<C extends ComponentDescriptor>(
   storageOrWorld: Storage | World,
   id: EntityId,
-  comp: ComponentDescriptor,
-  values: Record<string, unknown>,
+  comp: C,
+  values: Partial<ComponentFields<C>>,
 ): void;
 /**
  * Set one or more fields on an entity.

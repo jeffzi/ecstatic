@@ -33,7 +33,7 @@ type WidthMarkerType =
   | typeof U16_MARKER
   | typeof U8_MARKER;
 
-interface WidthMarker {
+export interface WidthMarker {
   readonly __ecstatic_width_marker: WidthMarkerType;
   readonly value: number;
 }
@@ -258,10 +258,10 @@ export function ref<T = unknown>(): RefMarker<T> {
  * If fields is omitted, the result is a tag (0-field component).
  */
 export function component<N extends string>(name: N): Tag<N>;
-export function component<N extends string, T extends Record<string, unknown>>(
+export function component<N extends string, T extends Record<string, FieldDefault>>(
   name: N,
   fields: T,
-): Component<N, T>;
+): keyof T extends never ? Tag<N> : Component<N, InferFields<T>>;
 export function component(name: string, fields?: Record<string, unknown>): unknown {
   assertNameAvailable(name);
   const defaults = validateFields(name, fields ?? {});
@@ -273,10 +273,12 @@ export function component(name: string, fields?: Record<string, unknown>): unkno
  * Register multiple component types from a single name-keyed declaration object.
  * Validates all components before registering any names (atomic validation).
  */
-export function components<T extends Record<string, Record<string, unknown>>>(
+export function components<T extends Record<string, Record<string, FieldDefault>>>(
   defs: T,
 ): {
-  [K in keyof T]: keyof T[K] extends never ? Tag<K & string> : Component<K & string, T[K]>;
+  [K in keyof T]: keyof T[K] extends never
+    ? Tag<K & string>
+    : Component<K & string, InferFields<T[K]>>;
 } {
   const result: Record<string, unknown> = {};
   const defaultsByName = new Map<string, Record<string, unknown>>();
@@ -294,7 +296,9 @@ export function components<T extends Record<string, Record<string, unknown>>>(
   }
 
   return result as unknown as {
-    [K in keyof T]: keyof T[K] extends never ? Tag<K & string> : Component<K & string, T[K]>;
+    [K in keyof T]: keyof T[K] extends never
+      ? Tag<K & string>
+      : Component<K & string, InferFields<T[K]>>;
   };
 }
 
@@ -351,9 +355,11 @@ export interface ComponentDescriptor {
   readonly __ecstatic_column_ctor?: (NumericColumnCtor | undefined)[];
 }
 
-export interface FieldDescriptor {
+/** A single component field. The phantom V carries the field's value type. */
+export interface FieldDescriptor<V = unknown> {
   readonly __ecstatic_component: ComponentDescriptor;
   readonly __ecstatic_field: string;
+  readonly __ecstatic_field_type?: V;
 }
 
 /** Covariant in T so RefMarker<Specific> extends RefMarker<General>. */
@@ -361,12 +367,63 @@ export interface RefMarker<out T = unknown> extends ComponentDescriptor {
   readonly __ecstatic_ref_marker?: T;
 }
 
-export interface Component<N extends string = string, T extends object = object> {
+/** Allowed field default values: scalars, ref markers, and width markers. */
+export type FieldDefault = number | string | boolean | RefMarker<unknown> | WidthMarker;
+
+/** Map a declared field default to the field's value type (literals widened). */
+type InferFieldValue<D> =
+  D extends RefMarker<infer R>
+    ? R | undefined
+    : D extends WidthMarker
+      ? number
+      : D extends boolean
+        ? boolean
+        : D extends number
+          ? number
+          : D extends string
+            ? string
+            : D;
+
+/** Map a defaults record to the record of field value types. */
+type InferFields<T> = { [K in keyof T]: InferFieldValue<T[K]> };
+
+/** Extract the value type carried by a field descriptor. */
+export type FieldValue<D> = D extends FieldDescriptor<infer V> ? V : never;
+
+/**
+ * Fields value record of a component. Falls back to `Record<string, unknown>`
+ * for untyped `ComponentDescriptor` values (internal code paths).
+ */
+export type ComponentFields<C> = C extends {
+  readonly __ecstatic_component_meta?: { name: string; fields: infer F extends object };
+}
+  ? F
+  : Record<string, unknown>;
+
+/** Literal name of a component (plain `string` for untyped descriptors). */
+export type ComponentName<C> = C extends { readonly __ecstatic_name: infer N extends string }
+  ? N
+  : string;
+
+/**
+ * A declared component: the runtime descriptor plus one typed field
+ * descriptor per field. T holds field *value* types (refs already
+ * unwrapped to `R | undefined`, width-marked fields as `number`).
+ */
+export type Component<
+  N extends string = string,
+  T extends object = object,
+> = ComponentDescriptor & {
+  readonly __ecstatic_name: N;
   readonly __ecstatic_descriptor_brand: true;
   readonly __ecstatic_component_meta?: { name: N; fields: T };
-}
+} & {
+  readonly [K in keyof T]: FieldDescriptor<T[K]>;
+};
 
-export interface Tag<N extends string = string> {
+/** A declared zero-field component (marker). */
+export type Tag<N extends string = string> = ComponentDescriptor & {
+  readonly __ecstatic_name: N;
   readonly __ecstatic_descriptor_brand: true;
   readonly __ecstatic_component_meta?: { name: N; fields: Record<string, never> };
-}
+};

@@ -16,9 +16,11 @@ import { isComponentDescriptor } from "./component.js";
 export type { ComponentDescriptor } from "./component.js";
 
 /** Archetype descriptor stored in the cache and returned to users */
-export interface ArchetypeDescriptor {
+export interface ArchetypeDescriptor<
+  C extends readonly ComponentDescriptor[] = readonly ComponentDescriptor[],
+> {
   readonly id: number;
-  readonly components: readonly ComponentDescriptor[];
+  readonly components: C;
   readonly optionals: readonly ComponentDescriptor[];
   readonly componentByName: Map<string, ComponentDescriptor>;
   readonly componentLookup: Set<ComponentDescriptor>;
@@ -28,6 +30,10 @@ export interface ArchetypeDescriptor {
   readonly optionalNotBitLookup: Map<ComponentDescriptor, number>;
   readonly archetype: ArchetypeDescriptor;
 }
+
+/** Component tuple captured by a typed archetype descriptor. */
+export type ComponentsOf<A> =
+  A extends ArchetypeDescriptor<infer C> ? C : readonly ComponentDescriptor[];
 
 /** Module-level counter for archetype IDs */
 let nextArchetypeId = 0;
@@ -93,6 +99,10 @@ function computeArchetypeKey(
  * @throws If any component name is reserved (on archetypes)
  * @throws If any component appears in both required and optional, or twice in one list
  */
+export function archetype<const C extends readonly ComponentDescriptor[]>(
+  required?: C,
+  optionals?: readonly ComponentDescriptor[],
+): ArchetypeDescriptor<C>;
 export function archetype(
   required: readonly ComponentDescriptor[] = [],
   optionals: readonly ComponentDescriptor[] = [],

@@ -64,8 +64,10 @@ export type TypedArray =
 
 /**
  * Internal storage state for a single archetype in a single world.
+ * The A parameter threads the registered archetype's component tuple
+ * to spawn overrides, get/set, and each views.
  */
-export interface Storage {
+export interface Storage<A extends ArchetypeDescriptor = ArchetypeDescriptor> {
   /** ID of this storage (same as archetype.id) */
   readonly id: number;
 
@@ -73,7 +75,7 @@ export interface Storage {
   readonly world: WorldState;
 
   /** Archetype descriptor (cached for API calls) */
-  readonly archetype: ArchetypeDescriptor;
+  readonly archetype: A;
 
   /** Dense array of packed entity IDs (one per row, up to n entries) */
   entities: Float64Array;
@@ -142,6 +144,7 @@ export function createWorld(): World {
  *
  * @throws If the world is destroyed
  */
+export function register<A extends ArchetypeDescriptor>(world: World, arch: A): Storage<A>;
 export function register(world: World, arch: ArchetypeDescriptor): Storage {
   const state = world as WorldState;
 
@@ -174,6 +177,7 @@ export function register(world: World, arch: ArchetypeDescriptor): Storage {
  * @throws If the world is destroyed
  * @throws If the archetype is not registered in this world
  */
+export function getStorage<A extends ArchetypeDescriptor>(world: World, arch: A): Storage<A>;
 export function getStorage(world: World, arch: ArchetypeDescriptor): Storage {
   const state = world as WorldState;
 
