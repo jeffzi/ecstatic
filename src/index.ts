@@ -22,6 +22,7 @@ export {
   u32,
 } from "./component.js";
 // Entity operations
+export { get, set } from "./entity/access.js";
 export { alive } from "./entity/common.js";
 export { despawn, despawnMany } from "./entity/despawn.js";
 export { spawn, spawnMany } from "./entity/spawn.js";
