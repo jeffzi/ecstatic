@@ -281,8 +281,10 @@ each(storage, [filter], fn) or each([storages], [filter], fn)
         - Call fn(view)
 ```
 
-The view is a single reused object per archetype with generated accessors over the columns —
-no per-entity allocation, and property access stays monomorphic. The build-time transform may
+The view is a reused object per archetype with generated accessors over the columns — no
+per-entity allocation, and property access stays monomorphic. Each archetype keeps one view
+per nesting depth, so nested `each` over the same archetype rebinds distinct views (a
+pairwise pass reads two different rows through two views). The build-time transform may
 replace an `each` call with a fused direct-column loop, but the design never depends on it:
 the untransformed path is fully correct and is the performance floor.
 
