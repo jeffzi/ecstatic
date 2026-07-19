@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { archetype } from "../src/archetype";
-import { components } from "../src/component";
+import { type ComponentDescriptor, components } from "../src/component";
 
 describe("archetype", () => {
   describe("basic construction", () => {
@@ -148,7 +148,7 @@ describe("archetype", () => {
         ReservedEntities: { x: 0 },
       });
       // Rename the descriptor to have reserved name
-      (Comp as Record<string, unknown>).__ecstatic_name = "entities";
+      (Comp as unknown as Record<string, unknown>).__ecstatic_name = "entities";
 
       expect(() => {
         archetype([Comp]);
@@ -159,7 +159,7 @@ describe("archetype", () => {
       const { ReservedSparse: Comp } = components({
         ReservedSparse: { x: 0 },
       });
-      (Comp as Record<string, unknown>).__ecstatic_name = "sparse";
+      (Comp as unknown as Record<string, unknown>).__ecstatic_name = "sparse";
 
       const { ReservedReq: Req } = components({ ReservedReq: { y: 0 } });
       expect(() => {
@@ -171,7 +171,7 @@ describe("archetype", () => {
       const { ReservedArch: Comp } = components({
         ReservedArch: { x: 0 },
       });
-      (Comp as Record<string, unknown>).__ecstatic_name = "archetype";
+      (Comp as unknown as Record<string, unknown>).__ecstatic_name = "archetype";
 
       expect(() => {
         archetype([Comp]);
@@ -220,7 +220,7 @@ describe("archetype", () => {
         ArchTestMax_Req: { x: 0 },
       });
 
-      const optionals = [];
+      const optionals: ComponentDescriptor[] = [];
       for (let i = 0; i < 33; i++) {
         const { [i]: Comp } = components({
           [i]: { val: i },

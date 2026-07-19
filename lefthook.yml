@@ -14,7 +14,7 @@ pre-commit:
       stage_fixed: true
     typecheck:
       glob: "**/*.ts"
-      run: npx tsc -b tsconfig.build.json
+      run: npx tsc -b
     fallow:
       glob: "**/*.{ts,js,json}"
       run: npx fallow audit --quiet --dead-code-baseline fallow-baselines/dead-code.json --health-baseline fallow-baselines/health.json --dupes-baseline fallow-baselines/dupes.json

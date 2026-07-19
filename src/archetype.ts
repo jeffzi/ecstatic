@@ -16,9 +16,11 @@ import { isComponentDescriptor } from "./component.js";
 export type { ComponentDescriptor } from "./component.js";
 
 /** Archetype descriptor stored in the cache and returned to users */
-export interface ArchetypeDescriptor {
+export interface ArchetypeDescriptor<
+  C extends readonly ComponentDescriptor[] = readonly ComponentDescriptor[],
+> {
   readonly id: number;
-  readonly components: readonly ComponentDescriptor[];
+  readonly components: C;
   readonly optionals: readonly ComponentDescriptor[];
   readonly componentByName: Map<string, ComponentDescriptor>;
   readonly componentLookup: Set<ComponentDescriptor>;
@@ -29,11 +31,18 @@ export interface ArchetypeDescriptor {
   readonly archetype: ArchetypeDescriptor;
 }
 
+/** Component tuple captured by a typed archetype descriptor. */
+export type ComponentsOf<A> =
+  A extends ArchetypeDescriptor<infer C> ? C : readonly ComponentDescriptor[];
+
 /** Module-level counter for archetype IDs */
 let nextArchetypeId = 0;
 
 /** Module-level canonicalization cache: concatenated key → descriptor */
 const archetypeCache = new Map<string, ArchetypeDescriptor>();
+
+/** Maximum number of optional components per archetype (32-bit bitmask limit). */
+const MAX_OPTIONAL_COMPONENTS = 32;
 
 /** Field names and properties reserved by the archetype storage itself */
 const RESERVED_NAMES = new Set<string>([
@@ -70,15 +79,9 @@ function computeArchetypeKey(
   required: readonly ComponentDescriptor[],
   optionals: readonly ComponentDescriptor[],
 ): string {
-  const reqParts: string[] = [];
-  for (const comp of required) {
-    reqParts.push(comp.__ecstatic_component_key);
-  }
-  const optParts: string[] = [];
-  for (const comp of optionals) {
-    optParts.push(comp.__ecstatic_component_key);
-  }
-  return `req:${reqParts.join("")}|opt:${optParts.join("")}`;
+  const reqParts = required.map((comp) => comp.__ecstatic_component_key).join("");
+  const optParts = optionals.map((comp) => comp.__ecstatic_component_key).join("");
+  return `req:${reqParts}|opt:${optParts}`;
 }
 
 /**
@@ -93,6 +96,10 @@ function computeArchetypeKey(
  * @throws If any component name is reserved (on archetypes)
  * @throws If any component appears in both required and optional, or twice in one list
  */
+export function archetype<const C extends readonly ComponentDescriptor[]>(
+  required?: C,
+  optionals?: readonly ComponentDescriptor[],
+): ArchetypeDescriptor<C>;
 export function archetype(
   required: readonly ComponentDescriptor[] = [],
   optionals: readonly ComponentDescriptor[] = [],
@@ -126,8 +133,8 @@ function validateArchetype(
   optionals: readonly ComponentDescriptor[],
 ): void {
   // Check optional count limit
-  if (optionals.length > 32) {
-    throw new Error("archetype supports at most 32 optional components");
+  if (optionals.length > MAX_OPTIONAL_COMPONENTS) {
+    throw new Error(`archetype supports at most ${MAX_OPTIONAL_COMPONENTS} optional components`);
   }
 
   // Collect all component names and check for duplicates

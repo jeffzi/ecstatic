@@ -2,6 +2,8 @@
  * Entity spawning: allocate entity IDs, initialize component fields.
  */
 
+import type { ArchetypeDescriptor, ComponentsOf } from "../archetype.js";
+import type { ComponentFields, ComponentName } from "../component.js";
 import type { EntityId } from "../entity-id.js";
 import { assertEntityIndex, initialEntityId, MAX_INDEX, OVERFLOW_MSG } from "../entity-id.js";
 import type { Storage, TypedArray, WorldState } from "../world.js";
@@ -15,6 +17,17 @@ import type { Storage, TypedArray, WorldState } from "../world.js";
 export type SpawnOverrides = Record<string, Record<string, unknown> | boolean>;
 
 /**
+ * Typed spawn overrides for a storage's archetype: per-component partial
+ * field records (or `true` for defaults). Wrong component names, unknown
+ * fields, and wrong value types are compile errors; `false` is rejected at
+ * the type level (required components cannot be disabled). Falls back to the
+ * untyped record form for a bare `Storage`.
+ */
+export type SpawnOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescriptor extends A
+  ? SpawnOverrides
+  : { [P in ComponentsOf<A>[number] as ComponentName<P>]?: Partial<ComponentFields<P>> | true };
+
+/**
  * Spawn an entity with optional component field overrides.
  *
  * Allocates a fresh or reused entity index (LIFO freelist), reads the slot's
@@ -24,6 +37,10 @@ export type SpawnOverrides = Record<string, Record<string, unknown> | boolean>;
  * @throws If the world is out of entity indices
  * @throws If an override sets a required component to `false`
  */
+export function spawn<A extends ArchetypeDescriptor>(
+  storage: Storage<A>,
+  overrides?: SpawnOverridesFor<A>,
+): EntityId;
 export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   const state = storage.world;
 
@@ -240,6 +257,17 @@ function fillBatch(
  *
  * @throws If the batch would exceed entity index capacity
  */
+export function spawnMany<A extends ArchetypeDescriptor>(
+  storage: Storage<A>,
+  count: number,
+  out: EntityId[],
+): EntityId[];
+export function spawnMany<A extends ArchetypeDescriptor>(
+  storage: Storage<A>,
+  count: number,
+  overrides?: SpawnOverridesFor<A>,
+  out?: EntityId[],
+): EntityId[];
 export function spawnMany(
   storage: Storage,
   count: number,
