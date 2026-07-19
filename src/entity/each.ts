@@ -34,6 +34,14 @@ export type EachView<A extends ArchetypeDescriptor = ArchetypeDescriptor> = {
   ? { readonly [key: string]: unknown }
   : { [P in ComponentsOf<A>[number] as ComponentName<P>]: ComponentFields<P> });
 
+/**
+ * Distributes EachView over a union of Storage types.
+ * For a single Storage<A>, returns EachView<A>.
+ * For a union Storage<A> | Storage<B>, returns EachView<A> | EachView<B>,
+ * which only provides access to properties common to all views.
+ */
+export type EachViewOf<S extends Storage> = S extends Storage<infer A> ? EachView<A> : never;
+
 /** A generated view paired with its row-index rebinder. */
 interface BoundView {
   view: EachView;
@@ -97,13 +105,14 @@ const viewPools = new WeakMap<Storage, { depth: number; views: BoundView[] }>();
  * Iteration runs backward (n−1 down to 0), so despawning the current entity
  * inside the callback is safe and entities spawned mid-pass are not visited.
  *
- * @param storage - The storage to iterate
+ * Accepts both single storages and unions of storages. When passed a union,
+ * the view type is the union of per-archetype views, providing type-safe access
+ * to only components present on all archetypes in the union.
+ *
+ * @param storage - The storage (or union of storages) to iterate
  * @param fn - Callback invoked per entity with the rebound view
  */
-export function each<A extends ArchetypeDescriptor>(
-  storage: Storage<A>,
-  fn: (view: EachView<A>) => void,
-): void;
+export function each<S extends Storage>(storage: S, fn: (view: EachViewOf<S>) => void): void;
 export function each(storage: Storage, fn: (view: EachView) => void): void {
   if (storage.n === 0) {
     return;
