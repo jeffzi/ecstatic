@@ -13,12 +13,9 @@ export {
   type FieldDescriptor,
   type FieldValue,
   f32,
-  f64,
   i8,
   i16,
   i32,
-  isComponentDescriptor,
-  isFieldDescriptor,
   type RefMarker,
   ref,
   type Tag,
@@ -34,7 +31,6 @@ export { type EachView, each } from "./entity/each.js";
 export { type SpawnOverrides, spawn, spawnMany } from "./entity/spawn.js";
 // Entity IDs
 export type { EntityId } from "./entity-id.js";
-export { entityGen, entityIndex, initialEntityId, MAX_INDEX } from "./entity-id.js";
 export type { Storage, World } from "./world.js";
 // World system
 export { createWorld, destroyWorld, getStorage, register } from "./world.js";
