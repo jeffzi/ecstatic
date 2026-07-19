@@ -111,6 +111,8 @@ function getColumnCtorForMarker(marker: WidthMarkerType): NumericColumnCtor {
       return Uint16Array;
     case U8_MARKER:
       return Uint8Array;
+    default:
+      throw new Error("unknown width marker");
   }
 }
 
@@ -141,6 +143,7 @@ function validateFields(componentName: string, fields: unknown): Record<string, 
     throw new Error(`component fields must be a table: ${componentName}`);
   }
 
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed by preceding guards
   const defaults = fields as Record<string, unknown>;
   for (const fieldName in defaults) {
     validateFieldName(componentName, fieldName);
@@ -163,6 +166,7 @@ function descriptorFromDefaults(
 ): Record<string, unknown> {
   // Sort fields by byte order (ASCII byte values, not locale-dependent)
   // JavaScript's default string sort is byte-order (UTF-16 code unit order)
+  // oxlint-disable-next-line unicorn/no-array-sort -- in-place sort of a fresh array; toSorted() would copy for no reason
   const fields = Object.keys(defaults).sort();
 
   // Build parallel arrays for defaults, references, and column constructors
@@ -250,6 +254,7 @@ function descriptorFromDefaults(
  * Used for fields that hold entity IDs, handles, or other typed references.
  */
 export function ref<T = unknown>(): RefMarker<T> {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
   return REF_SENTINEL as unknown as RefMarker<T>;
 }
 
@@ -295,6 +300,7 @@ export function components<T extends Record<string, Record<string, FieldDefault>
     result[name] = descriptorFromDefaults(name, defaults);
   }
 
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- opaque type return
   return result as unknown as {
     [K in keyof T]: keyof T[K] extends never
       ? Tag<K & string>
@@ -315,6 +321,7 @@ export function isComponentDescriptor(value: unknown): value is ComponentDescrip
     return false;
   }
 
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed by preceding guards
   const maybe = value as Record<string, unknown>;
   return (
     typeof maybe.__ecstatic_name === "string" &&
@@ -337,6 +344,7 @@ export function isFieldDescriptor(value: unknown): value is FieldDescriptor {
     return false;
   }
 
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed by preceding guards
   const maybe = value as Record<string, unknown>;
   return (
     isComponentDescriptor(maybe.__ecstatic_component) && typeof maybe.__ecstatic_field === "string"
@@ -368,7 +376,7 @@ export interface RefMarker<out T = unknown> extends ComponentDescriptor {
 }
 
 /** Allowed field default values: scalars, ref markers, and width markers. */
-export type FieldDefault = number | string | boolean | RefMarker<unknown> | WidthMarker;
+export type FieldDefault = number | string | boolean | RefMarker | WidthMarker;
 
 /** Map a declared field default to the field's value type (literals widened). */
 type InferFieldValue<D> =

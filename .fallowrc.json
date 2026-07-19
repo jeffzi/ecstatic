@@ -1,9 +1,16 @@
 {
   "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
   "entry": ["tests/types/*.test-d.ts", "tests/types/_fixtures.ts"],
-  "ignoreDependencies": ["cspell", "dprint", "fallow", "lefthook", "markdownlint-cli2"],
   "ignoreExportsUsedInFile": true,
-  "rules": {
-    "duplicate-exports": "off"
-  }
+  "ignoreDependencies": [
+    "cspell",
+    "fallow",
+    "lefthook",
+    "markdownlint-cli2",
+    "oxfmt",
+    "oxlint",
+    "oxlint-tsgolint"
+  ],
+  "duplicates": { "ignore": ["tests/**", "examples/**"] },
+  "rules": { "duplicate-exports": "off" }
 }

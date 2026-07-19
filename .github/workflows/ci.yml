@@ -3,36 +3,32 @@ name: CI
 on:
   push:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/ci.yml"
-      - "tsconfig*.json"
   pull_request:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/ci.yml"
-      - "tsconfig*.json"
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
-  check:
-    runs-on: ubuntu-latest
+  ci:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "lts/*"
           cache: "npm"
@@ -40,26 +36,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check (lint + format + typecheck + dead code + spelling + typelint)
-        run: npx biome check . && npx markdownlint-cli2 'README.md' 'CHANGELOG.md' 'docs/**/*.md' && npx tsc -b tsconfig.build.json && npm run check:fallow && npm run check:spelling && npm run check:typelint && npm run check:package
+      - name: Install workflow linters
+        shell: bash
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          pipx install zizmor
 
-  test:
-    runs-on: ubuntu-latest
+      - name: Check
+        run: npm run check
 
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "lts/*"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Test (types + unit)
-        run: npx vitest run --coverage
+      - name: Test
+        run: npm test

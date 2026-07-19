@@ -88,7 +88,7 @@ function buildView(storage: Storage): BoundView {
   }
 
   return {
-    // Cast is safe: `id` was defined above and the rest matches the index signature
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- opaque type return
     view: view as EachView,
     bind: (rowIndex) => {
       row = rowIndex;

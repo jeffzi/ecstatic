@@ -2,7 +2,7 @@ export interface DescriptorView {
   __ecstatic_name: string;
   __ecstatic_fields: string[];
   __ecstatic_defaults: Record<string, unknown>;
-  __ecstatic_default_values: (unknown | undefined)[];
+  __ecstatic_default_values: unknown[];
   __ecstatic_is_reference: (boolean | undefined)[];
   __ecstatic_component_key: string;
   __ecstatic_column_ctor?: (

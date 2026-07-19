@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { entityIndex, MAX_INDEX } from "../src/entity-id";
+
+import { entityIndex, MAX_INDEX } from "../src/entity-id.js";
 import { archetype, components, ref, spawn } from "../src/index.js";
 import { createWorld, register } from "../src/world.js";
 
@@ -139,11 +140,11 @@ describe("spawn", () => {
     spawn(storage, { [Stats.__ecstatic_name]: { data: tbl } });
 
     const col = storage.columns.get(Stats)!;
-    expect(col.data[0]).toBe(tbl);
+    expect(col.data![0]).toBe(tbl);
 
     // Spawn without override reads undefined for ref field
     spawn(storage);
-    expect(col.data[1]).toBeUndefined();
+    expect(col.data![1]).toBeUndefined();
   });
 
   describe("growth", () => {
@@ -162,7 +163,7 @@ describe("spawn", () => {
 
       // Verify earlier entities' column data survived
       const posCol = storage.columns.get(Position)!;
-      expect(posCol.x.length).toBeGreaterThanOrEqual(10);
+      expect(posCol.x!.length).toBeGreaterThanOrEqual(10);
     });
 
     it("spawning past world capacity grows world arrays and refreshes aliases", () => {

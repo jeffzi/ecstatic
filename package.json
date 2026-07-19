@@ -2,6 +2,22 @@
   "name": "ecstatic",
   "version": "0.1.0",
   "description": "Archetype-based ECS in TypeScript",
+  "keywords": [
+    "ecs",
+    "entity-component-system",
+    "gamedev",
+    "typescript"
+  ],
+  "license": "MIT",
+  "author": "jeffzi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeffzi/ecstatic.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -10,55 +26,49 @@
       "default": "./dist/index.js"
     }
   },
-  "files": [
-    "dist"
-  ],
-  "license": "MIT",
-  "author": "jeffzi",
-  "type": "commonjs",
-  "engines": {
-    "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/jeffzi/ecstatic.git"
-  },
-  "keywords": [
-    "ecs",
-    "entity-component-system",
-    "typescript",
-    "gamedev"
-  ],
   "scripts": {
-    "prepare": "npm run build && (test -d .git && lefthook install || true)",
-    "build": "tsc -b tsconfig.build.json",
-    "test": "vitest run --coverage",
-    "test:types": "vitest run --project types",
+    "build": "tsc -p tsconfig.build.json",
+    "check:actions": "actionlint && zizmor .github/workflows",
+    "check:fmt": "oxfmt --check",
+    "check:lint": "oxlint",
+    "check:md": "markdownlint-cli2 \"**/*.md\"",
+    "check:package": "npx -y publint && npx -y @arethetypeswrong/cli --pack .",
+    "check:quality": "fallow --fail-on-issues --quiet",
+    "check:security": "fallow security",
+    "check:spelling": "cspell --no-progress \"**/*.{ts,tsx,mts,cts,md}\"",
+    "check:type": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.examples.json --noEmit",
+    "check:typelint": "oxlint --type-aware",
+    "check": "run-s -c check:lint check:md check:fmt check:actions check:typelint check:quality check:spelling check:type",
     "examples": "npm run build && tsx examples/basics.ts && tsx examples/iteration.ts && tsx examples/component-sets.ts && tsx examples/relationships.ts",
-    "check": "biome check --fix . && markdownlint-cli2 'README.md' 'CHANGELOG.md' 'docs/**/*.md' && tsc -b && npm run check:fallow && npm run check:spelling && npm run check:typelint",
-    "check:package": "publint && attw --pack .",
-    "check:fallow": "fallow audit --quiet --dead-code-baseline fallow-baselines/dead-code.json --health-baseline fallow-baselines/health.json --dupes-baseline fallow-baselines/dupes.json",
-    "check:typelint": "oxlint --type-aware src",
-    "check:spelling": "cspell --no-progress --no-summary",
-    "prepublishOnly": "npm run build && npm run check && npm test"
+    "fix:fmt": "oxfmt",
+    "fix:lint": "oxlint --fix",
+    "fix:md": "markdownlint-cli2 --fix \"**/*.md\"",
+    "fix:quality": "fallow fix --yes --no-create-config",
+    "fix": "run-s fix:lint fix:md fix:fmt",
+    "prepare": "test -d .git && lefthook install || true",
+    "prepublishOnly": "npm run build && npm run check && npm run check:package && npm test",
+    "test:types": "vitest run --project types",
+    "test": "vitest run --coverage"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.18.0",
-    "@biomejs/biome": "^2.5.0",
-    "@commitlint/cli": "^21.2.0",
+    "@commitlint/cli": "^21.2.1",
     "@commitlint/config-conventional": "^21.2.0",
-    "@types/node": "^26.1.0",
-    "@vitest/coverage-v8": "^4.1.0",
-    "cspell": "^10.0.0",
-    "dprint": "^0.55.0",
+    "@types/node": "^26.1.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "cspell": "^10.0.1",
+    "esbuild": "^0.28.0",
     "fallow": "^3.6.0",
-    "lefthook": "^2.1.0",
-    "markdownlint-cli2": "^0.23.0",
+    "lefthook": "^2.1.10",
+    "markdownlint-cli2": "^0.23.1",
+    "npm-run-all2": "^9.0.0",
+    "oxfmt": "^0.59.0",
     "oxlint": "^1.74.0",
     "oxlint-tsgolint": "^0.25.0",
-    "publint": "^0.3.0",
-    "tsx": "^4.23.0",
-    "typescript": "^7.0.0",
-    "vitest": "^4.1.0"
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { archetype } from "../src/archetype";
-import { type ComponentDescriptor, components } from "../src/component";
+
+import { archetype } from "../src/archetype.js";
+import { type ComponentDescriptor, components } from "../src/component.js";
 
 describe("archetype", () => {
   describe("basic construction", () => {
@@ -13,6 +14,7 @@ describe("archetype", () => {
         expect.objectContaining({
           components: [A, B],
           optionals: [],
+          // oxlint-disable-next-line typescript/no-unsafe-assignment -- expect.any() returns any by design
           id: expect.any(Number),
         }),
       );
@@ -225,7 +227,7 @@ describe("archetype", () => {
         const { [i]: Comp } = components({
           [i]: { val: i },
         });
-        optionals.push(Comp);
+        optionals.push(Comp!);
       }
 
       expect(() => {

@@ -1,4 +1,5 @@
 import { describe, expectTypeOf, it } from "vitest";
+
 import { archetype, createWorld, type EntityId, each, register } from "../../src/index.js";
 import { Payload, Position } from "./_fixtures.js";
 

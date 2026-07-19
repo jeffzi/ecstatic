@@ -1,4 +1,5 @@
 import { describe, expectTypeOf, it } from "vitest";
+
 import { archetype, createWorld, type EntityId, register, spawn } from "../../src/index.js";
 import { Health, Position } from "./_fixtures.js";
 
