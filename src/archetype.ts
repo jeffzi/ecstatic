@@ -202,6 +202,7 @@ function buildArchetypeDescriptor(
   }
 
   // Create the descriptor object (cast to mutable to allow self-reference setup)
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- mutable construction
   const desc = {
     id,
     components: required,

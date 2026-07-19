@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+
 import {
   archetype,
+  component,
   components,
   createWorld,
   despawn,
@@ -114,6 +116,31 @@ describe("set", () => {
     expect(() => {
       set(storage, id, Velocity, { vx: 1 });
     }).toThrow();
+  });
+});
+
+describe("resolveFieldColumn errors", () => {
+  it("errors when component has no data fields (optional tag)", () => {
+    const AccessTag = component("AccessTag");
+    const world = createWorld();
+    const Arch = archetype([Position], [AccessTag]);
+    const storage = register(world, Arch);
+    const id = spawn(storage);
+
+    expect(() => {
+      get(storage, id, { __ecstatic_component: AccessTag, __ecstatic_field: "x" });
+    }).toThrow("has no data fields");
+  });
+
+  it("errors on unknown field name", () => {
+    const world = createWorld();
+    const Arch = archetype([Position]);
+    const storage = register(world, Arch);
+    const id = spawn(storage);
+
+    expect(() => {
+      get(storage, id, { __ecstatic_component: Position, __ecstatic_field: "z" });
+    }).toThrow("unknown field");
   });
 });
 

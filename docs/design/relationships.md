@@ -121,9 +121,9 @@ Define a one-to-one relation. Returns a branded relation descriptor — assignab
 (`{ offsetX: 0 }`).
 
 ```typescript
-const Owner = relation("Owner");                                // pure link, any entity
-const Targets = relation("Targets", [Position]);                // target must have Position
-const LastHitBy = relation("LastHitBy", { damage: 0 });         // unconstrained + data
+const Owner = relation("Owner"); // pure link, any entity
+const Targets = relation("Targets", [Position]); // target must have Position
+const LastHitBy = relation("LastHitBy", { damage: 0 }); // unconstrained + data
 const ChildOf = relation("ChildOf", [Position], { offsetX: 0 }); // constrained + data
 ```
 
@@ -138,12 +138,12 @@ Relations are declared in archetype tuples — required or optional, same as com
 
 ```typescript
 const Missile = archetype(
-  [Position, Velocity, Targets],  // Targets required — always has one
+  [Position, Velocity, Targets], // Targets required — always has one
   [],
 );
 
 const Turret = archetype(
-  [Position, ChildOf],             // ChildOf required — always has a parent
+  [Position, ChildOf], // ChildOf required — always has a parent
   [],
 );
 ```
@@ -244,8 +244,10 @@ Two reads, differing only in the liveness check:
 
 ```typescript
 // get: returns the raw stored EntityId — no liveness check
-const v = get(turrets, turretId, ChildOf.target);   // EntityId
-if (alive(world, v)) { /* live */ }
+const v = get(turrets, turretId, ChildOf.target); // EntityId
+if (alive(world, v)) {
+  /* live */
+}
 
 // getTarget: returns undefined if the relation is unlinked OR the target is dead
 const enemy = getTarget(world, missileId, Targets); // EntityId | undefined
@@ -317,12 +319,7 @@ iterating, or hand them to `despawnMany` — `getSources` returns an `EntityId[]
 of calling back.
 
 ```typescript
-function getSources(
-  world: World,
-  rel: Relation,
-  target: EntityId,
-  out?: EntityId[],
-): EntityId[];
+function getSources(world: World, rel: Relation, target: EntityId, out?: EntityId[]): EntityId[];
 ```
 
 - **`out` omitted** → allocates a fresh, owned array. Convenient default; safe to hold
@@ -333,12 +330,12 @@ function getSources(
 - The result is always a clean array of exactly the live sources: in the `out` path the
   leftover tail is cleared, so `result.length === n` holds whether the array was allocated
   or reused. Index it 0-based like any returned `EntityId[]` (`for…of`, or `0 … length -
-  1`).
+1`).
 - A stale or dead `target` (generation-checked) yields an empty result, matching
   `querySources` visiting nothing.
 
 ```typescript
-getSources(world, MemberOf, teamRed).length;          // count, directly
+getSources(world, MemberOf, teamRed).length; // count, directly
 
 // a snapshot lets you mutate the whole set freely — retarget or despawn ANY source,
 // not just the current one. Inside a querySources callback only the current source
@@ -349,7 +346,9 @@ for (const m of getSources(world, MemberOf, teamRed)) {
 
 // zero-alloc with a reused buffer
 const filled = getSources(world, ContainedIn, bag, scratch);
-for (let i = 0; i < filled.length; i++) { /* filled[i] */ }
+for (let i = 0; i < filled.length; i++) {
+  /* filled[i] */
+}
 ```
 
 `getSources` returns **bare IDs** — no bitmask context, no typed storage. Filtered or
@@ -381,8 +380,8 @@ despawnMany(world, children);
 // The target must stay alive for the walk; each despawn removes its source from the
 // still-live bucket with an O(1) hash delete, so this form is O(S) total like form 1.
 querySources(world, ChildOf, vehicleId, (e) => {
-  gameObjects.delete(get(world, e.id, GameObject.root));  // release foreign handle
-  despawn(world, e.id);  // safe despawn-during-iteration
+  gameObjects.delete(get(world, e.id, GameObject.root)); // release foreign handle
+  despawn(world, e.id); // safe despawn-during-iteration
 });
 despawn(vehicles, vehicleId);
 ```
@@ -462,10 +461,7 @@ function relation<N extends string, Comps extends Component[]>(
   constraints: [...Comps],
 ): Relation<N, {}, Comps>;
 
-function relation<N extends string, T extends object>(
-  name: N,
-  defaults: T,
-): Relation<N, T, []>;
+function relation<N extends string, T extends object>(name: N, defaults: T): Relation<N, T, []>;
 
 function relation<N extends string, Comps extends Component[], T extends object>(
   name: N,
@@ -496,7 +492,7 @@ type RelationConstraints<R extends Relation> =
 type With<C extends Component | readonly Component[]> = EntityId & {
   readonly [__ecs_entity_meta]: {
     components: PhantomComponents<EntityId> & {
-      [K in (C extends readonly Component[] ? C[number] : C) as PhantomName<K>]: true
+      [K in C extends readonly Component[] ? C[number] : C as PhantomName<K>]: true;
     };
   };
 };
@@ -540,7 +536,7 @@ Relation-specific fields are read via a `getRelationMeta(rel)` accessor that ret
 ```typescript
 interface RelationDescriptor extends ComponentDescriptor {
   isRelation: true;
-  constraints: ComponentDescriptor[];  // components the target must have (empty = any)
+  constraints: ComponentDescriptor[]; // components the target must have (empty = any)
 }
 ```
 

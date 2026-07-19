@@ -112,9 +112,7 @@ interface Queue<T> {
   columns: { [K in keyof T]: T[K][] };
 }
 
-function createQueue<T extends Record<string, unknown>>(
-  fields: (keyof T)[],
-): Queue<T> {
+function createQueue<T extends Record<string, unknown>>(fields: (keyof T)[]): Queue<T> {
   const columns = {} as { [K in keyof T]: T[K][] };
   for (const f of fields) {
     columns[f] = [];
@@ -122,10 +120,7 @@ function createQueue<T extends Record<string, unknown>>(
   return { count: 0, columns };
 }
 
-function pushQueue<T extends Record<string, unknown>>(
-  q: Queue<T>,
-  value: T,
-): void {
+function pushQueue<T extends Record<string, unknown>>(q: Queue<T>, value: T): void {
   const i = q.count;
   q.count = i + 1;
   for (const [k, v] of Object.entries(value)) {
@@ -151,9 +146,7 @@ function clearQueue(q: Queue<unknown>): void {
 Usage:
 
 ```typescript
-const damageQueue = createQueue<{ targetId: number; amount: number }>(
-  ["targetId", "amount"],
-);
+const damageQueue = createQueue<{ targetId: number; amount: number }>(["targetId", "amount"]);
 
 // Producer: combat system records hits
 each(projectiles, (e) => {
@@ -176,11 +169,7 @@ drainQueue(damageQueue, (cols, i) => {
 // If multiple consumers need the same events, iterate with a plain loop
 // instead of drain, then clear manually at end of frame:
 for (let i = 0; i < damageQueue.count; i++) {
-  spawnHitEffect(
-    world,
-    damageQueue.columns.targetId[i],
-    damageQueue.columns.amount[i],
-  );
+  spawnHitEffect(world, damageQueue.columns.targetId[i], damageQueue.columns.amount[i]);
 }
 clearQueue(damageQueue);
 ```
@@ -277,10 +266,7 @@ disable when it expires.
 const Cooldown = component("Cooldown", { remaining: 0 });
 
 // Declare as optional on the archetype
-const Player = archetype(
-  [Position, Health],
-  [Cooldown]
-);
+const Player = archetype([Position, Health], [Cooldown]);
 
 // Start cooldown
 enable(players, playerId, Cooldown, { remaining: 2.0 });
@@ -362,10 +348,7 @@ const { Idle, Moving, Attacking } = components({
   Attacking: {},
 });
 
-const Enemy = archetype(
-  [Position, Health],
-  [Idle, Moving, Attacking]
-);
+const Enemy = archetype([Position, Health], [Idle, Moving, Attacking]);
 
 // Spawn enemies in the Idle state — optional overrides at spawn time
 const enemy = spawn(enemies, { Idle: true });
@@ -480,10 +463,7 @@ for (let i = 0; i < collisionQueue.count; i++) {
 
 // Consumer 2: VFX system (reads same pairs)
 for (let i = 0; i < collisionQueue.count; i++) {
-  spawnImpactEffect(
-    collisionQueue.columns.a[i],
-    collisionQueue.columns.b[i],
-  );
+  spawnImpactEffect(collisionQueue.columns.a[i], collisionQueue.columns.b[i]);
 }
 
 // End of frame
@@ -538,8 +518,9 @@ slots and calls one bulk column clear. The per-entity loop runs a full swap-and-
 every entity.
 
 ```typescript
-despawnMany(projectiles);  // bulk clear — an order of magnitude faster than:
-for (const id of ids) {     // N swap-and-pops
+despawnMany(projectiles); // bulk clear — an order of magnitude faster than:
+for (const id of ids) {
+  // N swap-and-pops
   despawn(projectiles, id);
 }
 ```

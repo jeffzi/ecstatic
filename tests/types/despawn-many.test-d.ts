@@ -1,4 +1,5 @@
 import { describe, it } from "vitest";
+
 import { archetype, createWorld, despawnMany, register, spawnMany } from "../../src/index.js";
 import { Position, Velocity } from "./_fixtures.js";
 

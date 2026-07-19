@@ -124,13 +124,14 @@ export type World = WorldState & { readonly __brand: "World" };
 export function createWorld(): World {
   const state: WorldState = {
     storages: new Map(),
-    entityArch: new Array(INITIAL_WORLD_CAPACITY),
+    entityArch: Array.from({ length: INITIAL_WORLD_CAPACITY }),
     generation: new Float64Array(INITIAL_WORLD_CAPACITY),
     sparse: new Int32Array(INITIAL_WORLD_CAPACITY),
     freeHead: -1,
     nextIndex: 0,
   };
 
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- opaque type return
   return state as World;
 }
 
@@ -220,6 +221,7 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
 
     for (let i = 0; i < fields.length; i++) {
       if (isRef[i] === true) {
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- ref column is always plain array
         despawnClear.push(soa[fields[i]!] as Array<unknown>);
       }
     }
@@ -279,7 +281,7 @@ function createSoA(comp: ComponentDescriptor, capacity: number): SoAColumns {
       soa[fieldName] = new ctor(capacity);
     } else {
       // Ref or string field: use plain array
-      soa[fieldName] = new Array(capacity);
+      soa[fieldName] = Array.from({ length: capacity });
     }
   }
 
@@ -306,12 +308,13 @@ export function destroyWorld(world: World): void {
   // IDs), then disconnect each storage so operations on a detached storage fail.
   for (const storage of state.storages.values()) {
     despawnMany(storage);
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- opaque field mutation
     (storage as unknown as { world: WorldState | undefined }).world = undefined;
   }
 
   // Reset world state to initial capacity
   state.storages.clear();
-  state.entityArch = new Array(INITIAL_WORLD_CAPACITY);
+  state.entityArch = Array.from({ length: INITIAL_WORLD_CAPACITY });
   state.generation = new Float64Array(INITIAL_WORLD_CAPACITY);
   state.sparse = new Int32Array(INITIAL_WORLD_CAPACITY);
   state.freeHead = -1;

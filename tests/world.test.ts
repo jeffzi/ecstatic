@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { archetype, components, i32, ref } from "../src/index.js";
 import { createWorld, getStorage, register } from "../src/world.js";
 

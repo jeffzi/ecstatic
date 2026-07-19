@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import {
   components,
   type FieldDefault,
@@ -13,8 +14,8 @@ import {
   u8,
   u16,
   u32,
-} from "../src/component";
-import { md } from "./fixtures";
+} from "../src/component.js";
+import { md } from "./fixtures.js";
 
 describe("component", () => {
   it("returns a descriptor table", () => {
@@ -283,7 +284,7 @@ describe("isComponentDescriptor", () => {
 describe("isFieldDescriptor", () => {
   it("returns true for field descriptors", () => {
     const { FieldDesc: Comp } = components({ FieldDesc: { x: 0 } });
-    const field = (Comp as unknown as Record<string, unknown>).x as unknown;
+    const field = (Comp as unknown as Record<string, unknown>).x;
     expect(isFieldDescriptor(field)).toBe(true);
   });
 

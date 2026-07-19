@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import {
   assertEntityIndex,
   entityGen,
@@ -6,7 +7,7 @@ import {
   initialEntityId,
   MAX_GEN,
   MAX_INDEX,
-} from "../src/entity-id";
+} from "../src/entity-id.js";
 
 describe("generational IDs", () => {
   it("uses 24 index bits and the remaining safe integer budget for generations", () => {
@@ -46,12 +47,18 @@ describe("generational IDs", () => {
 
   it("rejects fresh entity indices at the derived index limit", () => {
     // Should not throw at MAX_INDEX - 1
-    expect(() => assertEntityIndex(MAX_INDEX - 1)).not.toThrow();
+    expect(() => {
+      assertEntityIndex(MAX_INDEX - 1);
+    }).not.toThrow();
 
     // Should throw at MAX_INDEX
-    expect(() => assertEntityIndex(MAX_INDEX)).toThrow();
+    expect(() => {
+      assertEntityIndex(MAX_INDEX);
+    }).toThrow();
 
     // Error message should mention MAX_INDEX - 1
-    expect(() => assertEntityIndex(MAX_INDEX)).toThrow(new RegExp(String(MAX_INDEX - 1)));
+    expect(() => {
+      assertEntityIndex(MAX_INDEX);
+    }).toThrow(new RegExp(String(MAX_INDEX - 1)));
   });
 });

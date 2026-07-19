@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import {
   archetype,
   components,
@@ -203,6 +204,24 @@ describe("each — edge cases", () => {
     const flagCol = storage.columns.get(Flag)!;
     // Boolean false should be stored as 0 in Uint8Array
     expect(flagCol.enabled![0]).toBe(0);
+  });
+
+  it("boolean view setter stores 1 when writing true", () => {
+    const world = createWorld();
+    const { EachBoolSet: BoolComp } = components({
+      EachBoolSet: { active: false },
+    });
+    const Arch = archetype([Position, BoolComp]);
+    const storage = register(world, Arch);
+
+    spawn(storage);
+
+    each(storage, (e) => {
+      e.EachBoolSet.active = true;
+    });
+
+    const col = storage.columns.get(BoolComp)!;
+    expect(col.active![0]).toBe(1);
   });
 });
 

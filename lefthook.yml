@@ -1,32 +1,34 @@
+# yaml-language-server: $schema=https://json.schemastore.org/lefthook.json
 pre-commit:
   commands:
-    check:
-      glob: "**/*.{ts,js,json}"
-      run: npx biome check --staged --write --no-errors-on-unmatched
+    lint:
+      glob: "**/*.{ts,tsx,mts,cts,js}"
+      run: npx oxlint --fix {staged_files}
       stage_fixed: true
-    dprint:
+    md:
       glob: "**/*.md"
-      run: npx dprint fmt {staged_files}
+      run: npx markdownlint-cli2 --fix {staged_files}
       stage_fixed: true
-    markdownlint:
-      glob: "**/*.md"
-      run: npx markdownlint-cli2 {staged_files} --fix
+    fmt:
+      glob: "**/*.{ts,tsx,mts,cts,js,json,jsonc,md,yml,yaml}"
+      # oxfmt errors when every staged file is ignored; oxlint exits 0 and needs no guard
+      run: npx oxfmt --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
-    typecheck:
-      glob: "**/*.ts"
-      run: npx tsc -b
-    fallow:
-      glob: "**/*.{ts,js,json}"
-      run: npx fallow audit --quiet --dead-code-baseline fallow-baselines/dead-code.json --health-baseline fallow-baselines/health.json --dupes-baseline fallow-baselines/dupes.json
-    spelling:
-      glob: "**/*.md"
-      run: npx cspell --no-progress --no-summary {staged_files}
+    type:
+      glob: "**/*.{ts,tsx,mts,cts}"
+      run: npm run check:type
+    quality:
+      glob: "**/*.{ts,tsx,mts,cts,js,json}"
+      run: npm run check:quality
     typelint:
-      glob: "**/*.ts"
-      run: npx oxlint --type-aware src
-    actionlint:
+      glob: "**/*.{ts,tsx,mts,cts}"
+      run: npm run check:typelint
+    spelling:
+      glob: "**/*.{ts,tsx,mts,cts,md}"
+      run: npx cspell --no-progress --no-summary {staged_files}
+    actions:
       glob: ".github/workflows/*.yml"
-      run: actionlint
+      run: actionlint {staged_files} && zizmor {staged_files}
 
 commit-msg:
   commands:
@@ -35,8 +37,8 @@ commit-msg:
 
 pre-push:
   commands:
+    check:
+      run: npm run check
     test:
-      glob: "src/**/*.ts"
-      run: npx vitest run --coverage
-    package:
-      run: npm run check:package
+      glob: "**/*.{ts,tsx,mts,cts}"
+      run: npm test
