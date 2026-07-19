@@ -34,6 +34,7 @@
     "build": "tsc -b tsconfig.build.json",
     "test": "vitest run --coverage",
     "test:types": "vitest run --project types",
+    "examples": "npm run build && tsx examples/basics.ts && tsx examples/iteration.ts && tsx examples/component-sets.ts && tsx examples/relationships.ts",
     "check": "biome check --fix . && markdownlint-cli2 'README.md' 'CHANGELOG.md' 'docs/**/*.md' && tsc -b && npm run check:fallow && npm run check:spelling && npm run check:typelint",
     "check:package": "publint && attw --pack .",
     "check:fallow": "fallow audit --quiet --dead-code-baseline fallow-baselines/dead-code.json --health-baseline fallow-baselines/health.json --dupes-baseline fallow-baselines/dupes.json",
