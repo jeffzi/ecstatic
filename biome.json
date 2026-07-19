@@ -41,5 +41,15 @@
   },
   "files": {
     "includes": ["**", "!**/node_modules", "!**/dist"]
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["examples/**"],
+      "linter": {
+        "rules": {
+          "suspicious": { "noConsole": "off" }
+        }
+      }
+    }
+  ]
 }
