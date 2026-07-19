@@ -25,6 +25,7 @@ export {
 export { get, set } from "./entity/access.js";
 export { alive } from "./entity/common.js";
 export { despawn, despawnMany } from "./entity/despawn.js";
+export { each } from "./entity/each.js";
 export { spawn, spawnMany } from "./entity/spawn.js";
 // Entity IDs
 export type { EntityId } from "./entity-id.js";
