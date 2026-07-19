@@ -13,20 +13,26 @@
  * rebinds distinct views.
  */
 
+import type { ArchetypeDescriptor, ComponentsOf } from "../archetype.js";
+import type { ComponentFields, ComponentName } from "../component.js";
+import type { EntityId } from "../entity-id.js";
 import type { Storage } from "../world.js";
 
 /**
- * The view object passed to the each() callback.
- * Has an `id` property and one accessor object per component on the archetype.
+ * The view object passed to the each() callback: an `id` accessor plus one
+ * mutable field record per component on the archetype, typed from the
+ * storage's registered archetype (untyped accessor record for a bare
+ * `Storage`).
+ *
  * Views are ephemeral: they are rebound per row and must not be stored — the
  * ID is the durable handle for anything outliving the callback.
  */
-interface EachView {
+export type EachView<A extends ArchetypeDescriptor = ArchetypeDescriptor> = {
   /** The entity ID of the current row being iterated. */
-  readonly id: number;
-  /** Component accessors (dynamic properties keyed by component name). */
-  readonly [key: string]: unknown;
-}
+  readonly id: EntityId;
+} & (ArchetypeDescriptor extends A
+  ? { readonly [key: string]: unknown }
+  : { [P in ComponentsOf<A>[number] as ComponentName<P>]: ComponentFields<P> });
 
 /** A generated view paired with its row-index rebinder. */
 interface BoundView {
@@ -94,6 +100,10 @@ const viewPools = new WeakMap<Storage, { depth: number; views: BoundView[] }>();
  * @param storage - The storage to iterate
  * @param fn - Callback invoked per entity with the rebound view
  */
+export function each<A extends ArchetypeDescriptor>(
+  storage: Storage<A>,
+  fn: (view: EachView<A>) => void,
+): void;
 export function each(storage: Storage, fn: (view: EachView) => void): void {
   if (storage.n === 0) {
     return;

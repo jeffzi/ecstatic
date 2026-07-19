@@ -54,12 +54,9 @@ describe("each — single archetype", () => {
     let readX = 0;
     let readY = 0;
     each(storage, (e) => {
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      readX = (e as any).EachTestPosition.x;
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      readY = (e as any).EachTestPosition.y;
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      (e as any).EachTestPosition.x = 99;
+      readX = e.EachTestPosition.x;
+      readY = e.EachTestPosition.y;
+      e.EachTestPosition.x = 99;
     });
 
     expect(readX).toBe(10);
@@ -146,8 +143,7 @@ describe("each — edge cases", () => {
         colGrew = true;
       }
       // Write through the view — must work even after column growth
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      (e as any).EachTestPosition.x = (e as any).EachTestPosition.x + 1000;
+      e.EachTestPosition.x = e.EachTestPosition.x + 1000;
     });
 
     // After iteration, all initially-present entities should have their values incremented
@@ -199,10 +195,8 @@ describe("each — edge cases", () => {
 
     let readEnabled = false;
     each(storage, (e) => {
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      readEnabled = (e as any).EachTestFlag.enabled;
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      (e as any).EachTestFlag.enabled = false;
+      readEnabled = e.EachTestFlag.enabled;
+      e.EachTestFlag.enabled = false;
     });
 
     expect(readEnabled).toBe(true);
@@ -244,8 +238,7 @@ describe("component set — archetype declared via spread", () => {
     let count = 0;
     each(storage, (e) => {
       count++;
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      expect((e as any).EachTestPosition.x).toBeDefined();
+      expect(e.EachTestPosition.x).toBeDefined();
     });
     expect(count).toBe(3);
   });

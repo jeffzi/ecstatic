@@ -37,14 +37,10 @@ describe("view — field access", () => {
     });
 
     each(storage, (e) => {
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      expect((e as any).ViewTestPosition.x).toBe(10);
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      expect((e as any).ViewTestPosition.y).toBe(20);
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      (e as any).ViewTestPosition.x = 99;
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      (e as any).ViewTestPosition.y = 88;
+      expect(e.ViewTestPosition.x).toBe(10);
+      expect(e.ViewTestPosition.y).toBe(20);
+      e.ViewTestPosition.x = 99;
+      e.ViewTestPosition.y = 88;
     });
 
     expect(get(storage, id, Position.x)).toBe(99);
@@ -62,10 +58,8 @@ describe("view — field access", () => {
     });
 
     each(storage, (e) => {
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      (e as any).ViewTestPosition.x += (e as any).ViewTestVelocity.vx;
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      (e as any).ViewTestPosition.y += (e as any).ViewTestVelocity.vy;
+      e.ViewTestPosition.x += e.ViewTestVelocity.vx;
+      e.ViewTestPosition.y += e.ViewTestVelocity.vy;
     });
 
     expect(get(storage, id, Position.x)).toBe(13);
@@ -82,10 +76,8 @@ describe("view — field access", () => {
     });
 
     each(storage, (e) => {
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      (e as any).ViewTestPosition.x++;
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      (e as any).ViewTestPosition.y--;
+      e.ViewTestPosition.x++;
+      e.ViewTestPosition.y--;
     });
 
     expect(get(storage, id, Position.x)).toBe(6);
@@ -109,16 +101,12 @@ describe("view — field access", () => {
 
     // Compound form
     each(s1, (e) => {
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      (e as any).ViewTestPosition.x += (e as any).ViewTestVelocity.vx;
+      e.ViewTestPosition.x += e.ViewTestVelocity.vx;
     });
 
     // Expanded form
     each(s2, (e) => {
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      (e as any).ViewTestPosition.x =
-        // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-        (e as any).ViewTestPosition.x + (e as any).ViewTestVelocity.vx;
+      e.ViewTestPosition.x = e.ViewTestPosition.x + e.ViewTestVelocity.vx;
     });
 
     expect(get(s1, id1, Position.x)).toBe(get(s2, id2, Position.x));
@@ -137,10 +125,8 @@ describe("view — field access", () => {
 
     let readData: number[] | undefined;
     each(storage, (e) => {
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      readData = (e as any).ViewTestRefComp.data;
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      (e as any).ViewTestRefComp.data = [4, 5];
+      readData = e.ViewTestRefComp.data;
+      e.ViewTestRefComp.data = [4, 5];
     });
 
     expect(readData).toBe(arr);
@@ -217,8 +203,7 @@ describe("view — nested each", () => {
     each(storage, (outer) => {
       each(storage, (inner) => {
         if (outer.id !== inner.id) {
-          // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-          (outer as any).ViewTestPosition.y += (inner as any).ViewTestPosition.x;
+          outer.ViewTestPosition.y += inner.ViewTestPosition.x;
         }
       });
     });
@@ -228,8 +213,7 @@ describe("view — nested each", () => {
     // Entity 1 (x=1): y = 2 (from entity 2)
     const ys: number[] = [];
     each(storage, (e) => {
-      // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-      ys.push((e as any).ViewTestPosition.y);
+      ys.push(e.ViewTestPosition.y);
     });
     // Reverse order: entity 2 then entity 1
     expect(ys[0]).toBe(1); // entity 2: y = 1
@@ -247,8 +231,7 @@ describe("view — nested each", () => {
     let sum = 0;
     each(storage, (outer) => {
       each(storage, () => {
-        // biome-ignore lint/suspicious/noExplicitAny: view is dynamically generated
-        sum += (outer as any).ViewTestPosition.x;
+        sum += outer.ViewTestPosition.x;
       });
     });
 

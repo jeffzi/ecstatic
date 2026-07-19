@@ -19,6 +19,9 @@ export default defineConfig({
           typecheck: {
             enabled: true,
             include: ["tests/types/**/*.test-d.ts"],
+            // The root tsconfig.json is solution-style ("files": []) — without an
+            // explicit project the checker resolves zero files and passes vacuously
+            tsconfig: "./tsconfig.test.json",
           },
         },
       },

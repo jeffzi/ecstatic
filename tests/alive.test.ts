@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alive, archetype, components, spawn } from "../src/index.js";
+import { alive, archetype, components, type EntityId, spawn } from "../src/index.js";
 import { createWorld, register } from "../src/world.js";
 
 const { AliveTestPosition: Position } = components({
@@ -46,7 +46,8 @@ describe("alive", () => {
     const storage = register(world, Arch);
 
     // A never-allocated ID should have generation 0 which won't match
-    const neverAllocatedId = 999999;
+    // Cast fabricates an invalid branded ID on purpose
+    const neverAllocatedId = 999999 as EntityId;
     expect(alive(storage, neverAllocatedId)).toBe(false);
   });
 });

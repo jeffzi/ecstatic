@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   components,
+  type FieldDefault,
   f32,
   f64,
   i8,
@@ -117,6 +118,7 @@ describe("component", () => {
 
     it("errors on table default that is not ref()", () => {
       expect(() => {
+        // @ts-expect-error table defaults are rejected at the type level too
         components({ ComponentSpecRefRejectTable: { tbl: { a: 1 } } });
       }).toThrow(/declare the field with ref/);
     });
@@ -154,6 +156,7 @@ describe("component", () => {
 
     it("error message for table default mentions ref", () => {
       expect(() => {
+        // @ts-expect-error table defaults are rejected at the type level too
         components({ ComponentSpecRefErrorMsg: { tbl: { x: 1 } } });
       }).toThrow(/declare the field with ref/);
     });
@@ -280,7 +283,7 @@ describe("isComponentDescriptor", () => {
 describe("isFieldDescriptor", () => {
   it("returns true for field descriptors", () => {
     const { FieldDesc: Comp } = components({ FieldDesc: { x: 0 } });
-    const field = (Comp as Record<string, unknown>).x as unknown;
+    const field = (Comp as unknown as Record<string, unknown>).x as unknown;
     expect(isFieldDescriptor(field)).toBe(true);
   });
 
@@ -316,7 +319,7 @@ describe("special object types rejection", () => {
     expect(() => {
       components({
         ComponentSpecValidation_date: new Date(),
-      } as Record<string, Record<string, unknown>>);
+      } as unknown as Record<string, Record<string, FieldDefault>>);
     }).toThrow(/component fields must be a table/);
   });
 
@@ -324,7 +327,7 @@ describe("special object types rejection", () => {
     expect(() => {
       components({
         ComponentSpecValidation_map: new Map(),
-      } as Record<string, Record<string, unknown>>);
+      } as unknown as Record<string, Record<string, FieldDefault>>);
     }).toThrow(/component fields must be a table/);
   });
 
@@ -332,7 +335,7 @@ describe("special object types rejection", () => {
     expect(() => {
       components({
         ComponentSpecValidation_set: new Set(),
-      } as Record<string, Record<string, unknown>>);
+      } as unknown as Record<string, Record<string, FieldDefault>>);
     }).toThrow(/component fields must be a table/);
   });
 });

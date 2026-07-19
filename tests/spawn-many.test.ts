@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAX_INDEX } from "../src/entity-id";
-import { alive, archetype, components, despawn, spawnMany } from "../src/index.js";
+import { alive, archetype, components, despawn, type EntityId, spawnMany } from "../src/index.js";
 import { createWorld, register } from "../src/world.js";
 
 const { SpawnManyTestPosition: Position } = components({
@@ -182,7 +182,7 @@ describe("spawnMany", () => {
       const world = createWorld();
       const Arch = archetype([Position]);
       const storage = register(world, Arch);
-      const buf: number[] = [];
+      const buf: EntityId[] = [];
 
       const result = spawnMany(storage, 3, buf);
 
@@ -220,7 +220,7 @@ describe("spawnMany", () => {
       const world = createWorld();
       const Arch = archetype([Position, Shield]);
       const storage = register(world, Arch);
-      const buf: number[] = [];
+      const buf: EntityId[] = [];
 
       spawnMany(storage, 2, { [Position.__ecstatic_name]: { x: 99 } }, buf);
 

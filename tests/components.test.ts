@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { component, components } from "../src/component";
+import { component, components, type FieldDefault } from "../src/component";
 import { md } from "./fixtures";
 
 describe("components", () => {
@@ -56,7 +56,7 @@ describe("components", () => {
 
   it("rejects invalid single-component field defaults without reserving the name", () => {
     expect(() => {
-      component("ComponentsSpecInvalidSingle", 0 as unknown as Record<string, unknown>);
+      component("ComponentsSpecInvalidSingle", 0 as unknown as Record<string, FieldDefault>);
     }).toThrow(/component fields must be a table/);
 
     const Position = component("ComponentsSpecInvalidSingle", { x: 0, y: 0 });
@@ -67,7 +67,7 @@ describe("components", () => {
   it("rejects invalid batched component field defaults without reserving the name", () => {
     expect(() => {
       components({
-        ComponentsSpecInvalidBatch: false as unknown as Record<string, unknown>,
+        ComponentsSpecInvalidBatch: false as unknown as Record<string, FieldDefault>,
       });
     }).toThrow(/component fields must be a table/);
 
@@ -85,7 +85,7 @@ describe("components", () => {
     expect(() => {
       components({
         [validName]: { x: 0, y: 0 },
-        [invalidName]: false as unknown as Record<string, unknown>,
+        [invalidName]: false as unknown as Record<string, FieldDefault>,
       });
     }).toThrow(/component fields must be a table/);
 

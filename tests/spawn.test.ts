@@ -85,6 +85,7 @@ describe("spawn", () => {
     const storage = register(world, Arch);
 
     expect(() => {
+      // @ts-expect-error `false` on a required component is rejected at the type level too
       spawn(storage, { SpawnTestPosition: false });
     }).toThrow("required component SpawnTestPosition cannot be disabled at spawn");
   });
