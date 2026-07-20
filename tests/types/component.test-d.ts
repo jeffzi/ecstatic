@@ -1,4 +1,5 @@
 import { describe, expectTypeOf, it } from "vitest";
+
 import { type Component, component } from "../../src/index.js";
 
 describe("component", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+
 import { entityIndex, initialEntityId, MAX_GEN, MAX_INDEX } from "../src/entity-id.js";
-import { alive, archetype, components, despawn, spawn } from "../src/index.js";
+import { alive, archetype, components, despawn, ref, spawn } from "../src/index.js";
 import { createWorld, register } from "../src/world.js";
 
 const { DespawnTestPosition: Position } = components({
@@ -255,5 +256,42 @@ describe("despawn safety checks", () => {
 
     // The recycled slot restarts at generation 1 instead of overflowing.
     expect(spawn(storage)).toBe(initialEntityId(index));
+  });
+
+  it("clears ref-column tail slot on despawn (GC safety)", () => {
+    const { DespawnRefComp: RefComp } = components({
+      DespawnRefComp: { handle: ref() },
+    });
+
+    const world = createWorld();
+    const Arch = archetype([RefComp]);
+    const storage = register(world, Arch);
+
+    const obj = { data: "held" };
+    const id1 = spawn(storage, { DespawnRefComp: { handle: obj } });
+    spawn(storage, { DespawnRefComp: { handle: { data: "other" } } });
+
+    despawn(storage, id1);
+
+    const col = storage.columns.get(RefComp)!;
+    // After swap-pop, tail slot (index 1) must be cleared to release the ref
+    expect(col.handle![1]).toBeUndefined();
+  });
+
+  it("world-form despawn is a no-op when entityArch[index] is unset", () => {
+    const world = createWorld();
+    const Arch = archetype([Position]);
+    const storage = register(world, Arch);
+    const id = spawn(storage);
+
+    // Manually clear entityArch to simulate the branch
+    const index = entityIndex(id);
+    (world as unknown as { entityArch: unknown[] }).entityArch[index] = undefined;
+
+    expect(() => {
+      despawn(world, id);
+    }).not.toThrow();
+    // Storage should be untouched
+    expect(storage.n).toBe(1);
   });
 });

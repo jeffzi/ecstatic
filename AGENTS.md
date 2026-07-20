@@ -17,9 +17,12 @@ design — never add references to Lua, TSTL, or "the port" there.
 
 Package manager is **npm** (`package-lock.json`).
 
-```shell
-npm test           # vitest (types + unit) with coverage
-npm run test:types # type-only tests (tests/types/*.test-d.ts)
-npm run build      # tsc build
-npm run check      # biome + markdownlint + tsc + fallow + spelling + typelint
-```
+- `npm run build` — compile with `tsc -p tsconfig.build.json`
+- `npm test` — `vitest run --coverage` (types + unit projects); coverage thresholds fail the run, and untested `src/` files count against them
+- `npm run test:types` — type-only tests (`tests/types/*.test-d.ts`)
+- `npm run examples` — build, then run each `examples/*.ts` with tsx
+- `npm run check` — all static checks: lint, markdown, formatting, workflow lint/audit, type-aware lint, dead code, spelling, types. Run before committing.
+- `npm run fix` — auto-fix: lint, markdown, formatting
+- `npm run fix:quality` — remove unused exports, dependencies, and enum members (`fallow fix`). Deletes code — review the diff before committing.
+- `npm run check:security` — surface security candidates (`fallow security`). Candidates need verification; they are not confirmed vulnerabilities. Not part of `check`.
+- `npm run check:package` — publish hygiene (`publint` + `@arethetypeswrong/cli`) for packages that ship to npm. Not part of `check`.

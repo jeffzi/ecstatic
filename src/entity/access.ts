@@ -129,7 +129,7 @@ export function set(
     return;
   }
 
-  // The component-form overload guarantees a values record here
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed by preceding guards
   const values = valuesOrValue as Record<string, unknown>;
   for (const [fieldName, value] of Object.entries(values)) {
     writeField(storage, di, componentOrField, fieldName, value);

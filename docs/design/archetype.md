@@ -60,7 +60,7 @@ Each component defines one column record with one array per field:
 
 ```typescript
 interface Column {
-  [field: string]: TypedArray | unknown[]
+  [field: string]: TypedArray | unknown[];
 }
 // e.g. Position → { x: Float64Array, y: Float64Array }
 ```
@@ -97,10 +97,10 @@ Each unique `(allMask, anyMask, noneMask)` triple creates a `QueryState`:
 
 ```typescript
 interface QueryState {
-  allMask: number;      // bits that MUST ALL be set
-  anyMask: number;      // bits where AT LEAST ONE must be set
-  noneMask: number;     // bits that must NOT be set
-  matched: boolean[];   // parallel to the dense rows: true if row matches
+  allMask: number; // bits that MUST ALL be set
+  anyMask: number; // bits where AT LEAST ONE must be set
+  noneMask: number; // bits that must NOT be set
+  matched: boolean[]; // parallel to the dense rows: true if row matches
 }
 ```
 
@@ -156,9 +156,9 @@ in deferred cleanup and multi-system teardown where IDs may outlive their entiti
 
 ```typescript
 interface ComponentDescriptor {
-  name: string;                    // e.g., "Position"
-  fields: string[];                // sorted field names: ["x", "y"]
-  defaults: Record<string, unknown> // { x: 0, y: 0 }
+  name: string; // e.g., "Position"
+  fields: string[]; // sorted field names: ["x", "y"]
+  defaults: Record<string, unknown>; // { x: 0, y: 0 }
 }
 ```
 
@@ -171,14 +171,14 @@ unless used as data-carrying optionals.
 
 ```typescript
 interface WorldState {
-  archetypes: Archetype[];                // all registered archetypes
-  entityArch: (Archetype | undefined)[]  // sparse entity index → archetype
-  generation: Float64Array                // full packed ID of the current occupant per index
-  sparse: Int32Array                      // index → dense row; dead slots hold the freelist next pointer
-  freeHead: number                        // LIFO freelist head (−1 = empty)
-  nextIndex: number                       // next fresh sparse index
-  queryCache: Map<string, Archetype[]>   // component-set key → cached archetypes
-  resources: Map<number, object>          // resource ID → data
+  archetypes: Archetype[]; // all registered archetypes
+  entityArch: (Archetype | undefined)[]; // sparse entity index → archetype
+  generation: Float64Array; // full packed ID of the current occupant per index
+  sparse: Int32Array; // index → dense row; dead slots hold the freelist next pointer
+  freeHead: number; // LIFO freelist head (−1 = empty)
+  nextIndex: number; // next fresh sparse index
+  queryCache: Map<string, Archetype[]>; // component-set key → cached archetypes
+  resources: Map<number, object>; // resource ID → data
 }
 ```
 

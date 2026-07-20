@@ -1,11 +1,21 @@
 {
   "config": {
     "default": true,
-    "MD013": { "line_length": 100, "code_blocks": false, "tables": false },
+    "MD013": false,
     "MD024": {
-      "siblings_only": true
+      "siblings_only": true,
     },
-    "MD033": false
+    "MD033": false,
+    "MD060": false,
   },
-  "ignores": [".planning/**", "AGENTS.md", "CLAUDE.md", "LICENSE", "todo.md"]
+  "ignores": [
+    "LICENSE",
+    "CHANGELOG.md",
+    ".planning/**",
+    ".research/**",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "todo.md",
+    "node_modules/**",
+  ],
 }

@@ -63,6 +63,7 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   }
 
   // The slot's packed ID is precomputed — spawn packs nothing
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
   const eid = state.generation[index] as EntityId;
 
   // Append dense row (grow first so the writes land in the live arrays)
@@ -83,6 +84,7 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
 
 /** Copy a column into a double-capacity replacement of the same constructor. */
 function grownColumn<T extends TypedArray>(col: T, capacity: number): T {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- TypedArray constructor pattern
   const ctor = col.constructor as new (n: number) => T;
   const next = new ctor(capacity);
   next.set(col);
@@ -223,6 +225,7 @@ function fillBatch(
   // Build entity ID array and update sparse mapping
   for (let i = 0; i < count; i++) {
     const index = indices[i]!;
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
     const eid = state.generation[index] as EntityId;
     const di = denseStart + i;
 

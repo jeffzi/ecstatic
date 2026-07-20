@@ -13,8 +13,22 @@ All code examples below assume the following imports:
 
 ```typescript
 import {
-  alive, component, components, despawn, disable, each, enable, get,
-  getResource, query, ref, register, resource, set, setResource, spawn,
+  alive,
+  component,
+  components,
+  despawn,
+  disable,
+  each,
+  enable,
+  get,
+  getResource,
+  query,
+  ref,
+  register,
+  resource,
+  set,
+  setResource,
+  spawn,
 } from "ecstatic";
 ```
 
@@ -439,10 +453,10 @@ causality:
 
 ```typescript
 function update(dt: number): void {
-  moveSystem(world, dt);     // updates Position
-  damageSystem(world);       // reduces Health
-  deathSystem(world);        // despawns entities with hp <= 0
-  renderSystem(world);       // reads Position for drawing
+  moveSystem(world, dt); // updates Position
+  damageSystem(world); // reduces Health
+  deathSystem(world); // despawns entities with hp <= 0
+  renderSystem(world); // reads Position for drawing
 }
 ```
 

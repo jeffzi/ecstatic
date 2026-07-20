@@ -49,10 +49,11 @@ export function entityIndex(id: number): number {
 /**
  * Pack a fresh entity ID for a new index slot (gen=1, skipping gen=0 sentinel).
  *
- * Only used when a fresh (never-used) index slot is initialised. Reused slots
+ * Only used when a fresh (never-used) index slot is initialized. Reused slots
  * read the pre-computed ID directly from their generation table entry.
  */
 export function initialEntityId(index: number): EntityId {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
   return (MAX_INDEX + index) as EntityId;
 }
 

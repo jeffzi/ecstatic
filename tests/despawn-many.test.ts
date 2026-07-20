@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { alive, archetype, components, despawn, despawnMany, spawn } from "../src/index.js";
 import { createWorld, register } from "../src/world.js";
 

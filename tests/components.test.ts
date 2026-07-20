@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { component, components, type FieldDefault } from "../src/component";
-import { md } from "./fixtures";
+
+import { component, components, type FieldDefault } from "../src/component.js";
+import { md } from "./fixtures.js";
 
 describe("components", () => {
   it("returns descriptors keyed by component name", () => {

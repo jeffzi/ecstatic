@@ -2,13 +2,14 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    globals: true,
     coverage: {
-      provider: "v8",
-      include: ["src/**/*.ts"],
-      exclude: ["src/**/*.d.ts"],
+      include: ["src/**"],
       thresholds: {
         lines: 95,
         functions: 95,
+        branches: 95,
+        statements: 95,
       },
     },
     projects: [
@@ -19,9 +20,6 @@ export default defineConfig({
           typecheck: {
             enabled: true,
             include: ["tests/types/**/*.test-d.ts"],
-            // The root tsconfig.json is solution-style ("files": []) — without an
-            // explicit project the checker resolves zero files and passes vacuously
-            tsconfig: "./tsconfig.test.json",
           },
         },
       },
