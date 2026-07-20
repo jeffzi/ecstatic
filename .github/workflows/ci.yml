@@ -46,7 +46,11 @@ jobs:
 
       - name: Check
         if: runner.os == 'Linux'
-        run: npm run check
+        run: npm run check:static
 
       - name: Test
         run: npm test
+
+      - name: Quality
+        if: runner.os == 'Linux'
+        run: npm run check:quality
