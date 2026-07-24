@@ -58,7 +58,7 @@
     "@vitest/coverage-v8": "^4.1.10",
     "cspell": "^10.0.1",
     "esbuild": "^0.28.0",
-    "fallow": "^3.6.0",
+    "fallow": "^3.9.1",
     "lefthook": "^2.1.10",
     "markdownlint-cli2": "^0.23.1",
     "npm-run-all2": "^9.0.0",
