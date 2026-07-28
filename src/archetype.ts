@@ -104,20 +104,16 @@ export function archetype(
   required: readonly ComponentDescriptor[] = [],
   optionals: readonly ComponentDescriptor[] = [],
 ): ArchetypeDescriptor {
-  // Validate archetype before any cache lookup
   validateArchetype(required, optionals);
 
-  // Compute canonicalization key and check cache
   const key = computeArchetypeKey(required, optionals);
   const cached = archetypeCache.get(key);
   if (cached) {
     return cached;
   }
 
-  // Build the new descriptor
   const descriptor = buildArchetypeDescriptor(required, optionals);
 
-  // Cache it before returning
   archetypeCache.set(key, descriptor);
   return descriptor;
 }
@@ -132,12 +128,10 @@ function validateArchetype(
   required: readonly ComponentDescriptor[],
   optionals: readonly ComponentDescriptor[],
 ): void {
-  // Check optional count limit
   if (optionals.length > MAX_OPTIONAL_COMPONENTS) {
     throw new Error(`archetype supports at most ${MAX_OPTIONAL_COMPONENTS} optional components`);
   }
 
-  // Collect all component names and check for duplicates
   const seenComponents = new Set<ComponentDescriptor>();
   const allComponents = [...required, ...optionals];
 
@@ -146,13 +140,11 @@ function validateArchetype(
       throw new Error("expected ComponentDescriptor");
     }
 
-    // Check for duplicate (same object)
     if (seenComponents.has(comp)) {
       throw new Error(`duplicate component ${comp.__ecstatic_name} in archetype`);
     }
     seenComponents.add(comp);
 
-    // Check for reserved name
     if (RESERVED_NAMES.has(comp.__ecstatic_name)) {
       throw new Error(`component name ${comp.__ecstatic_name} is reserved on archetypes`);
     }
@@ -168,16 +160,10 @@ function buildArchetypeDescriptor(
 ): ArchetypeDescriptor {
   const id = nextArchetypeId++;
 
-  // Build componentByName and componentLookup
   const componentByName = new Map<string, ComponentDescriptor>();
   const componentLookup = new Set<ComponentDescriptor>();
 
-  for (const comp of required) {
-    componentByName.set(comp.__ecstatic_name, comp);
-    componentLookup.add(comp);
-  }
-
-  for (const comp of optionals) {
+  for (const comp of [...required, ...optionals]) {
     componentByName.set(comp.__ecstatic_name, comp);
     componentLookup.add(comp);
   }
@@ -201,7 +187,7 @@ function buildArchetypeDescriptor(
     optionalNotBitLookup.set(comp, notBit);
   }
 
-  // Create the descriptor object (cast to mutable to allow self-reference setup)
+  // Cast to mutable to allow self-reference setup
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- mutable construction
   const desc = {
     id,

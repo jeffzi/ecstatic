@@ -70,6 +70,31 @@ describe("get", () => {
       get(storage2, id, Velocity.vx);
     }).toThrow();
   });
+
+  describe("when field descriptor is invalid", () => {
+    it("errors when component has no data fields (optional tag)", () => {
+      const AccessTag = component("AccessTag");
+      const world = createWorld();
+      const Arch = archetype([Position], [AccessTag]);
+      const storage = register(world, Arch);
+      const id = spawn(storage);
+
+      expect(() => {
+        get(storage, id, { __ecstatic_component: AccessTag, __ecstatic_field: "x" });
+      }).toThrow("has no data fields");
+    });
+
+    it("errors on unknown field name", () => {
+      const world = createWorld();
+      const Arch = archetype([Position]);
+      const storage = register(world, Arch);
+      const id = spawn(storage);
+
+      expect(() => {
+        get(storage, id, { __ecstatic_component: Position, __ecstatic_field: "z" });
+      }).toThrow("unknown field");
+    });
+  });
 });
 
 describe("set", () => {
@@ -119,31 +144,6 @@ describe("set", () => {
   });
 });
 
-describe("resolveFieldColumn errors", () => {
-  it("errors when component has no data fields (optional tag)", () => {
-    const AccessTag = component("AccessTag");
-    const world = createWorld();
-    const Arch = archetype([Position], [AccessTag]);
-    const storage = register(world, Arch);
-    const id = spawn(storage);
-
-    expect(() => {
-      get(storage, id, { __ecstatic_component: AccessTag, __ecstatic_field: "x" });
-    }).toThrow("has no data fields");
-  });
-
-  it("errors on unknown field name", () => {
-    const world = createWorld();
-    const Arch = archetype([Position]);
-    const storage = register(world, Arch);
-    const id = spawn(storage);
-
-    expect(() => {
-      get(storage, id, { __ecstatic_component: Position, __ecstatic_field: "z" });
-    }).toThrow("unknown field");
-  });
-});
-
 describe("multi-world isolation", () => {
   it("mutations in world1 do not affect world2 storage", () => {
     const world1 = createWorld();
@@ -154,15 +154,12 @@ describe("multi-world isolation", () => {
     const storage2 = register(world2, Arch);
 
     const id1 = spawn(storage1);
-    spawn(storage2);
+    const id2 = spawn(storage2);
 
     set(storage1, id1, Position, { x: 99 });
 
-    const col1 = storage1.columns.get(Position)!;
-    const col2 = storage2.columns.get(Position)!;
-
-    expect(col1.x![0]).toBe(99);
-    expect(col2.x![0]).toBe(0);
+    expect(get(storage1, id1, Position.x)).toBe(99);
+    expect(get(storage2, id2, Position.x)).toBe(0);
   });
 
   it("operations resolve IDs against the storage passed to the operation", () => {
@@ -192,10 +189,9 @@ describe("ref field semantics", () => {
     const world = createWorld();
     const Arch = archetype([RefComp]);
     const storage = register(world, Arch);
-    spawn(storage);
+    const id = spawn(storage);
 
-    const soa = storage.columns.get(RefComp)!;
-    expect(soa.handle![0]).toBeUndefined();
+    expect(get(storage, id, RefComp.handle)).toBeUndefined();
   });
 
   it("set(storage, id, field, undefined) clears a ref field", () => {
@@ -212,8 +208,7 @@ describe("ref field semantics", () => {
 
     set(storage, id, RefComp.handle, undefined);
 
-    const soa = storage.columns.get(RefComp)!;
-    expect(soa.handle![0]).toBeUndefined();
+    expect(get(storage, id, RefComp.handle)).toBeUndefined();
   });
 
   it("get returns ref field value when set", () => {
@@ -292,21 +287,20 @@ describe("boolean fields", () => {
     expect(get(storage, id, Comp.enabled)).toBe(false);
   });
 
-  it("boolean set with true/false stores as 1/0 and reads back as true/false", () => {
-    const { BoolRoundtrip: Comp } = components({
-      BoolRoundtrip: { flag: false },
-    });
+  it.each([{ value: true }, { value: false }])(
+    "boolean set via field descriptor round-trips $value",
+    ({ value }) => {
+      const name = `BoolRoundtrip${value}`;
+      const Comp = components({ [name]: { flag: false } })[name]!;
 
-    const world = createWorld();
-    const Arch = archetype([Comp]);
-    const storage = register(world, Arch);
-    const id = spawn(storage);
+      const world = createWorld();
+      const Arch = archetype([Comp]);
+      const storage = register(world, Arch);
+      const id = spawn(storage);
 
-    // Set via field descriptor
-    set(storage, id, Comp.flag, true);
-    expect(get(storage, id, Comp.flag)).toBe(true);
+      set(storage, id, Comp.flag, value);
 
-    set(storage, id, Comp.flag, false);
-    expect(get(storage, id, Comp.flag)).toBe(false);
-  });
+      expect(get(storage, id, Comp.flag)).toBe(value);
+    },
+  );
 });

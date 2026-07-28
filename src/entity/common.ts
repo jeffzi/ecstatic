@@ -9,7 +9,8 @@ import { ERROR_STALE_ENTITY_ID, ERROR_WRONG_STORAGE } from "../errors.js";
 import type { Storage, WorldState } from "../world.js";
 
 /**
- * Check if an entity ID is alive (valid and not despawned) in a storage or world.
+ * Test whether the packed generation in `id` matches the world's generation table — `true`
+ * means the entity has not been despawned or had its index reused.
  *
  * Works across storages in the same world: the entity is alive in that world
  * regardless of which storage is queried (as long as the storage is from the same world).

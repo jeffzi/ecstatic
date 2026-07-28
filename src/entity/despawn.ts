@@ -28,13 +28,13 @@ import type { Storage, WorldState } from "../world.js";
  * Reused across calls to avoid per-call allocation.
  */
 const DESPAWN_LIVE_INDICES: number[] = [];
-const DMW_BUCKETS: Map<Storage, number[]> = new Map();
+const DESPAWN_WORLD_BUCKETS: Map<Storage, number[]> = new Map();
 
 /**
  * Advance a slot's generation by one (add MAX_INDEX to the packed ID),
  * wrapping to generation 1 when it would reach MAX_GEN.
  */
-function advancedGeneration(packedId: number, index: number): number {
+function nextGeneration(packedId: number, index: number): number {
   const nextGen = packedId + MAX_INDEX;
   return nextGen >= MAX_GEN * MAX_INDEX ? initialEntityId(index) : nextGen;
 }
@@ -68,7 +68,7 @@ function compactAndFreeMarked(storage: Storage, indices: number[], count: number
   let freeHead = world.freeHead;
   for (let k = 0; k < count; k++) {
     const index = indices[k]!;
-    generation[index] = advancedGeneration(generation[index]!, index);
+    generation[index] = nextGeneration(generation[index]!, index);
     sparse[index] = freeHead;
     freeHead = index;
   }
@@ -98,7 +98,7 @@ function fillFreedSlots(
       // Bounded scan: legitimate stops are always at a survivor at or above
       // the boundary; walking past it means the invariant is broken, and
       // erroring beats an unbounded scan.
-      while (last >= boundary && entityArch[entities[last]! % MAX_INDEX] === undefined) {
+      while (last >= boundary && entityArch[entityIndex(entities[last]!)] === undefined) {
         last -= 1;
       }
       if (last < boundary) {
@@ -109,7 +109,7 @@ function fillFreedSlots(
         col[di] = col[last];
       }
       storage.mask[di] = storage.mask[last]!;
-      sparse[entities[di] % MAX_INDEX] = di;
+      sparse[entityIndex(entities[di])] = di;
       last -= 1;
     }
   }
@@ -260,7 +260,7 @@ function despawnManyStorageNoIds(storage: Storage): void {
   // Free every live index: generation advance, freelist push, back-pointer clear
   for (let row = 0; row < oldN; row++) {
     const index = entityIndex(storage.entities[row]!);
-    generation[index] = advancedGeneration(generation[index]!, index);
+    generation[index] = nextGeneration(generation[index]!, index);
     storage.sparse[index] = freeHead;
     freeHead = index;
     world.entityArch[index] = undefined;
@@ -344,10 +344,10 @@ function despawnManyWorldWithIds(world: WorldState, ids: EntityId[]): void {
       continue; // duplicate in this call: already marked
     }
 
-    let bucket = DMW_BUCKETS.get(storage);
+    let bucket = DESPAWN_WORLD_BUCKETS.get(storage);
     if (bucket === undefined) {
       bucket = [];
-      DMW_BUCKETS.set(storage, bucket);
+      DESPAWN_WORLD_BUCKETS.set(storage, bucket);
     }
     world.entityArch[index] = undefined;
     bucket.push(index);
@@ -355,10 +355,10 @@ function despawnManyWorldWithIds(world: WorldState, ids: EntityId[]): void {
 
   // Run the shared compaction per touched storage, then drop the storage
   // references so storages of destroyed worlds are not retained.
-  for (const [storage, indices] of DMW_BUCKETS) {
+  for (const [storage, indices] of DESPAWN_WORLD_BUCKETS) {
     compactAndFreeMarked(storage, indices, indices.length);
   }
-  DMW_BUCKETS.clear();
+  DESPAWN_WORLD_BUCKETS.clear();
 }
 
 /**
@@ -368,26 +368,20 @@ function despawnEntity(storage: Storage, index: number): void {
   const row = storage.sparse[index]!;
   const last = storage.n - 1;
 
-  // Swap-and-pop: move last entity into the freed row (if not despawning the last)
   if (row !== last) {
-    // Copy the last entity's ID into the freed row
     storage.entities[row] = storage.entities[last]!;
 
-    // Copy all component data from last row into freed row
     for (const col of storage.flatColumns) {
       col[row] = col[last];
     }
 
-    // Update the mask (optional component bits)
     storage.mask[row] = storage.mask[last]!;
 
-    // Recover the swapped entity's index and update its sparse lookup
     const lastEntityId = storage.entities[last]!;
-    const swappedIndex = lastEntityId % MAX_INDEX;
+    const swappedIndex = entityIndex(lastEntityId);
     storage.sparse[swappedIndex] = row;
   }
 
-  // Decrement count
   storage.n = last;
 
   // Clear the freed tail slot (ref-marked columns for GC)
@@ -397,10 +391,9 @@ function despawnEntity(storage: Storage, index: number): void {
     }
   }
 
-  // Free the index: invalidate entityArch and advance generation with wrap
   storage.world.entityArch[index] = undefined;
 
-  storage.generation[index] = advancedGeneration(storage.generation[index]!, index);
+  storage.generation[index] = nextGeneration(storage.generation[index]!, index);
 
   // Push the index onto the LIFO freelist: the dead sparse slot holds the next pointer
   const world = storage.world;
