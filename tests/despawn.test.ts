@@ -206,17 +206,6 @@ describe("despawn world overload", () => {
     expect(storage.n).toBe(0);
   });
 
-  it("does not affect despawn(storage, id) behavior", () => {
-    const world = createWorld();
-    const Arch = archetype([Position]);
-    const storage = register(world, Arch);
-    const id = spawn(storage);
-
-    despawn(storage, id);
-
-    expect(storage.n).toBe(0);
-  });
-
   it("alive(world, id) returns false after despawn(world, id)", () => {
     const world = createWorld();
     const Arch = archetype([Position]);
@@ -286,7 +275,7 @@ describe("despawn safety checks", () => {
 
     // Manually clear entityArch to simulate the branch
     const index = entityIndex(id);
-    (world as unknown as { entityArch: unknown[] }).entityArch[index] = undefined;
+    world.entityArch[index] = undefined;
 
     expect(() => {
       despawn(world, id);

@@ -67,12 +67,12 @@ function buildView(storage: Storage): BoundView {
   for (const comp of storage.archetype.components) {
     // Every required component has a columns entry (createStorage invariant)
     const soa = storage.columns.get(comp)!;
-    const sub: Record<string, unknown> = {};
+    const fieldAccessors: Record<string, unknown> = {};
 
     for (const fieldName of comp.__ecstatic_fields) {
       // Boolean fields live in Uint8Array columns: encode 1/0, decode !== 0
       const isBoolean = typeof comp.__ecstatic_defaults[fieldName] === "boolean";
-      Object.defineProperty(sub, fieldName, {
+      Object.defineProperty(fieldAccessors, fieldName, {
         get: isBoolean ? () => soa[fieldName]![row] !== 0 : () => soa[fieldName]![row],
         set: isBoolean
           ? (value: unknown) => {
@@ -84,7 +84,7 @@ function buildView(storage: Storage): BoundView {
       });
     }
 
-    view[comp.__ecstatic_name] = sub;
+    view[comp.__ecstatic_name] = fieldAccessors;
   }
 
   return {

@@ -6,4 +6,5 @@
  * safety invariants. In production builds, these vanish without side effects.
  */
 
+/** When `true`, entity validation checks (staleness, wrong-storage) are active. Set to `false` by defining `process.env.NDEBUG`. */
 export const DEBUG = process.env.NDEBUG === undefined;

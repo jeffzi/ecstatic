@@ -5,7 +5,14 @@
 import type { ArchetypeDescriptor, ComponentsOf } from "../archetype.js";
 import type { ComponentFields, ComponentName } from "../component.js";
 import type { EntityId } from "../entity-id.js";
-import { assertEntityIndex, initialEntityId, MAX_INDEX, OVERFLOW_MSG } from "../entity-id.js";
+import {
+  assertEntityIndex,
+  initialEntityId,
+  MAX_INDEX,
+  NO_FREE_SLOT,
+  OVERFLOW_MSG,
+} from "../entity-id.js";
+import { collectFlatColumns } from "../world.js";
 import type { Storage, TypedArray, WorldState } from "../world.js";
 
 /**
@@ -44,23 +51,7 @@ export function spawn<A extends ArchetypeDescriptor>(
 export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   const state = storage.world;
 
-  // Allocate an entity index (from freelist or fresh)
-  let index: number;
-  if (state.freeHead !== -1) {
-    // Pop from freelist: the dead sparse slot holds the next pointer
-    index = state.freeHead;
-    state.freeHead = state.sparse[index]!;
-  } else {
-    // Fresh allocation
-    index = state.nextIndex;
-    assertEntityIndex(index);
-    state.nextIndex = index + 1;
-    if (index >= state.generation.length) {
-      growWorldArrays(state);
-    }
-    // Fresh slot init: gen 1 (gen 0 is the never-allocated sentinel)
-    state.generation[index] = initialEntityId(index);
-  }
+  const index = allocateOneIndex(state);
 
   // The slot's packed ID is precomputed — spawn packs nothing
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
@@ -80,6 +71,30 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   storage.mask[di] = 0;
 
   return eid;
+}
+
+/**
+ * Allocate a single entity index: pop from the freelist if one is available,
+ * otherwise allocate fresh (growing world arrays and initializing the slot's
+ * generation value as needed).
+ */
+function allocateOneIndex(state: WorldState): number {
+  if (state.freeHead !== NO_FREE_SLOT) {
+    // Pop from freelist: the dead sparse slot holds the next pointer
+    const index = state.freeHead;
+    state.freeHead = state.sparse[index]!;
+    return index;
+  }
+
+  const index = state.nextIndex;
+  assertEntityIndex(index);
+  state.nextIndex = index + 1;
+  if (index >= state.generation.length) {
+    growWorldArrays(state);
+  }
+  // Fresh slot init: gen 1 (gen 0 is the never-allocated sentinel)
+  state.generation[index] = initialEntityId(index);
+  return index;
 }
 
 /** Copy a column into a double-capacity replacement of the same constructor. */
@@ -127,13 +142,7 @@ function growStorageArrays(storage: Storage): void {
     }
   }
 
-  const flatColumns: (TypedArray | Array<unknown>)[] = [];
-  for (const soa of storage.columns.values()) {
-    for (const col of Object.values(soa)) {
-      flatColumns.push(col);
-    }
-  }
-  storage.flatColumns = flatColumns;
+  storage.flatColumns = collectFlatColumns(storage.columns);
 }
 
 /**
@@ -182,30 +191,14 @@ function allocateIndices(
   state: WorldState,
   count: number,
 ): { indices: number[]; worldGrew: boolean } {
+  const initialCapacity = state.generation.length;
   const indices: number[] = [];
-  let worldGrew = false;
 
   for (let i = 0; i < count; i++) {
-    let index: number;
-    if (state.freeHead !== -1) {
-      // Pop from freelist
-      index = state.freeHead;
-      state.freeHead = state.sparse[index]!;
-    } else {
-      // Fresh allocation
-      index = state.nextIndex;
-      state.nextIndex = index + 1;
-      if (index >= state.generation.length) {
-        growWorldArrays(state);
-        worldGrew = true;
-      }
-      // Fresh slot init: gen 1 (gen 0 is the never-allocated sentinel)
-      state.generation[index] = initialEntityId(index);
-    }
-    indices.push(index);
+    indices.push(allocateOneIndex(state));
   }
 
-  return { indices, worldGrew };
+  return { indices, worldGrew: state.generation.length !== initialCapacity };
 }
 
 /**
@@ -222,7 +215,6 @@ function fillBatch(
   const denseStart = storage.n - count;
   const result: EntityId[] = [];
 
-  // Build entity ID array and update sparse mapping
   for (let i = 0; i < count; i++) {
     const index = indices[i]!;
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
@@ -334,7 +326,7 @@ function assertBatchCapacity(state: WorldState, count: number): void {
   }
   let freeCount = 0;
   let freeWalk = state.freeHead;
-  while (freeWalk !== -1 && freeCount < count) {
+  while (freeWalk !== NO_FREE_SLOT && freeCount < count) {
     freeCount++;
     freeWalk = state.sparse[freeWalk]!;
   }

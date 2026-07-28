@@ -7,6 +7,7 @@
  */
 
 import type { ArchetypeDescriptor, ComponentDescriptor } from "./archetype.js";
+import { NO_FREE_SLOT } from "./entity-id.js";
 import { despawnMany } from "./entity/despawn.js";
 import { ERROR_WORLD_DESTROYED } from "./errors.js";
 
@@ -52,6 +53,7 @@ export interface WorldState {
  */
 export type SoAColumns = Record<string, TypedArray | Array<unknown>>;
 
+/** Union of typed-array types used for numeric and boolean SoA columns. */
 export type TypedArray =
   | Float64Array
   | Float32Array
@@ -117,6 +119,15 @@ export interface Storage<A extends ArchetypeDescriptor = ArchetypeDescriptor> {
 export type World = WorldState & { readonly __brand: "World" };
 
 /**
+ * Internal view of Storage used only by world lifecycle functions: exposes
+ * `world` as mutable and possibly `undefined` to represent a storage detached
+ * by destroyWorld, without weakening the public `Storage.world` contract.
+ */
+interface MutableStorage extends Omit<Storage, "world"> {
+  world: WorldState | undefined;
+}
+
+/**
  * Create a new world with initial capacity.
  *
  * @returns An opaque World object
@@ -127,7 +138,7 @@ export function createWorld(): World {
     entityArch: Array.from({ length: INITIAL_WORLD_CAPACITY }),
     generation: new Float64Array(INITIAL_WORLD_CAPACITY),
     sparse: new Int32Array(INITIAL_WORLD_CAPACITY),
-    freeHead: -1,
+    freeHead: NO_FREE_SLOT,
     nextIndex: 0,
   };
 
@@ -159,7 +170,6 @@ export function register(world: World, arch: ArchetypeDescriptor): Storage {
     return existing;
   }
 
-  // Create storage for this archetype
   const storage = createStorage(state, arch);
 
   // Cache it
@@ -195,17 +205,30 @@ export function getStorage(world: World, arch: ArchetypeDescriptor): Storage {
 }
 
 /**
+ * Flatten a storage's per-component SoA columns into a single array for
+ * cheap iteration (e.g. capacity checks, grow loops).
+ */
+export function collectFlatColumns(
+  columns: Map<ComponentDescriptor, SoAColumns>,
+): (TypedArray | Array<unknown>)[] {
+  const flatColumns: (TypedArray | Array<unknown>)[] = [];
+  for (const soa of columns.values()) {
+    for (const col of Object.values(soa)) {
+      flatColumns.push(col);
+    }
+  }
+  return flatColumns;
+}
+
+/**
  * Create a storage object for a single archetype in a world.
  */
 function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
-  // Build columns for all required components
   const columns = new Map<ComponentDescriptor, SoAColumns>();
-  const flatColumns: (TypedArray | Array<unknown>)[] = [];
 
   // Despawn-time cleanup tracking (ref-marked fields)
   const despawnClear: Array<unknown>[] = [];
 
-  // Add columns for required and optional components
   const allComps = [
     ...arch.components,
     ...arch.optionals.filter((opt) => opt.__ecstatic_fields.length > 0),
@@ -225,14 +248,10 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
         despawnClear.push(soa[fields[i]!] as Array<unknown>);
       }
     }
-
-    // Add all columns to flatColumns for iteration
-    for (const col of Object.values(soa)) {
-      flatColumns.push(col);
-    }
   }
 
-  // Create the storage object
+  const flatColumns = collectFlatColumns(columns);
+
   const storage = {
     id: arch.id,
     world: state,
@@ -309,7 +328,7 @@ export function destroyWorld(world: World): void {
   for (const storage of state.storages.values()) {
     despawnMany(storage);
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- opaque field mutation
-    (storage as unknown as { world: WorldState | undefined }).world = undefined;
+    (storage as MutableStorage).world = undefined;
   }
 
   // Reset world state to initial capacity
@@ -317,7 +336,7 @@ export function destroyWorld(world: World): void {
   state.entityArch = Array.from({ length: INITIAL_WORLD_CAPACITY });
   state.generation = new Float64Array(INITIAL_WORLD_CAPACITY);
   state.sparse = new Int32Array(INITIAL_WORLD_CAPACITY);
-  state.freeHead = -1;
+  state.freeHead = NO_FREE_SLOT;
   state.nextIndex = 0;
 
   // Mark as destroyed so register/getStorage will error

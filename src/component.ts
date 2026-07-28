@@ -33,50 +33,59 @@ type WidthMarkerType =
   | typeof U16_MARKER
   | typeof U8_MARKER;
 
+/** Opaque marker returned by the width constructors (f32, i32, etc.), carrying the selected storage width and the wrapped value. */
 export interface WidthMarker {
   readonly __ecstatic_width_marker: WidthMarkerType;
   readonly value: number;
 }
 
-/** Validate that a value is a width marker object */
+/** True if a value has the shape of a WidthMarker, i.e. was produced by a width constructor. */
 function isWidthMarker(v: unknown): v is WidthMarker {
   return (
     v !== null &&
     typeof v === "object" &&
     "__ecstatic_width_marker" in v &&
-    typeof (v as Record<string, unknown>).value === "number"
+    "value" in v &&
+    typeof v.value === "number"
   );
 }
 
-/** Public width marker constructors */
+/** Wrap a numeric default to use Float32Array storage in SoA columns. */
 export function f32(value: number): WidthMarker {
   return { __ecstatic_width_marker: F32_MARKER, value };
 }
 
+/** Wrap a numeric default to use Float64Array storage in SoA columns. */
 export function f64(value: number): WidthMarker {
   return { __ecstatic_width_marker: F64_MARKER, value };
 }
 
+/** Wrap a numeric default to use Int32Array storage in SoA columns. */
 export function i32(value: number): WidthMarker {
   return { __ecstatic_width_marker: I32_MARKER, value };
 }
 
+/** Wrap a numeric default to use Int16Array storage in SoA columns. */
 export function i16(value: number): WidthMarker {
   return { __ecstatic_width_marker: I16_MARKER, value };
 }
 
+/** Wrap a numeric default to use Int8Array storage in SoA columns. */
 export function i8(value: number): WidthMarker {
   return { __ecstatic_width_marker: I8_MARKER, value };
 }
 
+/** Wrap a numeric default to use Uint32Array storage in SoA columns. */
 export function u32(value: number): WidthMarker {
   return { __ecstatic_width_marker: U32_MARKER, value };
 }
 
+/** Wrap a numeric default to use Uint16Array storage in SoA columns. */
 export function u16(value: number): WidthMarker {
   return { __ecstatic_width_marker: U16_MARKER, value };
 }
 
+/** Wrap a numeric default to use Uint8Array storage in SoA columns. */
 export function u8(value: number): WidthMarker {
   return { __ecstatic_width_marker: U8_MARKER, value };
 }
@@ -92,7 +101,7 @@ export type NumericColumnCtor =
   | typeof Uint16Array
   | typeof Uint8Array;
 
-/** Get TypedArray constructor for a width marker */
+/** Throws if the marker is not one of the eight known width sentinels. */
 function getColumnCtorForMarker(marker: WidthMarkerType): NumericColumnCtor {
   switch (marker) {
     case F32_MARKER:
@@ -116,35 +125,51 @@ function getColumnCtorForMarker(marker: WidthMarkerType): NumericColumnCtor {
   }
 }
 
+/** Select the default TypedArray column constructor for an unmarked scalar default. */
+function defaultColumnCtor(value: unknown): NumericColumnCtor | undefined {
+  if (typeof value === "number") {
+    return Float64Array; // default numeric type is Float64
+  }
+  if (typeof value === "boolean") {
+    return Uint8Array; // boolean uses Uint8
+  }
+  return undefined; // strings and others use plain arrays
+}
+
+const FIELD_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 /** Validate field names against ^[A-Za-z_][A-Za-z0-9_]*$ */
 function validateFieldName(componentName: string, fieldName: unknown): asserts fieldName is string {
   if (typeof fieldName !== "string") {
     throw new Error(`component field names must be strings: ${componentName}`);
   }
 
-  const nameRegex = /^[A-Za-z_][A-Za-z0-9_]*$/;
-  if (!nameRegex.test(fieldName)) {
+  if (!FIELD_NAME_PATTERN.test(fieldName)) {
     throw new Error(
       `component field name must be a valid ASCII identifier (^[A-Za-z_][A-Za-z0-9_]*$): ${componentName}.${fieldName}`,
     );
   }
 }
 
-/** Validate and normalize field defaults */
+/** True for non-null, non-array, non-Date/Map/Set objects. */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    !Array.isArray(v) &&
+    !(v instanceof Date) &&
+    !(v instanceof Map) &&
+    !(v instanceof Set)
+  );
+}
+
+/** Throws unless fields is a plain object with all-valid field names; returns it unchanged otherwise. */
 function validateFields(componentName: string, fields: unknown): Record<string, unknown> {
-  if (
-    typeof fields !== "object" ||
-    fields === null ||
-    Array.isArray(fields) ||
-    fields instanceof Date ||
-    fields instanceof Map ||
-    fields instanceof Set
-  ) {
+  if (!isPlainObject(fields)) {
     throw new Error(`component fields must be a table: ${componentName}`);
   }
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed by preceding guards
-  const defaults = fields as Record<string, unknown>;
+  const defaults = fields;
   for (const fieldName in defaults) {
     validateFieldName(componentName, fieldName);
   }
@@ -152,14 +177,14 @@ function validateFields(componentName: string, fields: unknown): Record<string, 
   return defaults;
 }
 
-/** Check if a name is already registered */
+/** Throws if the name collides with any prior component() or components() call — module-global uniqueness. */
 function assertNameAvailable(name: string): void {
   if (seenNames.has(name)) {
     throw new Error(`component name already registered: ${name}`);
   }
 }
 
-/** Create a descriptor from validated defaults */
+/** Assumes defaults was already produced by validateFields — does not re-validate field names. */
 function descriptorFromDefaults(
   name: string,
   defaults: Record<string, unknown>,
@@ -169,20 +194,9 @@ function descriptorFromDefaults(
   // oxlint-disable-next-line unicorn/no-array-sort -- in-place sort of a fresh array; toSorted() would copy for no reason
   const fields = Object.keys(defaults).sort();
 
-  // Build parallel arrays for defaults, references, and column constructors
   const defaultValues: unknown[] = [];
   const isReference: (boolean | undefined)[] = [];
-  const columnCtors: (
-    | typeof Float64Array
-    | typeof Float32Array
-    | typeof Int32Array
-    | typeof Int16Array
-    | typeof Int8Array
-    | typeof Uint32Array
-    | typeof Uint16Array
-    | typeof Uint8Array
-    | undefined
-  )[] = [];
+  const columnCtors: (NumericColumnCtor | undefined)[] = [];
 
   // Normalize defaults: extract values from width markers
   const normalizedDefaults: Record<string, unknown> = {};
@@ -215,18 +229,11 @@ function descriptorFromDefaults(
       // Scalar default (number, string, boolean, array)
       defaultValues.push(defaultValue);
       isReference.push(false);
-      columnCtors.push(
-        typeof defaultValue === "number"
-          ? Float64Array // default numeric type is Float64
-          : typeof defaultValue === "boolean"
-            ? Uint8Array // boolean uses Uint8
-            : undefined, // strings and others use plain arrays
-      );
+      columnCtors.push(defaultColumnCtor(defaultValue));
       normalizedDefaults[fieldName] = defaultValue;
     }
   }
 
-  // Build the descriptor object
   const descriptor: Record<string, unknown> = {
     __ecstatic_name: name,
     __ecstatic_fields: fields,
@@ -237,7 +244,6 @@ function descriptorFromDefaults(
     __ecstatic_column_ctor: columnCtors,
   };
 
-  // Add per-field properties
   for (const fieldName of fields) {
     descriptor[fieldName] = {
       __ecstatic_component: descriptor,
@@ -270,8 +276,9 @@ export function component<N extends string, T extends Record<string, FieldDefaul
 export function component(name: string, fields?: Record<string, unknown>): unknown {
   assertNameAvailable(name);
   const defaults = validateFields(name, fields ?? {});
+  const descriptor = descriptorFromDefaults(name, defaults);
   seenNames.add(name);
-  return descriptorFromDefaults(name, defaults);
+  return descriptor;
 }
 
 /**
@@ -286,18 +293,19 @@ export function components<T extends Record<string, Record<string, FieldDefault>
     : Component<K & string, InferFields<T[K]>>;
 } {
   const result: Record<string, unknown> = {};
-  const defaultsByName = new Map<string, Record<string, unknown>>();
+  const descriptorsByName = new Map<string, Record<string, unknown>>();
 
-  // Validate all components before registering any names (atomic)
+  // Validate and build all descriptors before registering any names (atomic)
   for (const name in defs) {
     assertNameAvailable(name);
-    defaultsByName.set(name, validateFields(name, defs[name]));
+    const defaults = validateFields(name, defs[name]);
+    descriptorsByName.set(name, descriptorFromDefaults(name, defaults));
   }
 
-  // Register and create descriptors
-  for (const [name, defaults] of defaultsByName) {
+  // All descriptors built successfully: register names and publish results
+  for (const [name, descriptor] of descriptorsByName) {
     seenNames.add(name);
-    result[name] = descriptorFromDefaults(name, defaults);
+    result[name] = descriptor;
   }
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- opaque type return
@@ -310,49 +318,34 @@ export function components<T extends Record<string, Record<string, FieldDefault>
 
 /** Duck-type predicate: check if value has the shape of a ComponentDescriptor */
 export function isComponentDescriptor(value: unknown): value is ComponentDescriptor {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value) ||
-    value instanceof Date ||
-    value instanceof Map ||
-    value instanceof Set
-  ) {
+  if (!isPlainObject(value)) {
     return false;
   }
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed by preceding guards
-  const maybe = value as Record<string, unknown>;
   return (
-    typeof maybe.__ecstatic_name === "string" &&
-    Array.isArray(maybe.__ecstatic_fields) &&
-    Array.isArray(maybe.__ecstatic_default_values) &&
-    Array.isArray(maybe.__ecstatic_is_reference)
+    typeof value.__ecstatic_name === "string" &&
+    Array.isArray(value.__ecstatic_fields) &&
+    Array.isArray(value.__ecstatic_default_values) &&
+    Array.isArray(value.__ecstatic_is_reference)
   );
 }
 
 /** Duck-type predicate: check if value has the shape of a FieldDescriptor */
 export function isFieldDescriptor(value: unknown): value is FieldDescriptor {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value) ||
-    value instanceof Date ||
-    value instanceof Map ||
-    value instanceof Set
-  ) {
+  if (!isPlainObject(value)) {
     return false;
   }
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed by preceding guards
-  const maybe = value as Record<string, unknown>;
   return (
-    isComponentDescriptor(maybe.__ecstatic_component) && typeof maybe.__ecstatic_field === "string"
+    isComponentDescriptor(value.__ecstatic_component) && typeof value.__ecstatic_field === "string"
   );
 }
 
-// --- Type definitions (used by type stubs, echoing _core.d.ts patterns) ---
+// ---------------------------------------------------------------------------
+// Type definitions
+// ---------------------------------------------------------------------------
 
+/** Runtime descriptor produced by component() / components(). */
 export interface ComponentDescriptor {
   readonly __ecstatic_name: string;
   readonly __ecstatic_fields: string[];
