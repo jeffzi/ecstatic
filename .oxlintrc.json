@@ -8,7 +8,7 @@
   "ignorePatterns": ["dist", "coverage", "node_modules", ".claude", ".agent"],
   "overrides": [
     {
-      "files": ["scripts/**", "examples/**"],
+      "files": ["scripts/**", "examples/**", "benchmarks/**"],
       "rules": {
         "no-console": "off"
       }
