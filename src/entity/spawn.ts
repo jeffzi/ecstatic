@@ -182,56 +182,46 @@ function initComponentFields(
 }
 
 /**
- * Allocate entity indices for a batch spawn: precheck overflow, allocate from
- * freelist and fresh slots, initialize generation values. Returns the sparse
- * indices and whether world arrays grew (caller must refresh aliases if true).
- * Called only after atomic overflow pre-check has passed.
- */
-function allocateIndices(
-  state: WorldState,
-  count: number,
-): { indices: number[]; worldGrew: boolean } {
-  const initialCapacity = state.generation.length;
-  const indices: number[] = [];
-
-  for (let i = 0; i < count; i++) {
-    indices.push(allocateOneIndex(state));
-  }
-
-  return { indices, worldGrew: state.generation.length !== initialCapacity };
-}
-
-/**
- * Fill dense rows and SoA fields for a batch of allocated entities.
- * Assumes indices have been allocated, storage.n is the start of the batch.
+ * Allocate entity indices and fill dense rows and SoA fields for a batch of
+ * `count` entities, writing the spawned ids into `out`.
+ *
+ * `out` is the caller's buffer on the out-parameter path and a fresh array
+ * otherwise — one code shape, so a reused buffer costs no extra allocation or
+ * copy. Ids are written at ascending indices (growing a short buffer in place),
+ * then the length is set to trim any tail left by a longer buffer.
+ *
+ * Allocation is fused into the fill loop so no intermediate index array is
+ * built. Safe because a freelist pop never reads a sparse slot written earlier
+ * in the same batch: a popped slot leaves the chain before its sparse entry is
+ * overwritten with a dense index.
+ *
+ * Assumes overflow was pre-checked and storage.n is the end of the batch.
  */
 function fillBatch(
   storage: Storage,
   count: number,
-  indices: number[],
   overrides: SpawnOverrides | undefined,
-): EntityId[] {
+  out: EntityId[],
+): void {
   const state = storage.world;
   const denseStart = storage.n - count;
-  const result: EntityId[] = [];
 
   for (let i = 0; i < count; i++) {
-    const index = indices[i]!;
+    const index = allocateOneIndex(state);
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
     const eid = state.generation[index] as EntityId;
     const di = denseStart + i;
 
-    result[i] = eid;
+    out[i] = eid;
     storage.entities[di] = eid;
     state.sparse[index] = di;
     state.entityArch[index] = storage;
     storage.mask[di] = 0;
   }
+  out.length = count;
 
   // Initialize component fields (column-major: per component, per field, loop rows)
   initComponentFields(storage, denseStart, count, overrides);
-
-  return result;
 }
 
 /**
@@ -294,23 +284,13 @@ export function spawnMany(
     growStorageArrays(storage);
   }
 
-  // Allocate indices (may grow world arrays)
-  const { indices } = allocateIndices(state, count);
-
   // Update storage entity count before filling
   storage.n = denseEnd;
 
-  // Fill dense rows and component fields
-  const ids = fillBatch(storage, count, indices, overrides);
-
-  // Populate result array
-  const result = outBuffer ?? ids;
-  if (outBuffer) {
-    outBuffer.length = count;
-    for (let i = 0; i < count; i++) {
-      outBuffer[i] = ids[i]!;
-    }
-  }
+  // Allocate indices (may grow world arrays) and fill dense rows and component
+  // fields, writing ids straight into the caller's buffer when one was supplied
+  const result = outBuffer ?? [];
+  fillBatch(storage, count, overrides, result);
 
   return result;
 }

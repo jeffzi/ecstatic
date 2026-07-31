@@ -243,6 +243,38 @@ describe("spawnMany", () => {
       expect(buf).toHaveLength(2);
     });
 
+    it("grows a non-empty out buffer that starts shorter than count", () => {
+      const world = createWorld();
+      const Arch = archetype([Position]);
+      const storage = register(world, Arch);
+      const buf = spawnMany(storage, 2);
+
+      const result = spawnMany(storage, 5, buf);
+
+      expect(result).toBe(buf);
+      expect(result).toHaveLength(5);
+      expect(new Set(result).size).toBe(5);
+      for (const id of result) {
+        expect(alive(storage, id)).toBe(true);
+      }
+    });
+
+    it("fills out with the same ids the non-out overload returns for the same world state", () => {
+      const expectedWorld = createWorld();
+      const expectedStorage = register(expectedWorld, archetype([Position]));
+      despawn(expectedStorage, spawnMany(expectedStorage, 2)[1]!);
+      const expectedIds = spawnMany(expectedStorage, 3);
+
+      const world = createWorld();
+      const storage = register(world, archetype([Position]));
+      despawn(storage, spawnMany(storage, 2)[1]!);
+      const buf: EntityId[] = [];
+
+      const ids = spawnMany(storage, 3, buf);
+
+      expect(ids).toStrictEqual(expectedIds);
+    });
+
     it("4-arg form works with overrides and out", () => {
       const world = createWorld();
       const Arch = archetype([Position, Shield]);
