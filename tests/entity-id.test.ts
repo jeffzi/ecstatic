@@ -51,12 +51,7 @@ describe("generational IDs", () => {
       assertEntityIndex(MAX_INDEX - 1);
     }).not.toThrow();
 
-    // Should throw at MAX_INDEX
-    expect(() => {
-      assertEntityIndex(MAX_INDEX);
-    }).toThrow();
-
-    // Error message should mention MAX_INDEX - 1
+    // Should throw at MAX_INDEX, with a message mentioning MAX_INDEX - 1
     expect(() => {
       assertEntityIndex(MAX_INDEX);
     }).toThrow(new RegExp(String(MAX_INDEX - 1)));

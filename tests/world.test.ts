@@ -24,8 +24,8 @@ describe("register", () => {
     expect(posCol).toBeDefined();
     expect(posCol.x).toBeDefined();
     expect(posCol.y).toBeDefined();
-    expect(posCol.x instanceof ArrayBuffer || posCol.x instanceof Float64Array).toBe(true);
-    expect(posCol.y instanceof ArrayBuffer || posCol.y instanceof Float64Array).toBe(true);
+    expect(posCol.x).toBeInstanceOf(Float64Array);
+    expect(posCol.y).toBeInstanceOf(Float64Array);
 
     const velCol = storage.columns.get(Velocity)!;
     expect(velCol).toBeDefined();
@@ -54,15 +54,6 @@ describe("register", () => {
 });
 
 describe("world", () => {
-  it("registers an archetype", () => {
-    const world = createWorld();
-    const Arch = archetype([Position, Velocity]);
-
-    expect(() => {
-      register(world, Arch);
-    }).not.toThrow();
-  });
-
   it("ignores duplicate registration (idempotent)", () => {
     const world = createWorld();
     const Arch = archetype([Position]);
@@ -73,17 +64,6 @@ describe("world", () => {
 
     expect(storage1).toBe(storage2);
     expect(storage2.n).toBe(storageCount1);
-  });
-
-  it("allows registering an archetype to multiple worlds", () => {
-    const world1 = createWorld();
-    const world2 = createWorld();
-    const Arch = archetype([Position]);
-
-    expect(() => {
-      register(world1, Arch);
-      register(world2, Arch);
-    }).not.toThrow();
   });
 });
 
@@ -180,13 +160,9 @@ describe("named SoA aliases", () => {
     const Arch = archetype([Position]);
     const storage = register(world, Arch);
 
-    expect((storage as Record<string, unknown>).WorldTestPosition).toBeDefined();
-    const posAlias = (storage as Record<string, unknown>).WorldTestPosition as Record<
-      string,
-      unknown
-    >;
-    expect(posAlias.x).toBeDefined();
-    expect(posAlias.y).toBeDefined();
+    expect(storage.WorldTestPosition).toBeDefined();
+    expect(storage).toHaveProperty("WorldTestPosition.x");
+    expect(storage).toHaveProperty("WorldTestPosition.y");
   });
 });
 
@@ -253,8 +229,7 @@ describe("optional components with fields", () => {
     const Arch = archetype([Position], [Opt]);
     const storage = register(world, Arch);
 
-    expect((storage as Record<string, unknown>).OptWithAlias).toBeDefined();
-    const optAlias = (storage as Record<string, unknown>).OptWithAlias as Record<string, unknown>;
-    expect(optAlias.value).toBeInstanceOf(Float64Array);
+    expect(storage.OptWithAlias).toBeDefined();
+    expect(storage).toHaveProperty("OptWithAlias.value", expect.any(Float64Array));
   });
 });

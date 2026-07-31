@@ -243,6 +243,38 @@ describe("spawnMany", () => {
       expect(buf).toHaveLength(2);
     });
 
+    it("grows a non-empty out buffer that starts shorter than count", () => {
+      const world = createWorld();
+      const Arch = archetype([Position]);
+      const storage = register(world, Arch);
+      const buf = spawnMany(storage, 2);
+
+      const result = spawnMany(storage, 5, buf);
+
+      expect(result).toBe(buf);
+      expect(result).toHaveLength(5);
+      expect(new Set(result).size).toBe(5);
+      for (const id of result) {
+        expect(alive(storage, id)).toBe(true);
+      }
+    });
+
+    it("fills out with the same ids the non-out overload returns for the same world state", () => {
+      const expectedWorld = createWorld();
+      const expectedStorage = register(expectedWorld, archetype([Position]));
+      despawn(expectedStorage, spawnMany(expectedStorage, 2)[1]!);
+      const expectedIds = spawnMany(expectedStorage, 3);
+
+      const world = createWorld();
+      const storage = register(world, archetype([Position]));
+      despawn(storage, spawnMany(storage, 2)[1]!);
+      const buf: EntityId[] = [];
+
+      const ids = spawnMany(storage, 3, buf);
+
+      expect(ids).toStrictEqual(expectedIds);
+    });
+
     it("4-arg form works with overrides and out", () => {
       const world = createWorld();
       const Arch = archetype([Position, Shield]);
@@ -278,14 +310,13 @@ describe("spawnMany", () => {
       const storage = register(world, Arch);
 
       // Simulate a world where nextIndex is already at the ceiling with no freelist.
-      const w = world as unknown as Record<string, number>;
-      w.nextIndex = MAX_INDEX;
-      w.freeHead = -1;
+      world.nextIndex = MAX_INDEX;
+      world.freeHead = -1;
 
       // Snapshot world state before the call.
       const beforeN = storage.n;
-      const beforeNextIndex = w.nextIndex;
-      const beforeFreeHead = w.freeHead;
+      const beforeNextIndex = world.nextIndex;
+      const beforeFreeHead = world.freeHead;
 
       // Act: spawnMany needs 3 fresh slots — overflows.
       expect(() => {
@@ -294,8 +325,8 @@ describe("spawnMany", () => {
 
       // World must be completely unchanged.
       expect(storage.n).toBe(beforeN);
-      expect(w.nextIndex).toBe(beforeNextIndex);
-      expect(w.freeHead).toBe(beforeFreeHead);
+      expect(world.nextIndex).toBe(beforeNextIndex);
+      expect(world.freeHead).toBe(beforeFreeHead);
     });
 
     it("freelist-only near ceiling succeeds: reusing slots does not trigger the overflow guard", () => {
@@ -310,8 +341,7 @@ describe("spawnMany", () => {
       despawn(storage, tmp2);
 
       // Now push nextIndex to the ceiling — freelist reuse must still succeed.
-      const w = world as unknown as Record<string, number>;
-      w.nextIndex = MAX_INDEX;
+      world.nextIndex = MAX_INDEX;
 
       // Act: spawn 2 — fits entirely in the freelist.
       expect(() => {
@@ -330,13 +360,12 @@ describe("spawnMany", () => {
       despawn(storage, tmp);
 
       // Simulate nextIndex one step below the ceiling: 1 fresh slot is possible, but 2 are not.
-      const w = world as unknown as Record<string, number>;
-      w.nextIndex = MAX_INDEX - 1;
+      world.nextIndex = MAX_INDEX - 1;
 
       // Snapshot state.
       const beforeN = storage.n;
-      const beforeNextIndex = w.nextIndex;
-      const beforeFreeHead = w.freeHead;
+      const beforeNextIndex = world.nextIndex;
+      const beforeFreeHead = world.freeHead;
 
       // Act: spawn 3 — freelist covers 1, needs 2 fresh → overflows.
       expect(() => {
@@ -345,8 +374,8 @@ describe("spawnMany", () => {
 
       // World must be completely unchanged.
       expect(storage.n).toBe(beforeN);
-      expect(w.nextIndex).toBe(beforeNextIndex);
-      expect(w.freeHead).toBe(beforeFreeHead);
+      expect(world.nextIndex).toBe(beforeNextIndex);
+      expect(world.freeHead).toBe(beforeFreeHead);
     });
 
     it("mixed batch that fits succeeds: freelist has 1 slot, 2 fresh needed, nextIndex allows it", () => {
@@ -359,8 +388,7 @@ describe("spawnMany", () => {
       despawn(storage, tmp);
 
       // Place nextIndex two steps below the ceiling: 2 fresh slots fit.
-      const w = world as unknown as Record<string, number>;
-      w.nextIndex = MAX_INDEX - 2;
+      world.nextIndex = MAX_INDEX - 2;
 
       // Act: spawn 3 — freelist covers 1, needs 2 fresh → fits.
       expect(() => {

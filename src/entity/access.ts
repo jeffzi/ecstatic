@@ -6,7 +6,7 @@ import type { ComponentDescriptor, ComponentFields, FieldDescriptor } from "../c
 import { isFieldDescriptor } from "../component.js";
 import type { EntityId } from "../entity-id.js";
 import { entityIndex } from "../entity-id.js";
-import type { Storage, World } from "../world.js";
+import type { Storage, TypedArray, World } from "../world.js";
 import { resolveEntityArch } from "./common.js";
 
 /**
@@ -16,7 +16,11 @@ import { resolveEntityArch } from "./common.js";
  * @throws If the component has no data fields (tag component)
  * @throws If the field name is unknown on the component
  */
-function resolveFieldColumn(storage: Storage, comp: ComponentDescriptor, fieldName: string) {
+function resolveFieldColumn(
+  storage: Storage,
+  comp: ComponentDescriptor,
+  fieldName: string,
+): TypedArray | Array<unknown> {
   const name = comp.__ecstatic_name;
   if (!storage.componentByName.has(name)) {
     throw new Error(`component ${name} not on this archetype`);
@@ -52,10 +56,8 @@ function writeField(
 }
 
 /**
- * Get a single field value from an entity.
- *
- * Accepts either the entity's storage or its world; the world form resolves
- * the storage through the entity index.
+ * Read a field through either a storage or world handle, resolving the
+ * owning archetype internally.
  *
  * @param storageOrWorld - The storage or world containing the entity
  * @param id - The entity ID
@@ -98,7 +100,8 @@ export function set<C extends ComponentDescriptor>(
   values: Partial<ComponentFields<C>>,
 ): void;
 /**
- * Set one or more fields on an entity.
+ * Write one field via a descriptor or multiple fields via a partial
+ * component record.
  *
  * Two forms:
  * - `set(storageOrWorld, id, field, value)` — single field descriptor + value;
@@ -129,7 +132,7 @@ export function set(
     return;
   }
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed by preceding guards
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the overload signatures guarantee valuesOrValue is a Record<string, unknown> here
   const values = valuesOrValue as Record<string, unknown>;
   for (const [fieldName, value] of Object.entries(values)) {
     writeField(storage, di, componentOrField, fieldName, value);

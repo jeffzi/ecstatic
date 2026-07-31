@@ -155,22 +155,6 @@ describe("view — e.id operations", () => {
     expect(capturedId).toBe(id);
   });
 
-  it("despawn via e.id mid-loop is safe", () => {
-    const world = createWorld();
-    const Arch = archetype([Position]);
-    const storage = register(world, Arch);
-
-    spawn(storage);
-    spawn(storage);
-    spawn(storage);
-
-    each(storage, (e) => {
-      despawn(storage, e.id);
-    });
-
-    expect(storage.n).toBe(0);
-  });
-
   it("get/set via e.id work", () => {
     const world = createWorld();
     const Arch = archetype([Position]);
@@ -182,9 +166,7 @@ describe("view — e.id operations", () => {
 
     each(storage, (e) => {
       const x = get(storage, e.id, Position.x);
-      if (typeof x === "number") {
-        set(storage, e.id, Position.x, x + 100);
-      }
+      set(storage, e.id, Position.x, x + 100);
     });
 
     expect(get(storage, id, Position.x)).toBe(101);

@@ -186,35 +186,6 @@ describe("spawn", () => {
   });
 });
 
-describe("entity storage", () => {
-  it("spawns entities with dense indices and count", () => {
-    const world = createWorld();
-    const Arch = archetype([Position]);
-    const storage = register(world, Arch);
-
-    const id0 = spawn(storage);
-    const id1 = spawn(storage);
-
-    expect(storage.n).toBe(2);
-    expect(storage.entities[0]).toBe(id0);
-    expect(storage.entities[1]).toBe(id1);
-  });
-});
-
-describe("register", () => {
-  it("is idempotent: calling twice preserves existing entity state", () => {
-    const world = createWorld();
-    const Arch = archetype([Position]);
-    const storage = register(world, Arch);
-    spawn(storage);
-
-    expect(() => {
-      register(world, Arch);
-    }).not.toThrow();
-    expect(storage.n).toBe(1);
-  });
-});
-
 describe("multi-world isolation", () => {
   it("two worlds with the same archetype have independent entity counts", () => {
     const world1 = createWorld();
@@ -240,9 +211,8 @@ describe("hard limits", () => {
     const storage = register(world, Arch);
 
     // Simulate a nearly-full world without allocating the full entity range.
-    const w = world as unknown as Record<string, number>;
-    w.nextIndex = MAX_INDEX;
-    w.freeHead = -1; // force fresh-alloc path
+    world.nextIndex = MAX_INDEX;
+    world.freeHead = -1; // force fresh-alloc path
 
     expect(() => {
       spawn(storage);

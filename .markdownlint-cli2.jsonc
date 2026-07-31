@@ -10,9 +10,9 @@
   },
   "ignores": [
     "LICENSE",
-    "CHANGELOG.md",
     ".planning/**",
     ".research/**",
+    ".stryker-tmp/**",
     "AGENTS.md",
     "CLAUDE.md",
     "todo.md",

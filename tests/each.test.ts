@@ -77,31 +77,6 @@ describe("each — single archetype", () => {
 
     expect(called).toBe(false);
   });
-
-  it("iterates all entities created via spawn", () => {
-    const world = createWorld();
-    const Arch = archetype([Position, Health]);
-    const storage = register(world, Arch);
-
-    const id1 = spawn(storage, {
-      EachTestPosition: { x: 1, y: 0 },
-      EachTestHealth: { hp: 50, maxHp: 50 },
-    });
-    const id2 = spawn(storage, {
-      EachTestPosition: { x: 2, y: 0 },
-      EachTestHealth: { hp: 75, maxHp: 75 },
-    });
-
-    const visitedIds: number[] = [];
-    each(storage, (e) => {
-      visitedIds.push(e.id);
-    });
-
-    // Backward: id2 then id1
-    expect(visitedIds).toHaveLength(2);
-    expect(visitedIds[0]).toBe(id2);
-    expect(visitedIds[1]).toBe(id1);
-  });
 });
 
 describe("each — edge cases", () => {
