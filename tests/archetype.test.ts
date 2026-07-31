@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { archetype } from "../src/archetype.js";
 import { type ComponentDescriptor, components } from "../src/component.js";
+import { asMutableDescriptor } from "./fixtures.js";
 
 describe("archetype", () => {
   describe("basic construction", () => {
@@ -95,8 +96,7 @@ describe("archetype", () => {
       });
 
       const arch = archetype([A]);
-      const lookupSet = arch.componentLookup as Set<typeof A>;
-      expect(lookupSet.has(A)).toBe(true);
+      expect(arch.componentLookup.has(A)).toBe(true);
     });
   });
 
@@ -150,7 +150,7 @@ describe("archetype", () => {
         ReservedEntities: { x: 0 },
       });
       // Rename the descriptor to have reserved name
-      (Comp as unknown as Record<string, unknown>).__ecstatic_name = "entities";
+      asMutableDescriptor(Comp).__ecstatic_name = "entities";
 
       expect(() => {
         archetype([Comp]);
@@ -161,7 +161,7 @@ describe("archetype", () => {
       const { ReservedSparse: Comp } = components({
         ReservedSparse: { x: 0 },
       });
-      (Comp as unknown as Record<string, unknown>).__ecstatic_name = "sparse";
+      asMutableDescriptor(Comp).__ecstatic_name = "sparse";
 
       const { ReservedReq: Req } = components({ ReservedReq: { y: 0 } });
       expect(() => {
@@ -173,7 +173,7 @@ describe("archetype", () => {
       const { ReservedArch: Comp } = components({
         ReservedArch: { x: 0 },
       });
-      (Comp as unknown as Record<string, unknown>).__ecstatic_name = "archetype";
+      asMutableDescriptor(Comp).__ecstatic_name = "archetype";
 
       expect(() => {
         archetype([Comp]);

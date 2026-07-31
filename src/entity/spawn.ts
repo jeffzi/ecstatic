@@ -5,7 +5,14 @@
 import type { ArchetypeDescriptor, ComponentsOf } from "../archetype.js";
 import type { ComponentFields, ComponentName } from "../component.js";
 import type { EntityId } from "../entity-id.js";
-import { assertEntityIndex, initialEntityId, MAX_INDEX, OVERFLOW_MSG } from "../entity-id.js";
+import {
+  assertEntityIndex,
+  initialEntityId,
+  MAX_INDEX,
+  NO_FREE_SLOT,
+  OVERFLOW_MSG,
+} from "../entity-id.js";
+import { collectFlatColumns } from "../world.js";
 import type { Storage, TypedArray, WorldState } from "../world.js";
 
 /**
@@ -44,23 +51,7 @@ export function spawn<A extends ArchetypeDescriptor>(
 export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   const state = storage.world;
 
-  // Allocate an entity index (from freelist or fresh)
-  let index: number;
-  if (state.freeHead !== -1) {
-    // Pop from freelist: the dead sparse slot holds the next pointer
-    index = state.freeHead;
-    state.freeHead = state.sparse[index]!;
-  } else {
-    // Fresh allocation
-    index = state.nextIndex;
-    assertEntityIndex(index);
-    state.nextIndex = index + 1;
-    if (index >= state.generation.length) {
-      growWorldArrays(state);
-    }
-    // Fresh slot init: gen 1 (gen 0 is the never-allocated sentinel)
-    state.generation[index] = initialEntityId(index);
-  }
+  const index = allocateOneIndex(state);
 
   // The slot's packed ID is precomputed — spawn packs nothing
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
@@ -80,6 +71,30 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   storage.mask[di] = 0;
 
   return eid;
+}
+
+/**
+ * Allocate a single entity index: pop from the freelist if one is available,
+ * otherwise allocate fresh (growing world arrays and initializing the slot's
+ * generation value as needed).
+ */
+function allocateOneIndex(state: WorldState): number {
+  if (state.freeHead !== NO_FREE_SLOT) {
+    // Pop from freelist: the dead sparse slot holds the next pointer
+    const index = state.freeHead;
+    state.freeHead = state.sparse[index]!;
+    return index;
+  }
+
+  const index = state.nextIndex;
+  assertEntityIndex(index);
+  state.nextIndex = index + 1;
+  if (index >= state.generation.length) {
+    growWorldArrays(state);
+  }
+  // Fresh slot init: gen 1 (gen 0 is the never-allocated sentinel)
+  state.generation[index] = initialEntityId(index);
+  return index;
 }
 
 /** Copy a column into a double-capacity replacement of the same constructor. */
@@ -127,13 +142,7 @@ function growStorageArrays(storage: Storage): void {
     }
   }
 
-  const flatColumns: (TypedArray | Array<unknown>)[] = [];
-  for (const soa of storage.columns.values()) {
-    for (const col of Object.values(soa)) {
-      flatColumns.push(col);
-    }
-  }
-  storage.flatColumns = flatColumns;
+  storage.flatColumns = collectFlatColumns(storage.columns);
 }
 
 /**
@@ -173,73 +182,46 @@ function initComponentFields(
 }
 
 /**
- * Allocate entity indices for a batch spawn: precheck overflow, allocate from
- * freelist and fresh slots, initialize generation values. Returns the sparse
- * indices and whether world arrays grew (caller must refresh aliases if true).
- * Called only after atomic overflow pre-check has passed.
- */
-function allocateIndices(
-  state: WorldState,
-  count: number,
-): { indices: number[]; worldGrew: boolean } {
-  const indices: number[] = [];
-  let worldGrew = false;
-
-  for (let i = 0; i < count; i++) {
-    let index: number;
-    if (state.freeHead !== -1) {
-      // Pop from freelist
-      index = state.freeHead;
-      state.freeHead = state.sparse[index]!;
-    } else {
-      // Fresh allocation
-      index = state.nextIndex;
-      state.nextIndex = index + 1;
-      if (index >= state.generation.length) {
-        growWorldArrays(state);
-        worldGrew = true;
-      }
-      // Fresh slot init: gen 1 (gen 0 is the never-allocated sentinel)
-      state.generation[index] = initialEntityId(index);
-    }
-    indices.push(index);
-  }
-
-  return { indices, worldGrew };
-}
-
-/**
- * Fill dense rows and SoA fields for a batch of allocated entities.
- * Assumes indices have been allocated, storage.n is the start of the batch.
+ * Allocate entity indices and fill dense rows and SoA fields for a batch of
+ * `count` entities, writing the spawned ids into `out`.
+ *
+ * `out` is the caller's buffer on the out-parameter path and a fresh array
+ * otherwise — one code shape, so a reused buffer costs no extra allocation or
+ * copy. Ids are written at ascending indices (growing a short buffer in place),
+ * then the length is set to trim any tail left by a longer buffer.
+ *
+ * Allocation is fused into the fill loop so no intermediate index array is
+ * built. Safe because a freelist pop never reads a sparse slot written earlier
+ * in the same batch: a popped slot leaves the chain before its sparse entry is
+ * overwritten with a dense index.
+ *
+ * Assumes overflow was pre-checked and storage.n is the end of the batch.
  */
 function fillBatch(
   storage: Storage,
   count: number,
-  indices: number[],
   overrides: SpawnOverrides | undefined,
-): EntityId[] {
+  out: EntityId[],
+): void {
   const state = storage.world;
   const denseStart = storage.n - count;
-  const result: EntityId[] = [];
 
-  // Build entity ID array and update sparse mapping
   for (let i = 0; i < count; i++) {
-    const index = indices[i]!;
+    const index = allocateOneIndex(state);
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
     const eid = state.generation[index] as EntityId;
     const di = denseStart + i;
 
-    result[i] = eid;
+    out[i] = eid;
     storage.entities[di] = eid;
     state.sparse[index] = di;
     state.entityArch[index] = storage;
     storage.mask[di] = 0;
   }
+  out.length = count;
 
   // Initialize component fields (column-major: per component, per field, loop rows)
   initComponentFields(storage, denseStart, count, overrides);
-
-  return result;
 }
 
 /**
@@ -302,23 +284,13 @@ export function spawnMany(
     growStorageArrays(storage);
   }
 
-  // Allocate indices (may grow world arrays)
-  const { indices } = allocateIndices(state, count);
-
   // Update storage entity count before filling
   storage.n = denseEnd;
 
-  // Fill dense rows and component fields
-  const ids = fillBatch(storage, count, indices, overrides);
-
-  // Populate result array
-  const result = outBuffer ?? ids;
-  if (outBuffer) {
-    outBuffer.length = count;
-    for (let i = 0; i < count; i++) {
-      outBuffer[i] = ids[i]!;
-    }
-  }
+  // Allocate indices (may grow world arrays) and fill dense rows and component
+  // fields, writing ids straight into the caller's buffer when one was supplied
+  const result = outBuffer ?? [];
+  fillBatch(storage, count, overrides, result);
 
   return result;
 }
@@ -334,7 +306,7 @@ function assertBatchCapacity(state: WorldState, count: number): void {
   }
   let freeCount = 0;
   let freeWalk = state.freeHead;
-  while (freeWalk !== -1 && freeCount < count) {
+  while (freeWalk !== NO_FREE_SLOT && freeCount < count) {
     freeCount++;
     freeWalk = state.sparse[freeWalk]!;
   }

@@ -1,3 +1,4 @@
+/** SemVer version string of the ecstatic package. */
 export const VERSION = "0.1.0";
 
 export type { ArchetypeDescriptor, ComponentsOf } from "./archetype.js";
@@ -13,6 +14,7 @@ export {
   type FieldDescriptor,
   type FieldValue,
   f32,
+  f64,
   i8,
   i16,
   i32,
