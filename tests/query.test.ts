@@ -9,6 +9,7 @@ import {
   disable,
   each,
   enable,
+  get,
   has,
   query,
   register,
@@ -78,9 +79,7 @@ describe("query — shorthand (component array)", () => {
       e.QueryPosition.x += 1;
     });
 
-    const row = 0;
-    expect(storage.columns.get(Position)!.x![row]).toBe(4);
-    expect(id).toBeDefined();
+    expect(get(storage, id, Position.x)).toBe(4);
   });
 
   it("errors on an empty component array", () => {
@@ -384,6 +383,7 @@ describe("query — safety and callbacks", () => {
     spawn(storage);
     spawn(storage);
 
+    expect.hasAssertions();
     query(world, [Position], (e) => {
       enable(world, e.id, Stunned);
       expect(has(world, e.id, Stunned)).toBe(true);

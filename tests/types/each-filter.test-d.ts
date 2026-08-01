@@ -63,9 +63,8 @@ describe("each filter typing", () => {
     });
   });
 
-  // Reachability pruning ships behind its own test block so it can be
-  // dropped independently if it proves brittle — the fallback is plain
-  // distribution over the union.
+  // Keep these assertions in their own block: they are the only coverage of
+  // reachability pruning.
   describe("reachability pruning", () => {
     it("drops union members whose archetype cannot match an all-axis component", () => {
       const withStunned = register(world, archetype([Position], [Stunned]));

@@ -25,8 +25,8 @@ import type { Storage, TypedArray, WorldState } from "../world.js";
 export type SpawnOverrides = Record<string, Record<string, unknown> | boolean>;
 
 /**
- * True when a component's declared fields shape is a tag (zero fields). The
- * port's `Tag<N>` fields are `Record<string, never>`, so tag detection uses
+ * True when a component's declared fields shape is a tag (zero fields).
+ * `Tag<N>` fields are `Record<string, never>`, so tag detection uses
  * assignability, not `keyof F extends never`.
  */
 export type IsTagFields<F> = F extends Record<string, never> ? true : false;
@@ -253,8 +253,8 @@ function writeOptionalDefaults(storage: Storage, denseStart: number, count: numb
  * top of them, `false`/absent stays disabled.
  *
  * Iterates the archetype's optionals, so unknown override keys are silently
- * ignored (phase-3 behavior; the types reject them) — unlike `enable`, whose
- * record form throws on unknown names at runtime.
+ * ignored (the types reject them) — unlike `enable`, whose record form
+ * throws on unknown names at runtime.
  */
 // Spawn hot path: the override grammar's per-kind continues and the
 // column-major field loops stay fused in one function so a batch pays one
@@ -339,7 +339,6 @@ function fillBatch(
   }
   out.length = count;
 
-  // Initialize component fields (column-major: per component, per field, loop rows)
   initComponentFields(storage, denseStart, count, overrides);
   if (storage.hasOptionalData) {
     writeOptionalDefaults(storage, denseStart, count);
@@ -404,14 +403,12 @@ export function spawnMany(
   overridesOrOut?: SpawnOverrides | EntityId[],
   out?: EntityId[],
 ): EntityId[] {
-  // Disambiguate 3rd argument
   const isOutBuffer = Array.isArray(overridesOrOut);
   const overrides = isOutBuffer ? undefined : overridesOrOut;
   const outBuffer = isOutBuffer ? overridesOrOut : out;
 
   const state = storage.world;
 
-  // Fast path: count 0 means empty result
   if (count === 0) {
     if (outBuffer) {
       outBuffer.length = 0;
@@ -429,7 +426,8 @@ export function spawnMany(
     growStorageArrays(storage);
   }
 
-  // Update storage entity count before filling
+  // fillBatch derives denseStart from storage.n - count, so the new count must
+  // be committed first.
   storage.n = denseEnd;
 
   // Allocate indices (may grow world arrays) and fill dense rows and component

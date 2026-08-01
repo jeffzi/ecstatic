@@ -84,13 +84,13 @@ describe("RefMarker<T> and ref<T>()", () => {
     >();
   });
 
-  it("rejects table defaults in component", () => {
-    // @ts-expect-error table defaults not allowed in components
-    component("CbWithTable", { data: { nested: 1 } });
+  it("rejects a nested object default in component", () => {
+    // @ts-expect-error object defaults not allowed in components
+    component("CbWithNestedObject", { data: { nested: 1 } });
   });
 
   it("rejects object defaults in component", () => {
-    // @ts-expect-error table/object defaults not allowed — only scalar + RefMarker
+    // @ts-expect-error object defaults not allowed — only scalar + RefMarker
     component("CbBadDefaults", { config: { a: 1, b: 2 } });
   });
 });

@@ -125,7 +125,8 @@ function fillFreedSlots(
 }
 
 /**
- * Helper: clear despawnClear columns for freed tail indices.
+ * Clears ref-marked columns over [compactedN, oldN) so despawned rows stop
+ * pinning their referents.
  */
 function clearFreedTail(storage: Storage, oldN: number, compactedN: number): void {
   if (storage.hasDespawnClear) {
@@ -170,7 +171,6 @@ export function despawn(storageOrWorld: Storage | WorldState, id: EntityId): voi
     return;
   }
 
-  // Dispatch: if it's a Storage, use it directly; otherwise resolve from world's entityArch.
   const storage = isStorage(storageOrWorld) ? storageOrWorld : storageOrWorld.entityArch[index];
 
   if (!storage) {
@@ -183,13 +183,9 @@ export function despawn(storageOrWorld: Storage | WorldState, id: EntityId): voi
     throw new Error(ERROR_WRONG_STORAGE);
   }
 
-  // Swap-and-pop: remove entity at sparse[index] from dense storage
   despawnEntity(storage, index);
 }
 
-/**
- * Type guard: distinguish Storage from WorldState.
- */
 function isStorage(obj: unknown): obj is Storage {
   return (
     obj !== null &&
@@ -240,14 +236,12 @@ export function despawnMany(world: WorldState, ids: EntityId[]): void;
 
 export function despawnMany(storageOrWorld: Storage | WorldState, ids?: EntityId[]): void {
   if (isStorage(storageOrWorld)) {
-    // Storage form
     if (!ids) {
       despawnManyStorageNoIds(storageOrWorld);
     } else {
       despawnManyStorageWithIds(storageOrWorld, ids);
     }
   } else {
-    // World form
     if (!ids) {
       despawnManyWorldNoIds(storageOrWorld);
     } else {
@@ -266,7 +260,6 @@ function despawnManyStorageNoIds(storage: Storage): void {
   const generation = world.generation;
   let freeHead = world.freeHead;
 
-  // Free every live index: generation advance, freelist push, back-pointer clear
   for (let row = 0; row < oldN; row++) {
     const index = entityIndex(storage.entities[row]!);
     generation[index] = nextGeneration(generation[index]!, index);
@@ -370,9 +363,6 @@ function despawnManyWorldWithIds(world: WorldState, ids: EntityId[]): void {
   DESPAWN_WORLD_BUCKETS.clear();
 }
 
-/**
- * Core despawn logic: swap entity at row with last, update indices, clear tail.
- */
 function despawnEntity(storage: Storage, index: number): void {
   const row = storage.sparse[index]!;
   const last = storage.n - 1;

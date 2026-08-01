@@ -23,7 +23,7 @@ describe("spawn optional overrides", () => {
 
   it("narrows a required tag override to literal true", () => {
     spawn(storage, { OnFire: true });
-    // @ts-expect-error required tags accept only `true` — the phase-3 `{}` acceptance is gone
+    // @ts-expect-error required tags accept only `true`
     spawn(storage, { OnFire: {} });
     // @ts-expect-error required components cannot be disabled at spawn
     spawn(storage, { OnFire: false });

@@ -18,7 +18,7 @@ import type { EntityId } from "./entity-id.js";
 import type { EachView, ViewSlotValue } from "./entity/each.js";
 import { eachStorageMatched } from "./entity/each.js";
 import { ERROR_QUERY_EMPTY } from "./errors.js";
-import { findArchetypes, resolveFilterMasks } from "./filter.js";
+import { findArchetypes, normalizeFilter, resolveFilterMasks } from "./filter.js";
 import type { Matcher } from "./matcher.js";
 import type { Storage, World, WorldState } from "./world.js";
 
@@ -42,8 +42,6 @@ interface ResolvedQuery {
 
 /** Filter-object identity → per-world cached resolutions. */
 const QUERY_CACHE = new WeakMap<object, WeakMap<WorldState, ResolvedQuery>>();
-
-const EMPTY_COMPONENT_IDS: readonly ComponentDescriptor[] = [];
 
 /**
  * Resolve (or reuse) the matching storages and matchers for a filter object
@@ -132,24 +130,7 @@ export function query(
 
   const state: WorldState = world;
 
-  let allIds: readonly ComponentDescriptor[];
-  let anyIds: readonly ComponentDescriptor[];
-  let noneIds: readonly ComponentDescriptor[];
-  if (Array.isArray(target)) {
-    allIds = target;
-    anyIds = EMPTY_COMPONENT_IDS;
-    noneIds = EMPTY_COMPONENT_IDS;
-  } else {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Array.isArray does not narrow readonly arrays out of the union
-    const f = target as {
-      readonly all: readonly ComponentDescriptor[];
-      readonly any?: readonly ComponentDescriptor[];
-      readonly none?: readonly ComponentDescriptor[];
-    };
-    allIds = f.all;
-    anyIds = f.any ?? EMPTY_COMPONENT_IDS;
-    noneIds = f.none ?? EMPTY_COMPONENT_IDS;
-  }
+  const [allIds, anyIds, noneIds] = normalizeFilter(target);
 
   if (allIds.length === 0) {
     throw new Error(ERROR_QUERY_EMPTY);

@@ -88,8 +88,9 @@ export type PromotedComponents<Comps extends ComponentDescriptor> = {
 /**
  * Promotes optional data components to concrete column slots on a storage
  * type. Used by `has()` type predicates: the intersection records the proven
- * components for downstream consumers. Inert until typed aliases / branded
- * entity ids land — the guard stays usable as a plain boolean.
+ * components for downstream consumers. The promotion is inert to callers —
+ * `has()` remains usable as a plain boolean, and consumers must not depend
+ * on the recorded slots.
  */
 export type PromoteOptionals<Comps extends ComponentDescriptor> = {
   [C in ExcludeTags<Comps> as ComponentName<C>]: SoAColumns;
@@ -130,7 +131,6 @@ function writeFieldOverrides(
   }
 }
 
-/** Enables a single optional component on an entity with already-resolved storage and di. */
 function enableOne(
   storage: Storage,
   di: number,
@@ -151,7 +151,6 @@ function enableOne(
   }
 }
 
-/** Disables a single optional component on an entity with already-resolved storage and di. */
 function disableOne(storage: Storage, di: number, comp: ComponentDescriptor): void {
   const notBit = storage.optionalNotBitLookup.get(comp);
   if (notBit === undefined) {
@@ -160,6 +159,94 @@ function disableOne(storage: Storage, di: number, comp: ComponentDescriptor): vo
 
   const bit = storage.optionalBitLookup.get(comp)!;
   applyMaskAnd(storage, di, bit, notBit);
+}
+
+// ---------------------------------------------------------------------------
+// Enable resolution
+// ---------------------------------------------------------------------------
+
+// Shared scratch and helpers: enable()'s record form and enableMany() both
+// resolve overrides through this state before mutating any row.
+// BATCH_DENSE_INDICES is also reused by disableMany() via resolveBatchIndices.
+
+// Module-level scratch reused across calls (despawn.ts pattern): the
+// resolved (comp, values) override list and the per-id dense indices.
+const RESOLVED_COMPS: ComponentDescriptor[] = [];
+const RESOLVED_VALUES: (Record<string, unknown> | undefined)[] = [];
+const BATCH_DENSE_INDICES: number[] = [];
+
+/**
+ * Resolve all (name → comp, values) pairs up front so an unknown name or a
+ * non-optional component errors before any mutation. `false` entries are
+ * filtered out here so they never enter the per-entity loops. Returns the
+ * resolved count; entries land in the module scratch arrays.
+ */
+function resolveEnableOverrides(
+  storage: Storage,
+  overrides: Record<string, Record<string, unknown> | boolean>,
+): number {
+  let n = 0;
+  for (const [name, values] of Object.entries(overrides)) {
+    if (values === false) {
+      continue;
+    }
+    const comp = storage.componentByName.get(name);
+    if (comp === undefined) {
+      throw new Error(errorUnknownComponent(name));
+    }
+    if (!storage.optionalBitLookup.has(comp)) {
+      throw new Error(errorNotOptional(name));
+    }
+    RESOLVED_COMPS[n] = comp;
+    RESOLVED_VALUES[n] = typeof values === "boolean" ? undefined : values;
+    n += 1;
+  }
+  return n;
+}
+
+function resolvedEnableBits(storage: Storage, resolvedN: number): number {
+  let bits = 0;
+  for (let k = 0; k < resolvedN; k++) {
+    bits |= storage.optionalBitLookup.get(RESOLVED_COMPS[k]!)!;
+  }
+  return bits;
+}
+
+/**
+ * Applies all pre-resolved enable overrides on a single dense index: one
+ * combined mask write plus the field patches. No matcher refresh here —
+ * callers refresh once afterwards (single row or the whole batch).
+ */
+function applyResolvedEnables(
+  storage: Storage,
+  di: number,
+  resolvedN: number,
+  combinedBits: number,
+): void {
+  const entityMask = storage.mask;
+  entityMask[di] = entityMask[di]! | combinedBits;
+  for (let k = 0; k < resolvedN; k++) {
+    const values = RESOLVED_VALUES[k];
+    if (values !== undefined) {
+      const soa = storage.columns.get(RESOLVED_COMPS[k]!);
+      if (soa !== undefined) {
+        writeFieldOverrides(soa, RESOLVED_COMPS[k]!.__ecstatic_fields, di, values);
+      }
+    }
+  }
+}
+
+/**
+ * Releases the scratch's references to caller-supplied value records once
+ * they have been applied, so the module-level array does not pin them
+ * between calls. Not needed for RESOLVED_COMPS — descriptors are
+ * registry-lifetime — and not a staleness guard: resolveEnableOverrides
+ * rewrites every slot below `resolvedN` before any read.
+ */
+function clearResolvedValues(resolvedN: number): void {
+  for (let k = 0; k < resolvedN; k++) {
+    RESOLVED_VALUES[k] = undefined;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,7 +263,9 @@ function disableOne(storage: Storage, di: number, comp: ComponentDescriptor): vo
  *
  * The record form (`{Shield: {hp: 75}, Stunned: true, Slowed: false}`)
  * enables per entry: `true` resumes, `false` skips, a record enables and
- * patches. The world form dispatches by id to the owning storage.
+ * patches. It resolves every entry before mutating and applies one combined
+ * mask write, so an unknown name or a non-optional component throws with the
+ * row unchanged. The world form dispatches by id to the owning storage.
  *
  * @throws If the component is not optional on the archetype
  * @throws If a record key names no component on the archetype
@@ -223,18 +312,12 @@ export function enable(
     // Record form: { Shield: { hp: 75 }, Stunned: true } or { Shield: true }
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the record overloads type this; the impl's `string` arm exists solely for sentence-error types
     const record = compOrRecord as Record<string, Record<string, unknown> | boolean>;
-    for (const [name, val] of Object.entries(record)) {
-      if (val === false) {
-        continue;
-      }
-      const cid = storage.componentByName.get(name);
-      if (cid !== undefined) {
-        const fieldVals = typeof val === "boolean" ? undefined : val;
-        enableOne(storage, di, cid, fieldVals);
-      } else {
-        throw new Error(errorUnknownComponent(name));
-      }
-    }
+    const resolvedN = resolveEnableOverrides(storage, record);
+    const combinedBits = resolvedEnableBits(storage, resolvedN);
+    applyResolvedEnables(storage, di, resolvedN, combinedBits);
+    BATCH_DENSE_INDICES[0] = di;
+    refreshMatchersRows(storage, BATCH_DENSE_INDICES, 1, combinedBits);
+    clearResolvedValues(resolvedN);
     return;
   }
 
@@ -291,7 +374,6 @@ export function disable(
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the public overloads only admit component arrays here; the impl's `string` arm exists solely for sentence-error types
   const comps = compOrArray as readonly ComponentDescriptor[];
 
-  // Array form: disable multiple optional components in one mask update.
   if (comps.length === 0) {
     throw new Error(ERROR_DISABLE_EMPTY);
   }
@@ -344,7 +426,6 @@ function buildOptionalMask(storage: Storage, componentIds: readonly ComponentDes
   return combined;
 }
 
-/** Resolves the entity mask and builds the combined optional mask for the given components. */
 function checkOptionalMask(
   storageOrWorld: Storage | World,
   id: EntityId,
@@ -391,10 +472,17 @@ export function has(
   id: EntityId,
   componentOrArray: ComponentDescriptor | readonly ComponentDescriptor[] | string,
 ): boolean {
-  const componentIds = isComponentDescriptor(componentOrArray)
-    ? [componentOrArray]
-    : // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the public overloads only admit component arrays here; the impl's `string` arm exists solely for sentence-error types
-      (componentOrArray as readonly ComponentDescriptor[]);
+  if (isComponentDescriptor(componentOrArray)) {
+    const storage = resolveEntityArch(storageOrWorld, id);
+    const di = storage.sparse[entityIndex(id)]!;
+    const bit = storage.optionalBitLookup.get(componentOrArray);
+    if (bit === undefined) {
+      throw new Error(errorNotOptional(componentOrArray.__ecstatic_name));
+    }
+    return (storage.mask[di]! & bit) === bit;
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the public overloads only admit component arrays here; the impl's `string` arm exists solely for sentence-error types
+  const componentIds = componentOrArray as readonly ComponentDescriptor[];
   const [masked, combined] = checkOptionalMask(storageOrWorld, id, componentIds);
   return masked === combined;
 }
@@ -438,41 +526,6 @@ export function hasAny(
 // Batch toggles
 // ---------------------------------------------------------------------------
 
-// Module-level scratch reused across batch calls (despawn.ts pattern): the
-// resolved (comp, values) override list and the per-id dense indices.
-const RESOLVED_COMPS: ComponentDescriptor[] = [];
-const RESOLVED_VALUES: (Record<string, unknown> | undefined)[] = [];
-const BATCH_DENSE_INDICES: number[] = [];
-
-/**
- * Resolve all (name → comp, values) pairs up front so an unknown name or a
- * non-optional component errors before any mutation. `false` entries are
- * filtered out here so they never enter the per-entity loops. Returns the
- * resolved count; entries land in the module scratch arrays.
- */
-function resolveEnableOverrides(
-  storage: Storage,
-  overrides: Record<string, Record<string, unknown> | boolean>,
-): number {
-  let n = 0;
-  for (const [name, values] of Object.entries(overrides)) {
-    if (values === false) {
-      continue;
-    }
-    const comp = storage.componentByName.get(name);
-    if (comp === undefined) {
-      throw new Error(errorUnknownComponent(name));
-    }
-    if (!storage.optionalBitLookup.has(comp)) {
-      throw new Error(errorNotOptional(name));
-    }
-    RESOLVED_COMPS[n] = comp;
-    RESOLVED_VALUES[n] = typeof values === "boolean" ? undefined : values;
-    n += 1;
-  }
-  return n;
-}
-
 /**
  * Resolve and validate every listed id (staleness, ownership — DEBUG-gated)
  * before any mutation, caching dense indices in the module scratch so an
@@ -484,39 +537,6 @@ function resolveBatchIndices(storage: Storage, ids: readonly EntityId[]): void {
     const eid = ids[k]!;
     validateEntity(storage, eid);
     BATCH_DENSE_INDICES[k] = sparse[entityIndex(eid)]!;
-  }
-}
-
-/** Combined presence mask of the pre-resolved enable overrides. */
-function resolvedEnableBits(storage: Storage, resolvedN: number): number {
-  let bits = 0;
-  for (let k = 0; k < resolvedN; k++) {
-    bits |= storage.optionalBitLookup.get(RESOLVED_COMPS[k]!)!;
-  }
-  return bits;
-}
-
-/**
- * Applies all pre-resolved enable overrides on a single dense index: one
- * combined mask write plus the field patches. No matcher refresh here —
- * batch callers refresh once afterwards with inverted nesting.
- */
-function applyResolvedEnables(
-  storage: Storage,
-  di: number,
-  resolvedN: number,
-  combinedBits: number,
-): void {
-  const entityMask = storage.mask;
-  entityMask[di] = entityMask[di]! | combinedBits;
-  for (let k = 0; k < resolvedN; k++) {
-    const values = RESOLVED_VALUES[k];
-    if (values !== undefined) {
-      const soa = storage.columns.get(RESOLVED_COMPS[k]!);
-      if (soa !== undefined) {
-        writeFieldOverrides(soa, RESOLVED_COMPS[k]!.__ecstatic_fields, di, values);
-      }
-    }
   }
 }
 
@@ -568,6 +588,7 @@ export function enableMany(
       applyResolvedEnables(storage, di, resolvedN, combinedBits);
     }
     refreshMatchersAll(storage, combinedBits);
+    clearResolvedValues(resolvedN);
     return;
   }
 
@@ -576,6 +597,7 @@ export function enableMany(
     applyResolvedEnables(storage, BATCH_DENSE_INDICES[k]!, resolvedN, combinedBits);
   }
   refreshMatchersRows(storage, BATCH_DENSE_INDICES, ids.length, combinedBits);
+  clearResolvedValues(resolvedN);
 }
 
 /**

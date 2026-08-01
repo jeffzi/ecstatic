@@ -23,7 +23,7 @@ describe("archetype optionals typing", () => {
     >();
   });
 
-  it("keeps phase-3 call sites compiling through the defaulted generic", () => {
+  it("keeps existing call sites compiling through the defaulted generic", () => {
     const arch = archetype([Position]);
     expectTypeOf(arch).toExtend<ArchetypeDescriptor>();
     expectTypeOf(arch.archetype).toExtend<ArchetypeDescriptor>();

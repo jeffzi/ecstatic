@@ -404,9 +404,6 @@ describe("filtered each — array shorthand", () => {
 });
 
 describe("matcher predicate parity (Alpha ∧ (Beta ∨ Gamma) ∧ ¬Delta)", () => {
-  // Transcribed from the original's matcher-parity suite; the port has a
-  // single expression path (no LUT tier), so the four semantic tags suffice —
-  // the original's Extra* tags existed only to push past its LUT threshold.
   const { ParityAlpha: Alpha } = components({ ParityAlpha: {} });
   const { ParityBeta: Beta } = components({ ParityBeta: {} });
   const { ParityGamma: Gamma } = components({ ParityGamma: {} });
