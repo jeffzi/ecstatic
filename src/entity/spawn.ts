@@ -2,7 +2,7 @@
  * Entity spawning: allocate entity IDs, initialize component fields.
  */
 
-import type { ArchetypeDescriptor, ComponentsOf } from "../archetype.js";
+import type { ArchetypeDescriptor, ComponentsOf, OptionalsOf } from "../archetype.js";
 import type { ComponentFields, ComponentName } from "../component.js";
 import type { EntityId } from "../entity-id.js";
 import {
@@ -12,6 +12,7 @@ import {
   NO_FREE_SLOT,
   OVERFLOW_MSG,
 } from "../entity-id.js";
+import { growMatcherArrays, maskSatisfies, refreshMatchersMask } from "../matcher.js";
 import { collectFlatColumns } from "../world.js";
 import type { Storage, TypedArray, WorldState } from "../world.js";
 
@@ -24,15 +25,41 @@ import type { Storage, TypedArray, WorldState } from "../world.js";
 export type SpawnOverrides = Record<string, Record<string, unknown> | boolean>;
 
 /**
+ * True when a component's declared fields shape is a tag (zero fields). The
+ * port's `Tag<N>` fields are `Record<string, never>`, so tag detection uses
+ * assignability, not `keyof F extends never`.
+ */
+export type IsTagFields<F> = F extends Record<string, never> ? true : false;
+
+/**
+ * Required-component override: `true` for defaults or a partial field record.
+ * Required tags narrow to literal `true` — there are no fields to patch.
+ */
+type RequiredSpawnValue<P> =
+  IsTagFields<ComponentFields<P>> extends true ? true : Partial<ComponentFields<P>> | true;
+
+/**
+ * Optional-component override: `true` enables with defaults, `false` stays
+ * disabled, and data-carrying optionals additionally accept a field record
+ * (enable + patch). Tag optionals accept only booleans. Shared with the
+ * `enable`/`enableMany` record grammar.
+ */
+export type OptionalSpawnValue<P> =
+  IsTagFields<ComponentFields<P>> extends true ? boolean : boolean | Partial<ComponentFields<P>>;
+
+/**
  * Typed spawn overrides for a storage's archetype: per-component partial
- * field records (or `true` for defaults). Wrong component names, unknown
- * fields, and wrong value types are compile errors; `false` is rejected at
- * the type level (required components cannot be disabled). Falls back to the
- * untyped record form for a bare `Storage`.
+ * field records (or `true` for defaults) for required components, and the
+ * `true`/`false`/record grammar for optionals. Wrong component names, unknown
+ * fields, and wrong value types are compile errors; `false` on a required
+ * component is rejected at the type level. Falls back to the untyped record
+ * form for a bare `Storage`.
  */
 export type SpawnOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescriptor extends A
   ? SpawnOverrides
-  : { [P in ComponentsOf<A>[number] as ComponentName<P>]?: Partial<ComponentFields<P>> | true };
+  : { [P in ComponentsOf<A>[number] as ComponentName<P>]?: RequiredSpawnValue<P> } & {
+      [P in OptionalsOf<A>[number] as ComponentName<P>]?: OptionalSpawnValue<P>;
+    };
 
 /**
  * Spawn an entity with optional component field overrides.
@@ -68,7 +95,14 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   state.entityArch[index] = storage;
 
   initComponentFields(storage, di, 1, overrides);
-  storage.mask[di] = 0;
+  if (storage.hasOptionalData) {
+    writeOptionalDefaults(storage, di, 1);
+  }
+  const spawnMask = applyOptionalOverrides(storage, di, 1, overrides);
+  storage.mask[di] = spawnMask;
+  // Unconditional refresh: a recycled row holds the previous occupant's
+  // matched flags.
+  refreshMatchersMask(storage, di, spawnMask);
 
   return eid;
 }
@@ -143,6 +177,7 @@ function growStorageArrays(storage: Storage): void {
   }
 
   storage.flatColumns = collectFlatColumns(storage.columns);
+  growMatcherArrays(storage, capacity);
 }
 
 /**
@@ -179,6 +214,90 @@ function initComponentFields(
       }
     }
   }
+}
+
+/**
+ * Pre-populate optional-component columns with declared defaults for `count`
+ * rows starting at `denseStart` (column-major). Runs on every spawn — fresh
+ * and recycled — so a previous occupant's values never resurface; override
+ * patches land on top afterwards. Ref fields stay untouched: despawn already
+ * cleared their slots.
+ */
+function writeOptionalDefaults(storage: Storage, denseStart: number, count: number): void {
+  for (const comp of storage.archetype.optionals) {
+    const soa = storage.columns.get(comp);
+    if (soa === undefined) {
+      continue;
+    }
+    const fields = comp.__ecstatic_fields;
+    const defaultValues = comp.__ecstatic_default_values;
+    const isRef = comp.__ecstatic_is_reference;
+
+    for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
+      if (isRef[fieldIdx] === true) {
+        continue;
+      }
+      const col = soa[fields[fieldIdx]!]!;
+      const defaultValue = defaultValues[fieldIdx];
+      for (let i = 0; i < count; i++) {
+        col[denseStart + i] = defaultValue;
+      }
+    }
+  }
+}
+
+/**
+ * Resolve optional spawn overrides for `count` rows starting at `denseStart`
+ * and return the accumulated presence mask: `true` enables with the
+ * pre-populated defaults, a record enables and patches the listed fields on
+ * top of them, `false`/absent stays disabled.
+ *
+ * Iterates the archetype's optionals, so unknown override keys are silently
+ * ignored (phase-3 behavior; the types reject them) — unlike `enable`, whose
+ * record form throws on unknown names at runtime.
+ */
+// Spawn hot path: the override grammar's per-kind continues and the
+// column-major field loops stay fused in one function so a batch pays one
+// pass over the resolved overrides.
+// fallow-ignore-next-line complexity
+function applyOptionalOverrides(
+  storage: Storage,
+  denseStart: number,
+  count: number,
+  overrides: SpawnOverrides | undefined,
+): number {
+  if (overrides === undefined) {
+    return 0;
+  }
+
+  let bits = 0;
+  for (const comp of storage.archetype.optionals) {
+    const raw = overrides[comp.__ecstatic_name];
+    if (raw === undefined || raw === false) {
+      continue;
+    }
+    bits |= storage.optionalBitLookup.get(comp)!;
+    if (raw === true) {
+      continue;
+    }
+
+    const soa = storage.columns.get(comp);
+    if (soa === undefined) {
+      continue;
+    }
+    const fields = comp.__ecstatic_fields;
+    for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
+      const override = raw[fields[fieldIdx]!];
+      if (override === undefined) {
+        continue;
+      }
+      const col = soa[fields[fieldIdx]!]!;
+      for (let i = 0; i < count; i++) {
+        col[denseStart + i] = override;
+      }
+    }
+  }
+  return bits;
 }
 
 /**
@@ -222,6 +341,32 @@ function fillBatch(
 
   // Initialize component fields (column-major: per component, per field, loop rows)
   initComponentFields(storage, denseStart, count, overrides);
+  if (storage.hasOptionalData) {
+    writeOptionalDefaults(storage, denseStart, count);
+  }
+  const optionalBits = applyOptionalOverrides(storage, denseStart, count, overrides);
+  if (optionalBits !== 0) {
+    for (let i = 0; i < count; i++) {
+      storage.mask[denseStart + i] = optionalBits;
+    }
+  }
+
+  // Batch matcher refresh: the whole batch shares one mask, so each
+  // matcher's matched value is constant over the new range — computed once
+  // per matcher, filled per row. Unconditional for the same recycled-row
+  // reason as single spawn.
+  const matcherN = storage.matchers.length;
+  if (matcherN !== 0) {
+    const matchers = storage.matchers;
+    for (let mi = 0; mi < matcherN; mi++) {
+      const m = matchers[mi]!;
+      const matchedValue = maskSatisfies(optionalBits, m.allMask, m.anyMask, m.noneMask) ? 1 : 0;
+      const matched = m.matched;
+      for (let i = 0; i < count; i++) {
+        matched[denseStart + i] = matchedValue;
+      }
+    }
+  }
 }
 
 /**

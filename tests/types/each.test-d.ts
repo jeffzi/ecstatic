@@ -22,9 +22,20 @@ describe("each", () => {
     each(world, [Position, Velocity], () => {});
   });
 
-  it("disallows the multi-storage array form", () => {
-    // @ts-expect-error multi-storage iteration is not part of the surface
-    each([players, enemies], () => {});
+  it("accepts the multi-storage array form with the union view", () => {
+    each([players, enemies], (e) => {
+      expectTypeOf(e.Position).toEqualTypeOf<{ x: number; y: number }>();
+      expectTypeOf(e.id).toEqualTypeOf<EntityId>();
+    });
+  });
+
+  it("restricts a mixed-archetype array view to common components", () => {
+    const posVel = register(world, archetype([Position, Velocity]));
+    each([players, posVel], (e) => {
+      expectTypeOf(e.Position).toEqualTypeOf<{ x: number; y: number }>();
+      // @ts-expect-error Health is not on all storages in the array
+      void e.Health;
+    });
   });
 
   describe("union of storages", () => {

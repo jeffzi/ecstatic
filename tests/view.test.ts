@@ -6,6 +6,7 @@ import {
   createWorld,
   despawn,
   each,
+  enable,
   get,
   ref,
   register,
@@ -247,5 +248,108 @@ describe("view — nested each", () => {
     expect(outerVisits).toBe(2);
     // Inner storage fully drained (first outer pass despawns all 3)
     expect(inner.n).toBe(0);
+  });
+});
+
+describe("view — optional accessors", () => {
+  const { ViewOptPos: OptPos } = components({ ViewOptPos: { x: 0, y: 0 } });
+  const { ViewOptShield: OptShield } = components({ ViewOptShield: { hp: 50, defense: 10 } });
+  const { ViewOptStunned: OptStunned } = components({ ViewOptStunned: {} });
+  const { ViewOptOnFire: OptOnFire } = components({ ViewOptOnFire: {} });
+
+  function createOptStorage() {
+    const world = createWorld();
+    const storage = register(world, archetype([OptPos, OptOnFire], [OptShield, OptStunned]));
+    return { world, storage };
+  }
+
+  it("reads an enabled data optional as its mutable fields record", () => {
+    const { storage } = createOptStorage();
+    const id = spawn(storage, { ViewOptShield: { hp: 75 } });
+
+    const hpSeen: (number | undefined)[] = [];
+    each(storage, (e) => {
+      hpSeen.push(e.ViewOptShield?.hp);
+      e.ViewOptShield!.hp = 33;
+    });
+
+    expect(hpSeen).toStrictEqual([75]);
+    expect(get(storage, id, OptShield.hp)).toBe(33);
+  });
+
+  it("reads a disabled data optional as undefined", () => {
+    const { storage } = createOptStorage();
+    spawn(storage);
+
+    expect.hasAssertions();
+    each(storage, (e) => {
+      expect(e.ViewOptShield).toBeUndefined();
+    });
+  });
+
+  it("reads an optional tag as true/undefined matching enablement", () => {
+    const { storage } = createOptStorage();
+    const idOn = spawn(storage, { ViewOptStunned: true });
+    const idOff = spawn(storage);
+
+    const seen = new Map<number, true | undefined>();
+    each(storage, (e) => {
+      seen.set(e.id, e.ViewOptStunned);
+    });
+
+    expect(seen.get(idOn)).toBe(true);
+    expect(seen.get(idOff)).toBeUndefined();
+  });
+
+  it("reads a required tag as literal true", () => {
+    const { storage } = createOptStorage();
+    spawn(storage);
+
+    expect.hasAssertions();
+    each(storage, (e) => {
+      expect(e.ViewOptOnFire).toBe(true);
+    });
+  });
+
+  it("enable/disable inside the loop changes what later-bound rows read in the same pass", () => {
+    const { storage } = createOptStorage();
+    // Iteration is reverse (last row first): enabling the tag on the
+    // first-spawned entity from the last-spawned entity's callback must make
+    // the later-bound row read it in the same pass.
+    const idFirst = spawn(storage);
+    const idLast = spawn(storage);
+
+    const seen: (true | undefined)[] = [];
+    each(storage, (e) => {
+      if (e.id === idLast) {
+        enable(storage, idFirst, OptStunned);
+      }
+      seen.push(e.ViewOptStunned);
+    });
+
+    expect(seen).toStrictEqual([undefined, true]);
+  });
+
+  it("reads through column growth (accessors stay live after the arrays are replaced)", () => {
+    const { storage } = createOptStorage();
+    const first = spawn(storage, { ViewOptShield: { hp: 1 } });
+
+    each(storage, (e) => {
+      // Bind once so the view exists, then grow the storage past its initial
+      // capacity — the same accessor objects must read the replaced columns.
+      expect(e.ViewOptShield?.hp).toBe(1);
+    });
+    for (let i = 0; i < 20; i++) {
+      spawn(storage);
+    }
+    set(storage, first, OptShield.hp, 7);
+
+    let hpOfFirst: number | undefined;
+    each(storage, (e) => {
+      if (e.id === first) {
+        hpOfFirst = e.ViewOptShield?.hp;
+      }
+    });
+    expect(hpOfFirst).toBe(7);
   });
 });
