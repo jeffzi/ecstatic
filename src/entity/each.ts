@@ -122,26 +122,15 @@ export type FilteredViewOf<S extends Storage, F> =
       : never
     : never;
 
+type PromoteAll<U, All extends ComponentDescriptor> = Omit<U, ComponentName<All>> & {
+  [C in All as ComponentName<C>]: Exclude<PropertyOf<U, ComponentName<C>>, undefined>;
+};
+
 type ViewApplyFilterImpl<
   V,
   All extends ComponentDescriptor,
   None extends ComponentDescriptor,
-> = V extends infer U
-  ? [All] extends [never]
-    ? [None] extends [never]
-      ? U
-      : Omit<U, ComponentName<None>>
-    : [None] extends [never]
-      ? Omit<U, ComponentName<All>> & {
-          [C in All as ComponentName<C>]: Exclude<PropertyOf<U, ComponentName<C>>, undefined>;
-        }
-      : Omit<
-          Omit<U, ComponentName<All>> & {
-            [C in All as ComponentName<C>]: Exclude<PropertyOf<U, ComponentName<C>>, undefined>;
-          },
-          ComponentName<None>
-        >
-  : never;
+> = V extends infer U ? Omit<PromoteAll<U, All>, ComponentName<None>> : never;
 
 /** A generated view paired with its row-index rebinder. */
 interface BoundView {
@@ -206,15 +195,12 @@ function buildView(storage: Storage): BoundView {
   // inside an iteration changes what later-bound rows read in the same pass.
   for (const comp of storage.archetype.optionals) {
     const bit = storage.optionalBitLookup.get(comp)!;
-    if (comp.__ecstatic_fields.length === 0) {
-      Object.defineProperty(view, comp.__ecstatic_name, {
-        get: () => ((storage.mask[row]! & bit) !== 0 ? true : undefined),
-      });
-      continue;
-    }
-    const fieldAccessors = fieldAccessorsFor(comp, storage.columns.get(comp)!);
+    const enabledValue =
+      comp.__ecstatic_fields.length === 0
+        ? true
+        : fieldAccessorsFor(comp, storage.columns.get(comp)!);
     Object.defineProperty(view, comp.__ecstatic_name, {
-      get: () => ((storage.mask[row]! & bit) !== 0 ? fieldAccessors : undefined),
+      get: () => ((storage.mask[row]! & bit) !== 0 ? enabledValue : undefined),
     });
   }
 
@@ -304,7 +290,6 @@ export function each(
   eachStorage(storageOrStorages as Storage, filterArg, fn);
 }
 
-/** Iterate one storage, resolving the filter (if any) against it. */
 function eachStorage(
   storage: Storage,
   filterArg: readonly ComponentDescriptor[] | EachFilter | null,

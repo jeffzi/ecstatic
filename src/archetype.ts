@@ -179,7 +179,6 @@ function buildArchetypeDescriptor(
     componentLookup.add(comp);
   }
 
-  // Build optional bit tables
   // Bits are assigned as 1, 2, 4, 8, ... in declaration order
   const optionalBits = new Map<string, number>();
   const optionalNotBits = new Map<string, number>();
@@ -187,9 +186,8 @@ function buildArchetypeDescriptor(
   const optionalNotBitLookup = new Map<ComponentDescriptor, number>();
 
   for (let i = 0; i < optionals.length; i++) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const comp = optionals[i]!;
-    const bit = 1 << i; // 2^i: 1, 2, 4, 8, ...
+    const bit = 1 << i;
     const notBit = ~bit >>> 0; // 32-bit bitwise complement
 
     optionalBits.set(comp.__ecstatic_name, bit);

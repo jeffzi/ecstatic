@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { entityIndex } from "../src/entity-id.js";
 import {
   alive,
   archetype,
@@ -17,11 +16,7 @@ import {
   spawn,
   spawnMany,
 } from "../src/index.js";
-
-/** Dense row of a live entity: sparse lookup by entity index. */
-function rowOf(storage: { sparse: Int32Array }, id: number): number {
-  return storage.sparse[entityIndex(id)]!;
-}
+import { rowOf } from "./fixtures.js";
 
 const { ManyPosition: Position } = components({ ManyPosition: { x: 0, y: 0 } });
 const { ManyShield: Shield } = components({ ManyShield: { hp: 50, defense: 10 } });
@@ -105,7 +100,7 @@ describe("enableMany with ids", () => {
     expect(alive(storage, id)).toBe(true);
   });
 
-  it("stores table override by reference (shared table)", () => {
+  it("stores object override by reference (shared object)", () => {
     const { ManyAura: Aura } = components({
       ManyAura: { effect: ref<{ charges: number }>() },
     });
@@ -113,13 +108,13 @@ describe("enableMany with ids", () => {
     const storage = register(world, archetype([Position], [Aura]));
     const idA = spawn(storage);
     const idB = spawn(storage);
-    const tbl = { charges: 1 };
+    const obj = { charges: 1 };
 
-    enableMany(storage, [idA, idB], { ManyAura: { effect: tbl } });
+    enableMany(storage, [idA, idB], { ManyAura: { effect: obj } });
 
     const soa = storage.columns.get(Aura)!;
-    expect(soa.effect![rowOf(storage, idA)]).toBe(tbl);
-    expect(soa.effect![rowOf(storage, idB)]).toBe(tbl);
+    expect(soa.effect![rowOf(storage, idA)]).toBe(obj);
+    expect(soa.effect![rowOf(storage, idB)]).toBe(obj);
   });
 
   it("errors on a stale entity ID with zero rows changed", () => {
@@ -286,8 +281,7 @@ describe("disableMany without ids", () => {
 });
 
 describe("batch matched sync (apply-mask-many parity)", () => {
-  // Transcribed from the original's apply_mask_many parity block: the same
-  // Alpha ∧ (Beta ∨ Gamma) ∧ ¬Delta filter driven through the batch ops.
+  // Alpha ∧ (Beta ∨ Gamma) ∧ ¬Delta driven through the batch enable/disable ops.
   const { BatchAlpha: Alpha } = components({ BatchAlpha: {} });
   const { BatchBeta: Beta } = components({ BatchBeta: {} });
   const { BatchGamma: Gamma } = components({ BatchGamma: {} });

@@ -36,7 +36,11 @@ export interface QueryFilter {
   readonly __ecstatic_name?: never;
 }
 
-const EMPTY_COMPONENT_IDS: readonly ComponentDescriptor[] = [];
+/**
+ * Shared empty-axis sentinel: `normalizeFilter` returns it for absent axes so
+ * resolution allocates nothing per call.
+ */
+export const EMPTY_COMPONENT_IDS: readonly ComponentDescriptor[] = [];
 
 /**
  * Sentinel returned by `resolveFilterMasks` when all computed masks are zero.
@@ -87,6 +91,31 @@ export function findArchetypes(
 }
 
 /**
+ * Decompose a filter (descriptor object or bare `{all}` component array)
+ * into its three axes, defaulting absent axes to the shared empty sentinel.
+ * Shared by `resolveFilter` and `query`, which both accept the same
+ * array-or-object filter grammar.
+ */
+export function normalizeFilter(
+  filter: EachFilter | readonly ComponentDescriptor[],
+): readonly [
+  allIds: readonly ComponentDescriptor[],
+  anyIds: readonly ComponentDescriptor[],
+  noneIds: readonly ComponentDescriptor[],
+] {
+  if (Array.isArray(filter)) {
+    return [filter, EMPTY_COMPONENT_IDS, EMPTY_COMPONENT_IDS];
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Array.isArray does not narrow readonly arrays
+  const f = filter as EachFilter;
+  return [
+    f.all ?? EMPTY_COMPONENT_IDS,
+    f.any ?? EMPTY_COMPONENT_IDS,
+    f.none ?? EMPTY_COMPONENT_IDS,
+  ];
+}
+
+/**
  * Resolve a filter (descriptor object or bare `{all}` component array)
  * against a storage. Returns the Matcher on match, `false` if the storage
  * can never satisfy the filter, or {@link TRIVIAL_MATCHER} when every
@@ -96,17 +125,8 @@ export function resolveFilter(
   storage: Storage,
   filter: EachFilter | readonly ComponentDescriptor[],
 ): Matcher | false {
-  if (Array.isArray(filter)) {
-    return resolveFilterMasks(storage, filter, EMPTY_COMPONENT_IDS, EMPTY_COMPONENT_IDS);
-  }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Array.isArray does not narrow readonly arrays
-  const f = filter as EachFilter;
-  return resolveFilterMasks(
-    storage,
-    f.all ?? EMPTY_COMPONENT_IDS,
-    f.any ?? EMPTY_COMPONENT_IDS,
-    f.none ?? EMPTY_COMPONENT_IDS,
-  );
+  const [allIds, anyIds, noneIds] = normalizeFilter(filter);
+  return resolveFilterMasks(storage, allIds, anyIds, noneIds);
 }
 
 /**

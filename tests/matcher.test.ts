@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { entityIndex } from "../src/entity-id.js";
 import {
   archetype,
   components,
@@ -13,11 +12,7 @@ import {
   spawn,
   spawnMany,
 } from "../src/index.js";
-
-/** Dense row of a live entity: sparse lookup by entity index. */
-function rowOf(storage: { sparse: Int32Array }, id: number): number {
-  return storage.sparse[entityIndex(id)]!;
-}
+import { rowOf } from "./fixtures.js";
 
 const { MatcherPosition: Position } = components({ MatcherPosition: { x: 0, y: 0 } });
 const { MatcherStunned: Stunned } = components({ MatcherStunned: {} });

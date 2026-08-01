@@ -63,10 +63,10 @@ export function matcherFor(
   noneMask: number,
 ): Matcher {
   const matchers = storage.matchers;
-  for (let qi = 0; qi < matchers.length; qi++) {
-    const qs = matchers[qi]!;
-    if (qs.allMask === allMask && qs.anyMask === anyMask && qs.noneMask === noneMask) {
-      return qs;
+  for (let mi = 0; mi < matchers.length; mi++) {
+    const m = matchers[mi]!;
+    if (m.allMask === allMask && m.anyMask === anyMask && m.noneMask === noneMask) {
+      return m;
     }
   }
 
@@ -80,10 +80,10 @@ export function matcherFor(
   }
 
   const filterMask = allMask | anyMask | noneMask;
-  const qs: Matcher = { allMask, anyMask, noneMask, filterMask, matched };
-  matchers.push(qs);
+  const m: Matcher = { allMask, anyMask, noneMask, filterMask, matched };
+  matchers.push(m);
   storage.matcherMatched.push(matched);
-  return qs;
+  return m;
 }
 
 /**

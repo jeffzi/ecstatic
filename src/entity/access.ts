@@ -100,6 +100,19 @@ export function get(
   return value;
 }
 
+/**
+ * Write one field via a descriptor or multiple fields via a partial
+ * component record.
+ *
+ * Two forms:
+ * - `set(storageOrWorld, id, field, value)` — single field descriptor + value;
+ *   `undefined` clears a ref field.
+ * - `set(storageOrWorld, id, Component, { field: value, ... })` — partial
+ *   values record; omitted fields keep their current values.
+ *
+ * @throws If the entity ID is stale or from another storage (under DEBUG)
+ * @throws If the component or a field cannot be resolved on the archetype
+ */
 export function set<V>(
   storageOrWorld: Storage | World,
   id: EntityId,
@@ -114,19 +127,6 @@ export function set<C extends ComponentDescriptor>(
   comp: C,
   values: Partial<ComponentFields<C>>,
 ): void;
-/**
- * Write one field via a descriptor or multiple fields via a partial
- * component record.
- *
- * Two forms:
- * - `set(storageOrWorld, id, field, value)` — single field descriptor + value;
- *   `undefined` clears a ref field.
- * - `set(storageOrWorld, id, Component, { field: value, ... })` — partial
- *   values record; omitted fields keep their current values.
- *
- * @throws If the entity ID is stale or from another storage (under DEBUG)
- * @throws If the component or a field cannot be resolved on the archetype
- */
 export function set(
   storageOrWorld: Storage | World,
   id: EntityId,

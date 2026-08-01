@@ -1,3 +1,10 @@
+import { entityIndex } from "../src/entity-id.js";
+
+/** Dense row of a live entity: sparse lookup by entity index. */
+export function rowOf(storage: { sparse: Int32Array }, id: number): number {
+  return storage.sparse[entityIndex(id)]!;
+}
+
 /**
  * Mutable view over a `ComponentDescriptor`'s internal fields, for tests that
  * need to poke at descriptor internals (e.g. renaming a component to a

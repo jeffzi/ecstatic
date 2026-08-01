@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { entityIndex } from "../src/entity-id.js";
 import {
   alive,
   archetype,
@@ -13,11 +12,7 @@ import {
   register,
   spawn,
 } from "../src/index.js";
-
-/** Dense row of a live entity: sparse lookup by entity index. */
-function rowOf(storage: { sparse: Int32Array }, id: number): number {
-  return storage.sparse[entityIndex(id)]!;
-}
+import { rowOf } from "./fixtures.js";
 
 const { EnDisPosition: Position } = components({
   EnDisPosition: { x: 0, y: 0 },
@@ -107,12 +102,12 @@ describe("enable", () => {
     const world = createWorld();
     const storage = register(world, archetype([Position], [Aura]));
     const id = spawn(storage);
-    const tbl = { charges: 1 };
+    const obj = { charges: 1 };
 
-    enable(storage, id, Aura, { effect: tbl });
+    enable(storage, id, Aura, { effect: obj });
 
     const soa = storage.columns.get(Aura)!;
-    expect(soa.effect![rowOf(storage, id)]).toBe(tbl);
+    expect(soa.effect![rowOf(storage, id)]).toBe(obj);
   });
 
   it("is idempotent", () => {
@@ -317,6 +312,34 @@ describe("enable record boolean values", () => {
       // @ts-expect-error Nope is not on this archetype — runtime validates too
       enable(storage, id, { Nope: true });
     }).toThrow("unknown component name: Nope");
+  });
+
+  it("errors on an unknown component name with earlier entries unapplied", () => {
+    const { storage } = createShieldStorage();
+    const id = spawn(storage);
+
+    expect(() => {
+      // @ts-expect-error Nope is not on this archetype — runtime validates too
+      enable(storage, id, { EnDisShield: { hp: 75 }, Nope: true });
+    }).toThrow("unknown component name: Nope");
+
+    const row = rowOf(storage, id);
+    expect(storage.mask[row]).toBe(0);
+    expect(storage.columns.get(Shield)!.hp![row]).toBe(50);
+  });
+
+  it("errors on a non-optional component with earlier entries unapplied", () => {
+    const { storage } = createShieldStorage();
+    const id = spawn(storage);
+
+    expect(() => {
+      // @ts-expect-error EnDisPosition is required, not optional — runtime validates too
+      enable(storage, id, { EnDisShield: { hp: 75 }, EnDisPosition: true });
+    }).toThrow("component EnDisPosition is not optional on this archetype");
+
+    const row = rowOf(storage, id);
+    expect(storage.mask[row]).toBe(0);
+    expect(storage.columns.get(Shield)!.hp![row]).toBe(50);
   });
 });
 

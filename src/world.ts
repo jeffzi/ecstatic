@@ -50,7 +50,7 @@ export interface WorldState {
    */
   queryEpoch: number;
 
-  /** Destroyed flag: set when world is destroyed (later task) */
+  /** Set by `destroyWorld`; `register`/`getStorage` throw once present. */
   destroyed?: true;
 }
 
@@ -189,7 +189,6 @@ export function register(world: World, arch: ArchetypeDescriptor): Storage {
     throw new Error(ERROR_WORLD_DESTROYED);
   }
 
-  // Idempotent: return existing storage if already registered
   const existing = state.storages.get(arch.id);
   if (existing) {
     return existing;
@@ -197,7 +196,6 @@ export function register(world: World, arch: ArchetypeDescriptor): Storage {
 
   const storage = createStorage(state, arch);
 
-  // Cache it
   state.storages.set(arch.id, storage);
 
   // Archetype set changed: cached query resolutions must re-resolve.
@@ -254,7 +252,6 @@ export function collectFlatColumns(
 function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
   const columns = new Map<ComponentDescriptor, SoAColumns>();
 
-  // Despawn-time cleanup tracking (ref-marked fields)
   const despawnClear: Array<unknown>[] = [];
 
   const allComps = [
@@ -266,7 +263,6 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
     const soa = createSoA(comp, INITIAL_ARCH_CAPACITY);
     columns.set(comp, soa);
 
-    // Collect ref-marked columns for despawn cleanup
     const isRef = comp.__ecstatic_is_reference;
     const fields = comp.__ecstatic_fields;
 
@@ -349,7 +345,6 @@ function createSoA(comp: ComponentDescriptor, capacity: number): SoAColumns {
 export function destroyWorld(world: World): void {
   const state = world as WorldState;
 
-  // No-op if already destroyed
   if (state.destroyed) {
     return;
   }
@@ -362,7 +357,6 @@ export function destroyWorld(world: World): void {
     (storage as MutableStorage).world = undefined;
   }
 
-  // Reset world state to initial capacity
   state.storages.clear();
   state.entityArch = Array.from({ length: INITIAL_WORLD_CAPACITY });
   state.generation = new Float64Array(INITIAL_WORLD_CAPACITY);
