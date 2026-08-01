@@ -80,6 +80,10 @@ function compactAndFreeMarked(storage: Storage, indices: number[], count: number
  * survivor popped off the tail (a slot is freed iff its entity's back-pointer
  * was cleared in phase 1).
  */
+// Compaction hot path: the survivor scan, column copies, and matched-flag
+// carry must stay in one loop body — extracting them would split the
+// per-slot invariant across functions.
+// fallow-ignore-next-line complexity
 function fillFreedSlots(
   storage: Storage,
   indices: number[],
@@ -109,6 +113,11 @@ function fillFreedSlots(
         col[di] = col[last];
       }
       storage.mask[di] = storage.mask[last]!;
+      if (storage.matchers.length !== 0) {
+        for (const matched of storage.matcherMatched) {
+          matched[di] = matched[last]!;
+        }
+      }
       sparse[entityIndex(entities[di])] = di;
       last -= 1;
     }
@@ -376,6 +385,11 @@ function despawnEntity(storage: Storage, index: number): void {
     }
 
     storage.mask[row] = storage.mask[last]!;
+    if (storage.matchers.length !== 0) {
+      for (const matched of storage.matcherMatched) {
+        matched[row] = matched[last]!;
+      }
+    }
 
     const lastEntityId = storage.entities[last]!;
     const swappedIndex = entityIndex(lastEntityId);

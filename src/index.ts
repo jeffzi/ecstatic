@@ -7,7 +7,7 @@ export const VERSION: string = readPackageVersion(
   createRequire(import.meta.url)("../package.json"),
 );
 
-export type { ArchetypeDescriptor, ComponentsOf } from "./archetype.js";
+export type { ArchetypeDescriptor, ComponentsOf, OptionalsOf } from "./archetype.js";
 // Archetype system
 export { archetype } from "./archetype.js";
 // Component system
@@ -35,7 +35,18 @@ export {
 export { get, set } from "./entity/access.js";
 export { alive } from "./entity/common.js";
 export { despawn, despawnMany } from "./entity/despawn.js";
-export { type EachView, each } from "./entity/each.js";
+export { type EachView, type ViewApplyFilter, each } from "./entity/each.js";
+export type { EachFilter, QueryFilter } from "./filter.js";
+export { type QueryView, query } from "./query.js";
+export {
+  type OptionalOverridesFor,
+  disable,
+  disableMany,
+  enable,
+  enableMany,
+  has,
+  hasAny,
+} from "./entity/optional.js";
 export { type SpawnOverrides, spawn, spawnMany } from "./entity/spawn.js";
 // Entity IDs
 export type { EntityId } from "./entity-id.js";

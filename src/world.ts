@@ -10,6 +10,7 @@ import type { ArchetypeDescriptor, ComponentDescriptor } from "./archetype.js";
 import { NO_FREE_SLOT } from "./entity-id.js";
 import { despawnMany } from "./entity/despawn.js";
 import { ERROR_WORLD_DESTROYED } from "./errors.js";
+import type { Matcher } from "./matcher.js";
 
 /**
  * Initial world capacity: number of entity slots pre-allocated.
@@ -42,6 +43,12 @@ export interface WorldState {
 
   /** Next fresh index to allocate (when freelist is empty) */
   nextIndex: number;
+
+  /**
+   * Bumped whenever the archetype set changes (register/destroyWorld);
+   * cached query resolutions compare against it before reuse.
+   */
+  queryEpoch: number;
 
   /** Destroyed flag: set when world is destroyed (later task) */
   destroyed?: true;
@@ -88,6 +95,16 @@ export interface Storage<A extends ArchetypeDescriptor = ArchetypeDescriptor> {
   /** Optional component bitmask per entity (one per row) */
   mask: Uint32Array;
 
+  /** Registered bitmask matchers, deduped by (all, any, none) triple */
+  matchers: Matcher[];
+
+  /**
+   * Flat parallel view over `matchers[]`: `matcherMatched[i]` is always the
+   * same object as `matchers[i].matched` (both rebuilt together on growth,
+   * mirroring the flatColumns pattern).
+   */
+  matcherMatched: Uint8Array[];
+
   /** Map of component → SoA columns for that component */
   columns: Map<ComponentDescriptor, SoAColumns>;
 
@@ -101,6 +118,13 @@ export interface Storage<A extends ArchetypeDescriptor = ArchetypeDescriptor> {
   /** Ref-marked columns whose freed slots are cleared on despawn (GC release) */
   despawnClear: Array<unknown>[];
   hasDespawnClear: boolean;
+
+  /**
+   * True when any optional component carries data fields — spawn must
+   * pre-populate optional defaults. Tag-only optionals don't set it: the
+   * default fill is a no-op for them, so they must not pay for it.
+   */
+  hasOptionalData: boolean;
 
   /** Cached descriptor lookups for all components (required + optional) */
   readonly componentByName: Map<string, ComponentDescriptor>;
@@ -140,6 +164,7 @@ export function createWorld(): World {
     sparse: new Int32Array(INITIAL_WORLD_CAPACITY),
     freeHead: NO_FREE_SLOT,
     nextIndex: 0,
+    queryEpoch: 0,
   };
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- opaque type return
@@ -174,6 +199,9 @@ export function register(world: World, arch: ArchetypeDescriptor): Storage {
 
   // Cache it
   state.storages.set(arch.id, storage);
+
+  // Archetype set changed: cached query resolutions must re-resolve.
+  state.queryEpoch += 1;
 
   return storage;
 }
@@ -259,12 +287,15 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
     entities: new Float64Array(INITIAL_ARCH_CAPACITY),
     n: 0,
     mask: new Uint32Array(INITIAL_ARCH_CAPACITY),
+    matchers: [],
+    matcherMatched: [],
     columns,
     flatColumns,
     generation: state.generation,
     sparse: state.sparse,
     despawnClear,
     hasDespawnClear: despawnClear.length > 0,
+    hasOptionalData: arch.optionals.some((opt) => opt.__ecstatic_fields.length > 0),
     componentByName: arch.componentByName,
     componentLookup: arch.componentLookup,
     optionalBitLookup: arch.optionalBitLookup,
@@ -338,6 +369,7 @@ export function destroyWorld(world: World): void {
   state.sparse = new Int32Array(INITIAL_WORLD_CAPACITY);
   state.freeHead = NO_FREE_SLOT;
   state.nextIndex = 0;
+  state.queryEpoch += 1;
 
   // Mark as destroyed so register/getStorage will error
   state.destroyed = true;
