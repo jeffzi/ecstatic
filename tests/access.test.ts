@@ -10,6 +10,7 @@ import {
   get,
   ref,
   register,
+  relation,
   set,
   spawn,
 } from "../src/index.js";
@@ -374,5 +375,49 @@ describe("get/set on a disabled optional component", () => {
     set(storage, id, Position.x, 9);
 
     expect(get(storage, id, Position.x)).toBe(9);
+  });
+});
+
+describe("set relation target field guard", () => {
+  const AccessSimple = component("AccessGuardSimple", { v: 0 });
+
+  it("rejects target on the single-field form", () => {
+    const SetGuardField = relation("SetGuardField");
+    const world = createWorld();
+    const simpleStorage = register(world, archetype([AccessSimple]));
+    const storage = register(world, archetype([AccessSimple, SetGuardField]));
+    const targetId = spawn(simpleStorage);
+    const entityId = spawn(storage, { SetGuardField: { target: targetId } });
+
+    expect(() => {
+      // @ts-expect-error cannot write relation target field — use link() instead
+      set(storage, entityId, SetGuardField.target, targetId);
+    }).toThrow("cannot write relation target field — use link() instead");
+  });
+
+  it("rejects target on the component-record form", () => {
+    const SetGuardRecord = relation("SetGuardRecord");
+    const world = createWorld();
+    const simpleStorage = register(world, archetype([AccessSimple]));
+    const storage = register(world, archetype([AccessSimple, SetGuardRecord]));
+    const targetId = spawn(simpleStorage);
+    const entityId = spawn(storage, { SetGuardRecord: { target: targetId } });
+
+    expect(() => {
+      set(storage, entityId, SetGuardRecord, { target: targetId });
+    }).toThrow("cannot write relation target field — use link() instead");
+  });
+
+  it("allows non-target fields on a data-carrying relation", () => {
+    const SetDataRel = relation("SetDataRel", { weight: 0 });
+    const world = createWorld();
+    const simpleStorage = register(world, archetype([AccessSimple]));
+    const storage = register(world, archetype([AccessSimple, SetDataRel]));
+    const targetId = spawn(simpleStorage);
+    const entityId = spawn(storage, { SetDataRel: { target: targetId, weight: 5 } });
+
+    set(storage, entityId, SetDataRel.weight, 10);
+
+    expect(get(storage, entityId, SetDataRel.weight)).toBe(10);
   });
 });

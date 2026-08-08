@@ -28,7 +28,8 @@ import type { Storage, World, WorldState } from "./world.js";
  * `any` axis; `none` components never appear.
  */
 export type QueryView<All extends ComponentDescriptor, Any extends ComponentDescriptor = never> = {
-  readonly id: EntityId;
+  /** Branded with the all-axis components: present on every visited entity. */
+  readonly id: EntityId<readonly All[]>;
 } & { [P in All as ComponentName<P>]: ViewSlotValue<P> } & {
   readonly [P in Any as ComponentName<P>]: ViewSlotValue<P> | undefined;
 };

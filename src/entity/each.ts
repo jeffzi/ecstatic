@@ -41,8 +41,8 @@ export type ViewSlotValue<P> =
  * ID is the durable handle for anything outliving the callback.
  */
 export type EachView<A extends ArchetypeDescriptor = ArchetypeDescriptor> = {
-  /** The entity ID of the current row being iterated. */
-  readonly id: EntityId;
+  /** The entity ID of the current row being iterated (archetype-branded). */
+  readonly id: EntityId<A>;
 } & (ArchetypeDescriptor extends A
   ? { readonly [key: string]: unknown }
   : { [P in ComponentsOf<A>[number] as ComponentName<P>]: ViewSlotValue<P> } & {

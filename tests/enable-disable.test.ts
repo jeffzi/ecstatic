@@ -7,9 +7,12 @@ import {
   createWorld,
   despawn,
   disable,
+  disableMany,
   enable,
+  enableMany,
   ref,
   register,
+  relation,
   spawn,
 } from "../src/index.js";
 import { rowOf } from "./fixtures.js";
@@ -387,5 +390,47 @@ describe("world forms", () => {
     expect(() => {
       enable(storage, id, Stunned);
     }).toThrow("stale entity ID");
+  });
+});
+
+describe("enable/disable reject relations (dynamic path)", () => {
+  function createGuardContext<N extends string>(relName: N) {
+    const Rel = relation(relName);
+    const world = createWorld();
+    const storage = register(world, archetype([Position], [Rel]));
+    const id = spawn(storage);
+    return { Rel, storage, id };
+  }
+
+  it("enable errors on relation component", () => {
+    const { Rel, storage, id } = createGuardContext("EnableRelGuard_Rel");
+    expect(() => {
+      // @ts-expect-error relations are toggled via link()/unlink()
+      enable(storage, id, Rel);
+    }).toThrow("EnableRelGuard_Rel is a relation — use link() instead");
+  });
+
+  it("disable errors on relation component", () => {
+    const { Rel, storage, id } = createGuardContext("DisableRelGuard_Rel");
+    expect(() => {
+      // @ts-expect-error relations are toggled via link()/unlink()
+      disable(storage, id, Rel);
+    }).toThrow("DisableRelGuard_Rel is a relation — use unlink() instead");
+  });
+
+  it("enableMany errors on relation component", () => {
+    const { storage, id } = createGuardContext("EnableManyRelGuard_Rel");
+    expect(() => {
+      // @ts-expect-error relations are toggled via link()/unlink()
+      enableMany(storage, [id], { EnableManyRelGuard_Rel: {} });
+    }).toThrow("EnableManyRelGuard_Rel is a relation — use link() instead");
+  });
+
+  it("disableMany errors on relation component", () => {
+    const { Rel, storage } = createGuardContext("DisableManyRelGuard_Rel");
+    expect(() => {
+      // @ts-expect-error relations are toggled via link()/unlink()
+      disableMany(storage, [Rel]);
+    }).toThrow("DisableManyRelGuard_Rel is a relation — use unlink() instead");
   });
 });

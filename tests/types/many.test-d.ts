@@ -15,7 +15,7 @@ describe("spawnMany", () => {
   const storage = register(world, archetype([Position, Velocity]));
 
   it("returns EntityId[]", () => {
-    expectTypeOf(spawnMany(storage, 5)).toEqualTypeOf<EntityId[]>();
+    expectTypeOf(spawnMany(storage, 5)).toExtend<EntityId[]>();
   });
 
   it("accepts component overrides with appropriate types", () => {
@@ -29,7 +29,7 @@ describe("spawnMany", () => {
   it("accepts the 3-arg out form", () => {
     const out: EntityId[] = [];
 
-    expectTypeOf(spawnMany(storage, 3, out)).toEqualTypeOf<EntityId[]>();
+    expectTypeOf(spawnMany(storage, 3, out)).toExtend<EntityId[]>();
   });
 
   it("resolves an EntityId[] argument to the out form, not overrides", () => {

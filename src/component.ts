@@ -262,6 +262,19 @@ export function ref<T = unknown>(): RefMarker<T> {
 }
 
 /**
+ * Shared descriptor-construction path for component() and relation():
+ * validates the name and fields, registers the name (relations share the
+ * component namespace), and builds the descriptor.
+ */
+export function createDescriptor(name: string, rawFields: unknown): Record<string, unknown> {
+  assertNameAvailable(name);
+  const defaults = validateFields(name, rawFields);
+  const descriptor = descriptorFromDefaults(name, defaults);
+  seenNames.add(name);
+  return descriptor;
+}
+
+/**
  * Register a single component descriptor from a name and optional field defaults.
  * If fields is omitted, the result is a tag (0-field component).
  */
@@ -271,11 +284,7 @@ export function component<N extends string, T extends Record<string, FieldDefaul
   fields: T,
 ): keyof T extends never ? Tag<N> : Component<N, InferFields<T>>;
 export function component(name: string, fields?: Record<string, unknown>): unknown {
-  assertNameAvailable(name);
-  const defaults = validateFields(name, fields ?? {});
-  const descriptor = descriptorFromDefaults(name, defaults);
-  seenNames.add(name);
-  return descriptor;
+  return createDescriptor(name, fields ?? {});
 }
 
 /**
@@ -383,7 +392,7 @@ type InferFieldValue<D> =
             : D;
 
 /** Map a defaults record to the record of field value types. */
-type InferFields<T> = { [K in keyof T]: InferFieldValue<T[K]> };
+export type InferFields<T> = { [K in keyof T]: InferFieldValue<T[K]> };
 
 /** Extract the value type carried by a field descriptor. */
 export type FieldValue<D> = D extends FieldDescriptor<infer V> ? V : never;

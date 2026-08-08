@@ -5,11 +5,34 @@
 import type { ComponentDescriptor, ComponentFields, FieldDescriptor } from "../component.js";
 import { isFieldDescriptor } from "../component.js";
 import { DEBUG } from "../debug.js";
-import type { EntityId } from "../entity-id.js";
+import type { EntityId, With } from "../entity-id.js";
 import { entityIndex } from "../entity-id.js";
-import { errorNotEnabled } from "../errors.js";
+import {
+  ERROR_RELATION_NOT_ON_ARCHETYPE,
+  ERROR_RELATION_TARGET_WRITE,
+  errorNotEnabled,
+} from "../errors.js";
+import type { Relation, RelationConstraints, RelationTargetFieldDescriptor } from "../relation.js";
+import { getRelationMeta } from "../relation.js";
 import type { Storage, TypedArray, World } from "../world.js";
 import { resolveEntityArch } from "./common.js";
+
+/**
+ * Guard against writing the reserved `target` field of a relation — the
+ * target column is owned by `link`/`unlink`. Covers the field-descriptor
+ * form (`fieldOrValues` is the field name) and the record form
+ * (`fieldOrValues` is the values record).
+ */
+function guardRelationTargetWrite(
+  comp: ComponentDescriptor,
+  fieldOrValues: string | Record<string, unknown>,
+): void {
+  const isTarget =
+    typeof fieldOrValues === "string" ? fieldOrValues === "target" : "target" in fieldOrValues;
+  if (isTarget && getRelationMeta(comp) !== undefined) {
+    throw new Error(ERROR_RELATION_TARGET_WRITE);
+  }
+}
 
 /**
  * Resolve the column backing a component field on a storage.
@@ -116,10 +139,18 @@ export function get(
 export function set<V>(
   storageOrWorld: Storage | World,
   id: EntityId,
-  field: FieldDescriptor<V>,
+  // The target-brand exclusion knocks a relation's `target` descriptor out of
+  // this overload so the sentence-error overload below catches it.
+  field: FieldDescriptor<V> & { readonly __ecstatic_relation_target?: never },
   // NoInfer: the field descriptor alone fixes V, so a mismatched value is an
   // error instead of widening V (e.g. `undefined` must not widen number fields)
   value: NoInfer<V>,
+): void;
+export function set(
+  storageOrWorld: Storage | World,
+  id: EntityId,
+  field: RelationTargetFieldDescriptor,
+  value: "cannot write relation target field — use link() instead",
 ): void;
 export function set<C extends ComponentDescriptor>(
   storageOrWorld: Storage | World,
@@ -137,6 +168,10 @@ export function set(
   const di = storage.sparse[entityIndex(id)]!;
 
   if (isFieldDescriptor(componentOrField)) {
+    guardRelationTargetWrite(
+      componentOrField.__ecstatic_component,
+      componentOrField.__ecstatic_field,
+    );
     writeField(
       storage,
       di,
@@ -149,7 +184,66 @@ export function set(
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the overload signatures guarantee valuesOrValue is a Record<string, unknown> here
   const values = valuesOrValue as Record<string, unknown>;
+  guardRelationTargetWrite(componentOrField, values);
   for (const [fieldName, value] of Object.entries(values)) {
     writeField(storage, di, componentOrField, fieldName, value);
   }
+}
+
+/**
+ * Returns the target entity ID for a relation on an entity in any archetype.
+ * Resolves the entity's archetype via world lookup, then reads the relation's
+ * target column. Returns `undefined` when the source entity is dead (checked
+ * unconditionally, never stripped), the relation is optional and disabled,
+ * the entity is unlinked (0 sentinel), or the target is dead (stale
+ * generation).
+ *
+ * @throws If the relation is not on the entity's archetype
+ */
+export function getTarget<R extends Relation>(
+  world: World,
+  id: EntityId,
+  rel: R,
+): With<RelationConstraints<R>> | undefined {
+  const index = entityIndex(id);
+
+  // Guard: source entity must be alive — a correctness result, not a debug
+  // check, so it survives under NDEBUG.
+  if (world.generation[index] !== id) {
+    return undefined;
+  }
+
+  // Guard: entity must exist in the world
+  const storage = world.entityArch[index];
+  if (storage === undefined) {
+    return undefined;
+  }
+
+  const di = storage.sparse[index]!;
+  const soa = storage.columns.get(rel);
+  const targetColumn = soa?.target;
+  if (!(targetColumn instanceof Float64Array)) {
+    throw new Error(ERROR_RELATION_NOT_ON_ARCHETYPE);
+  }
+
+  // Correctness guard: an optional relation that is disabled has no valid target.
+  const bit = storage.optionalBitLookup.get(rel);
+  if (bit !== undefined && (storage.mask[di]! & bit) === 0) {
+    return undefined;
+  }
+
+  // Sentinel 0 = not linked. This must precede the generation compare: a
+  // zero-filled generation slot at index 0 would otherwise report the
+  // sentinel as alive.
+  const targetId = targetColumn[di]!;
+  if (targetId === 0) {
+    return undefined;
+  }
+  const targetIndex = entityIndex(targetId);
+  if (world.generation[targetIndex] !== targetId) {
+    return undefined;
+  }
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary: the column stores packed entity IDs
+  return targetId as With<RelationConstraints<R>>;
 }

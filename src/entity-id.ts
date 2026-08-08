@@ -12,8 +12,54 @@
  * Fresh slot init: `generations[index] = MAX_INDEX + index` (gen=1, skips 0 sentinel).
  */
 
-/** Brand type to distinguish EntityId from raw numbers at the type level. */
-export type EntityId = number & { readonly __brand: "EntityId" };
+import type { ArchetypeDescriptor } from "./archetype.js";
+import type { ComponentDescriptor, ComponentName } from "./component.js";
+
+/**
+ * Names of every component — required and optional — on the archetype
+ * parameter. Accepts an `ArchetypeDescriptor` (storage-typed ids) or a bare
+ * component tuple (query-view ids). An unresolvable parameter yields `never`
+ * and an untyped descriptor yields a `string` index signature — either way the
+ * resulting id satisfies only `With<[]>`, never a named constraint.
+ */
+type PresenceKeys<Arch> =
+  Arch extends ArchetypeDescriptor<infer C, infer O>
+    ? ComponentName<C[number] | O[number]>
+    : Arch extends readonly ComponentDescriptor[]
+      ? ComponentName<Arch[number]>
+      : never;
+
+/** Compile-time component presence map derived from the archetype parameter. */
+type ComponentPresenceMap<Arch> = { [K in PresenceKeys<Arch>]: true };
+
+/**
+ * Brand type to distinguish EntityId from raw numbers at the type level.
+ *
+ * The archetype parameter carries a component presence map so relation write
+ * sites can shape-check targets via {@link With}; it is erased at runtime and
+ * defaults to `unknown` (empty presence map), so `EntityId<A>` is assignable
+ * to plain `EntityId` everywhere.
+ */
+export type EntityId<_Arch = unknown> = number & {
+  readonly __brand: "EntityId";
+  readonly __ecstatic_entity_meta: {
+    components: ComponentPresenceMap<_Arch>;
+    archetype: _Arch;
+  };
+};
+
+/**
+ * Cross-archetype constraint: accepts any `EntityId` whose archetype includes
+ * the given component(s) — a single component, or a readonly tuple where
+ * `With<[]>` admits every `EntityId`.
+ */
+export type With<C extends ComponentDescriptor | readonly ComponentDescriptor[]> = EntityId & {
+  readonly __ecstatic_entity_meta: {
+    components: {
+      [K in C extends readonly ComponentDescriptor[] ? C[number] : C as ComponentName<K>]: true;
+    };
+  };
+};
 
 /** Number of bits used for the entity index (low bits). */
 const INDEX_BITS = 24;

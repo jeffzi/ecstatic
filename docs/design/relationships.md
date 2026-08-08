@@ -592,7 +592,7 @@ archetype), so storing the storage in the bucket adds no extra lookup.
 | `relation`             | N/A                              | N/A                                                                     | errors if `target` declared in defaults                                                                     |
 | `spawn` (req relation) | N/A                              | **Errors** ¹ ("stale target ID")                                        | compile error if target omitted; constraint shape checked at compile time                                   |
 | `spawn` (opt relation) | N/A                              | **Errors** ¹ ("stale target ID") if target provided                     | birth-links when target provided; no-op when omitted                                                        |
-| `link`                 | **Errors** ¹ ("stale entity ID") | **Errors** ¹ ("stale target ID")                                        | `target` is a required parameter (compile-time); clones field values                                        |
+| `link`                 | **Errors** ¹ ("stale entity ID") | **Errors** ¹ ("stale target ID")                                        | `target` is a required parameter (compile-time); field values stored by reference                           |
 | `unlink`               | **Errors** ¹ ("stale entity ID") | N/A                                                                     | **Errors** if relation is required; **no-op** if already unlinked                                           |
 | `enable` (relation)    | **Errors** ¹                     | N/A                                                                     | **rejected** — compile error; runtime error in dynamic fallback ("relations toggled via link()/unlink()")   |
 | `disable` (relation)   | **Errors** ¹                     | N/A                                                                     | **rejected** — compile error; runtime error in dynamic fallback ("relations toggled via link()/unlink()")   |
@@ -613,7 +613,7 @@ checks — are unconditional and never stripped.
 
 | Operation              | Cost | Notes                                                                                                                                                         |
 | ---------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `link` (attach)        | O(1) | write target + reverse-map insert (+ set bit if optional); field values are cloned                                                                            |
+| `link` (attach)        | O(1) | write target + reverse-map insert (+ set bit if optional); field values stored by reference                                                                   |
 | `link` (retarget)      | O(1) | write target + reverse-map insert + hash delete from previous target's bucket                                                                                 |
 | `unlink`               | O(1) | clear bit + clear target + reverse-map hash delete                                                                                                            |
 | `get` / `getTarget`    | O(1) | read SoA column (+ alive check for `getTarget`)                                                                                                               |

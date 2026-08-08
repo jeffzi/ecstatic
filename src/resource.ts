@@ -120,6 +120,16 @@ export function getResourceMeta(id: number): ResourceMeta {
   return meta;
 }
 
+/** Overwrites every declared field of `data` with a fresh clone of its registered default. */
+function fillFromDefaults(data: Record<string, unknown>, meta: ResourceMeta): void {
+  const fields = meta.fields;
+  const defaults = meta.defaults;
+  for (let i = 0; i < fields.length; i++) {
+    const f = fields[i]!;
+    data[f] = cloneValue(defaults[f]);
+  }
+}
+
 /**
  * Creates a resource's data record from its registered defaults and stores it.
  *
@@ -127,14 +137,8 @@ export function getResourceMeta(id: number): ResourceMeta {
  * this runs only when the world has no record for `resId` yet.
  */
 function initResource(world: World, resId: number): Record<string, unknown> {
-  const meta = getResourceMeta(resId);
   const data: Record<string, unknown> = {};
-  const fields = meta.fields;
-  const defaults = meta.defaults;
-  for (let i = 0; i < fields.length; i++) {
-    const f = fields[i]!;
-    data[f] = cloneValue(defaults[f]);
-  }
+  fillFromDefaults(data, getResourceMeta(resId));
   world.resources.set(resId, data);
   return data;
 }
@@ -176,11 +180,5 @@ export function resetResource(world: World, res: Resource): void {
     initResource(world, res);
     return;
   }
-  const meta = getResourceMeta(res);
-  const fields = meta.fields;
-  const defaults = meta.defaults;
-  for (let i = 0; i < fields.length; i++) {
-    const f = fields[i]!;
-    data[f] = cloneValue(defaults[f]);
-  }
+  fillFromDefaults(data, getResourceMeta(res));
 }
