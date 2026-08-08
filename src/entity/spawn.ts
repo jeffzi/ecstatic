@@ -3,18 +3,28 @@
  */
 
 import type { ArchetypeDescriptor, ComponentsOf, OptionalsOf } from "../archetype.js";
-import type { ComponentFields, ComponentName } from "../component.js";
-import type { EntityId } from "../entity-id.js";
+import type { ComponentDescriptor, ComponentFields, ComponentName } from "../component.js";
+import { DEBUG } from "../debug.js";
+import type { EntityId, With } from "../entity-id.js";
 import {
   assertEntityIndex,
+  entityIndex,
   initialEntityId,
   MAX_INDEX,
   NO_FREE_SLOT,
   OVERFLOW_MSG,
 } from "../entity-id.js";
+import {
+  errorOptionalRelationTarget,
+  errorRequiredRelationTarget,
+  errorStaleTarget,
+} from "../errors.js";
 import { growMatcherArrays, maskSatisfies, refreshMatchersMask } from "../matcher.js";
+import type { RelationFields } from "../relation.js";
+import { getRelationMeta } from "../relation.js";
 import { collectFlatColumns } from "../world.js";
-import type { Storage, TypedArray, WorldState } from "../world.js";
+import type { SoAColumns, Storage, TypedArray, WorldState } from "../world.js";
+import { reverseInsert } from "./reverse-map.js";
 
 /**
  * Per-component spawn overrides, keyed by component name.
@@ -31,21 +41,66 @@ export type SpawnOverrides = Record<string, Record<string, unknown> | boolean>;
  */
 export type IsTagFields<F> = F extends Record<string, never> ? true : false;
 
+/** True when the component slot is a relation descriptor. */
+type IsRelationSlot<P> = P extends { readonly __ecstatic_relation_meta: unknown } ? true : false;
+
+/**
+ * Relation spawn override: a mandatory target satisfying the relation's
+ * constraints, plus optional data-field patches (birth-link semantics —
+ * `true` cannot link, and a record without `target` cannot either).
+ */
+type RelationSpawnValue<P> = P extends {
+  readonly __ecstatic_relation_meta: {
+    constraints: infer C extends readonly ComponentDescriptor[];
+  };
+}
+  ? { target: With<C> } & Partial<RelationFields<P>>
+  : never;
+
+/** Names of the required components that are relations (never for bare descriptors). */
+type RequiredRelationName<P> = P extends { readonly __ecstatic_relation_meta: unknown }
+  ? ComponentName<P>
+  : never;
+
+/** Union of required-relation names on an archetype — non-optional spawn keys. */
+export type RequiredRelationNames<A extends ArchetypeDescriptor> = ArchetypeDescriptor extends A
+  ? never
+  : RequiredRelationName<ComponentsOf<A>[number]>;
+
+/**
+ * Storages whose archetype carries a required relation are rejected — used by
+ * the spawn forms that can omit overrides, which cannot provide the mandatory
+ * birth-link target.
+ */
+type WithoutRequiredRelations<A extends ArchetypeDescriptor> = Storage<A> &
+  (RequiredRelationNames<A> extends never ? unknown : never);
+
 /**
  * Required-component override: `true` for defaults or a partial field record.
  * Required tags narrow to literal `true` — there are no fields to patch.
+ * Required relations take the `{target, ...fields}` form only.
  */
 type RequiredSpawnValue<P> =
-  IsTagFields<ComponentFields<P>> extends true ? true : Partial<ComponentFields<P>> | true;
+  IsRelationSlot<P> extends true
+    ? RelationSpawnValue<P>
+    : IsTagFields<ComponentFields<P>> extends true
+      ? true
+      : Partial<ComponentFields<P>> | true;
 
 /**
  * Optional-component override: `true` enables with defaults, `false` stays
  * disabled, and data-carrying optionals additionally accept a field record
- * (enable + patch). Tag optionals accept only booleans. Shared with the
- * `enable`/`enableMany` record grammar.
+ * (enable + patch). Tag optionals accept only booleans. Optional relations
+ * birth-link with the `{target, ...fields}` form (`false`/omitted stays
+ * disabled; `true` cannot link). Shared with the `enable`/`enableMany`
+ * record grammar.
  */
 export type OptionalSpawnValue<P> =
-  IsTagFields<ComponentFields<P>> extends true ? boolean : boolean | Partial<ComponentFields<P>>;
+  IsRelationSlot<P> extends true
+    ? false | RelationSpawnValue<P>
+    : IsTagFields<ComponentFields<P>> extends true
+      ? boolean
+      : boolean | Partial<ComponentFields<P>>;
 
 /**
  * Typed spawn overrides for a storage's archetype: per-component partial
@@ -57,7 +112,16 @@ export type OptionalSpawnValue<P> =
  */
 export type SpawnOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescriptor extends A
   ? SpawnOverrides
-  : { [P in ComponentsOf<A>[number] as ComponentName<P>]?: RequiredSpawnValue<P> } & {
+  : {
+      [P in ComponentsOf<A>[number] as IsRelationSlot<P> extends true
+        ? never
+        : ComponentName<P>]?: RequiredSpawnValue<P>;
+    } & {
+      // Required relations MUST be provided at spawn — their keys are non-optional.
+      [P in ComponentsOf<A>[number] as IsRelationSlot<P> extends true
+        ? ComponentName<P>
+        : never]: RelationSpawnValue<P>;
+    } & {
       [P in OptionalsOf<A>[number] as ComponentName<P>]?: OptionalSpawnValue<P>;
     };
 
@@ -72,9 +136,13 @@ export type SpawnOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescript
  * @throws If an override sets a required component to `false`
  */
 export function spawn<A extends ArchetypeDescriptor>(
-  storage: Storage<A>,
+  storage: WithoutRequiredRelations<A>,
   overrides?: SpawnOverridesFor<A>,
-): EntityId;
+): EntityId<A>;
+export function spawn<A extends ArchetypeDescriptor>(
+  storage: Storage<A>,
+  overrides: SpawnOverridesFor<A>,
+): EntityId<A>;
 export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   const state = storage.world;
 
@@ -103,6 +171,11 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   // Unconditional refresh: a recycled row holds the previous occupant's
   // matched flags.
   refreshMatchersMask(storage, di, spawnMask);
+
+  // Guarded so relation-free archetypes skip the call entirely.
+  if (storage.relationN > 0) {
+    insertRequiredRelationEntries(storage, di, 1);
+  }
 
   return eid;
 }
@@ -177,6 +250,17 @@ function growStorageArrays(storage: Storage): void {
   }
 
   storage.flatColumns = collectFlatColumns(storage.columns);
+
+  // Growth replaced the TypedArray target columns: refresh the cached
+  // references (parallel to the flatColumns rebuild).
+  const relN = storage.relationN;
+  for (let ri = 0; ri < relN; ri++) {
+    const targetCol = storage.columns.get(storage.relationDescriptors[ri]!)?.target;
+    if (targetCol instanceof Float64Array) {
+      storage.relationTargetColumns[ri] = targetCol;
+    }
+  }
+
   growMatcherArrays(storage, capacity);
 }
 
@@ -213,6 +297,33 @@ function initComponentFields(
         }
       }
     }
+
+    // Target column lives outside __ecstatic_fields, directly in the SoA.
+    if (getRelationMeta(comp) !== undefined) {
+      initRelationTarget(soa, denseStart, count, fieldOverrides?.target);
+    }
+  }
+}
+
+/**
+ * Initialize a relation's target column for `count` rows: the override target
+ * when provided, else sentinel 0. Unlinked relations store 0 (not undefined)
+ * so liveness checks fail naturally — no live packed id is ever 0
+ * (generations start at MAX_INDEX + index), so 0 exclusively means
+ * "not linked".
+ */
+function initRelationTarget(
+  soa: SoAColumns,
+  denseStart: number,
+  count: number,
+  targetOverride: unknown,
+): void {
+  const targetCol = soa.target;
+  if (targetCol === undefined) {
+    return;
+  }
+  for (let i = 0; i < count; i++) {
+    targetCol[denseStart + i] = targetOverride !== undefined ? targetOverride : 0;
   }
 }
 
@@ -229,6 +340,13 @@ function writeOptionalDefaults(storage: Storage, denseStart: number, count: numb
     if (soa === undefined) {
       continue;
     }
+
+    // Relation target sentinel: write 0 so despawn's target !== 0 check never
+    // reads a previous occupant's target on a recycled row.
+    if (getRelationMeta(comp) !== undefined) {
+      initRelationTarget(soa, denseStart, count, undefined);
+    }
+
     const fields = comp.__ecstatic_fields;
     const defaultValues = comp.__ecstatic_default_values;
     const isRef = comp.__ecstatic_is_reference;
@@ -296,8 +414,103 @@ function applyOptionalOverrides(
         col[denseStart + i] = override;
       }
     }
+
+    // Optional relation birth-link: presence bit is already set above and
+    // data fields patched (the synthetic target column is not in
+    // __ecstatic_fields); write the target and record the reverse entries.
+    if (getRelationMeta(comp) !== undefined && raw.target !== undefined) {
+      birthLinkOptional(storage, denseStart, count, comp, soa, raw.target);
+    }
   }
   return bits;
+}
+
+/**
+ * Birth-link an optional relation for `count` rows starting at `denseStart`:
+ * validate the override target (DEBUG-gated; a 0 target under NDEBUG skips
+ * the write and reverse insert, leaving the sentinel), write the target
+ * column, and record each source in the target's reverse bucket.
+ */
+function birthLinkOptional(
+  storage: Storage,
+  denseStart: number,
+  count: number,
+  comp: ComponentDescriptor,
+  soa: SoAColumns,
+  rawTarget: unknown,
+): void {
+  const state = storage.world;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- override targets are EntityIds (branded numbers)
+  const target = rawTarget as number;
+  if (target === 0) {
+    if (DEBUG) {
+      throw new Error(errorOptionalRelationTarget(comp.__ecstatic_name));
+    }
+  } else {
+    if (DEBUG && state.generation[target % MAX_INDEX] !== target) {
+      throw new Error(errorStaleTarget(comp.__ecstatic_name));
+    }
+    const targetCol = soa.target!;
+    const targetIdx = entityIndex(target);
+    for (let i = 0; i < count; i++) {
+      const di = denseStart + i;
+      targetCol[di] = target;
+      reverseInsert(state, comp, targetIdx, storage, entityIndex(storage.entities[di]!));
+    }
+  }
+}
+
+/**
+ * Record reverse-map entries for the required relations of `count` freshly
+ * spawned rows, reading targets from the already-initialized target columns.
+ *
+ * DEBUG validates target presence (0 = not provided) and liveness before any
+ * reverse-map write — a stale target would seed a reverse entry that aliases
+ * onto a reused slot. Under NDEBUG both checks are absent: the entity spawns
+ * unlinked on a 0 target, and no reverse entry is recorded.
+ */
+function insertRequiredRelationEntries(storage: Storage, denseStart: number, count: number): void {
+  const state = storage.world;
+  const relCols = storage.relationTargetColumns;
+  const relDescriptors = storage.relationDescriptors;
+  const relBits = storage.relationOptionalBits;
+  const relN = storage.relationN;
+
+  for (let ri = 0; ri < relN; ri++) {
+    if (relBits[ri] !== 0) {
+      continue;
+    }
+    const col = relCols[ri]!;
+    const relDesc = relDescriptors[ri]!;
+    for (let i = 0; i < count; i++) {
+      const di = denseStart + i;
+      insertRequiredEntry(state, storage, relDesc, col[di]!, di);
+    }
+  }
+}
+
+/**
+ * Validate (DEBUG-gated) and record one required-relation birth entry.
+ * A 0 target means "not provided": DEBUG throws, NDEBUG leaves the entity
+ * unlinked with no reverse entry.
+ */
+function insertRequiredEntry(
+  state: WorldState,
+  storage: Storage,
+  relDesc: ComponentDescriptor,
+  target: number,
+  di: number,
+): void {
+  if (target === 0) {
+    if (DEBUG) {
+      throw new Error(errorRequiredRelationTarget(relDesc.__ecstatic_name));
+    }
+    return;
+  }
+  if (DEBUG && state.generation[target % MAX_INDEX] !== target) {
+    throw new Error(errorStaleTarget(relDesc.__ecstatic_name));
+  }
+  reverseInsert(state, relDesc, entityIndex(target), storage, entityIndex(storage.entities[di]!));
 }
 
 /**
@@ -366,6 +579,10 @@ function fillBatch(
       }
     }
   }
+
+  if (storage.relationN > 0) {
+    insertRequiredRelationEntries(storage, denseStart, count);
+  }
 }
 
 /**
@@ -387,16 +604,22 @@ function fillBatch(
  * @throws If the batch would exceed entity index capacity
  */
 export function spawnMany<A extends ArchetypeDescriptor>(
-  storage: Storage<A>,
+  storage: WithoutRequiredRelations<A>,
   count: number,
   out: EntityId[],
-): EntityId[];
+): EntityId<A>[];
 export function spawnMany<A extends ArchetypeDescriptor>(
-  storage: Storage<A>,
+  storage: WithoutRequiredRelations<A>,
   count: number,
   overrides?: SpawnOverridesFor<A>,
   out?: EntityId[],
-): EntityId[];
+): EntityId<A>[];
+export function spawnMany<A extends ArchetypeDescriptor>(
+  storage: Storage<A>,
+  count: number,
+  overrides: SpawnOverridesFor<A>,
+  out?: EntityId[],
+): EntityId<A>[];
 export function spawnMany(
   storage: Storage,
   count: number,

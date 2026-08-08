@@ -1,6 +1,7 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import { archetype, createWorld, get, register, set, spawn } from "../../src/index.js";
+import type { EntityId } from "../../src/index.js";
+import { archetype, createWorld, get, register, relation, set, spawn } from "../../src/index.js";
 import { Position } from "./_fixtures.js";
 
 describe("get", () => {
@@ -40,6 +41,25 @@ describe("set", () => {
     set(movers, id, Position.x, "oops");
     // @ts-expect-error string is not assignable to number
     set(movers, id, Position, { x: "oops" });
+  });
+});
+
+describe("set on relation fields", () => {
+  const Rel = relation("GetSetTd_Rel", [], { weight: 0 });
+  const world = createWorld();
+  const simple = register(world, archetype([Position]));
+  const storage = register(world, archetype([Position, Rel]));
+  const targetId = spawn(simple);
+  const id = spawn(storage, { GetSetTd_Rel: { target: targetId } });
+
+  it("rejects writing the reserved target field", () => {
+    // @ts-expect-error cannot write relation target field — use link() instead
+    set(storage, id, Rel.target, targetId);
+  });
+
+  it("allows data fields and reading the target", () => {
+    set(storage, id, Rel.weight, 5);
+    expectTypeOf(get(storage, id, Rel.target)).toExtend<EntityId>();
   });
 });
 
