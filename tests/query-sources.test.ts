@@ -125,6 +125,30 @@ describe("querySources", () => {
     expect(found.has(sourceB)).toBe(true);
   });
 
+  it("filters with { none } and no all axis", () => {
+    const Rel = relation("QuerySourcesNoneOnly_Rel");
+    const { QuerySourcesNoneOnly_Tag } = components({ QuerySourcesNoneOnly_Tag: {} });
+    const world = createWorld();
+    const simple = register(world, archetype([QSSpec_Comp]));
+    const plain = register(world, archetype([QSSpec_Comp, Rel]));
+    const tagged = register(world, archetype([QSSpec_Comp, Rel], [QuerySourcesNoneOnly_Tag]));
+
+    const target = spawn(simple);
+    const plainSrc = spawn(plain, { QuerySourcesNoneOnly_Rel: { target } });
+    const taggedSrc = spawn(tagged, {
+      QuerySourcesNoneOnly_Rel: { target },
+      QuerySourcesNoneOnly_Tag: true,
+    });
+
+    const found: number[] = [];
+    querySources(world, Rel, target, { none: [QuerySourcesNoneOnly_Tag] }, (e) => {
+      found.push(e.id);
+    });
+
+    expect(found).toStrictEqual([plainSrc]);
+    expect(found).not.toContain(taggedSrc);
+  });
+
   it("skips everything when the filter can never match the sole source storage", () => {
     const Rel = relation("QuerySourcesNoMatch_Rel");
     const { QuerySourcesNoMatch_Absent } = components({ QuerySourcesNoMatch_Absent: { v: 0 } });

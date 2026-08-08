@@ -63,7 +63,7 @@ function resolveBucket(
  * in the same pass (JS Map iteration sees entries inserted during the walk
  * — unlike `each`, whose backward row scan skips mid-pass spawns).
  *
- * With a filter (`{all, any?, none?}` or the component-array `{all}`
+ * With a filter (`{all?, any?, none?}` or the component-array `{all}`
  * shorthand), resolution is per storage: a storage that can never match is
  * skipped without touching its sources, and per-source enabled-bit semantics
  * match `each` filters.
@@ -83,6 +83,21 @@ export function querySources<
   target: EntityId,
   filter: readonly [...Comps],
   fn: (view: QueryView<R | Comps[number]>) => void,
+): void;
+export function querySources<
+  R extends Relation,
+  const Any extends readonly ComponentDescriptor[] = readonly [],
+>(
+  world: World,
+  rel: R,
+  target: EntityId,
+  filter: {
+    readonly all?: readonly [];
+    readonly any?: readonly [...Any];
+    readonly none?: readonly ComponentDescriptor[];
+    readonly __ecstatic_name?: never;
+  },
+  fn: (view: QueryView<R, Any[number]>) => void,
 ): void;
 export function querySources<
   R extends Relation,

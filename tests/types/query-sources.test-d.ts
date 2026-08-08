@@ -49,6 +49,22 @@ describe("querySources view typing", () => {
     });
   });
 
+  it("accepts a filter with only none (no all axis)", () => {
+    querySources(world, DataRel, target, { none: [Stunned] }, (view) => {
+      expectTypeOf(view.QSTd_Data.weight).toEqualTypeOf<number>();
+      expectTypeOf(view.id).toExtend<EntityId>();
+    });
+  });
+
+  it("accepts a filter with any and none (no all axis)", () => {
+    querySources(world, DataRel, target, { any: [Shield], none: [Stunned] }, (view) => {
+      expectTypeOf(view.QSTd_Data.weight).toEqualTypeOf<number>();
+      if (view.Shield !== undefined) {
+        expectTypeOf(view.Shield.hp).toEqualTypeOf<number>();
+      }
+    });
+  });
+
   it("accepts the component-array shorthand as {all}", () => {
     querySources(world, DataRel, target, [Shield], (view) => {
       expectTypeOf(view.Shield.hp).toEqualTypeOf<number>();
