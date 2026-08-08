@@ -44,6 +44,9 @@ export interface WorldState {
   /** Next fresh index to allocate (when freelist is empty) */
   nextIndex: number;
 
+  /** Resource ID → data record, created on first access from the registered defaults */
+  resources: Map<number, Record<string, unknown>>;
+
   /**
    * Bumped whenever the archetype set changes (register/destroyWorld);
    * cached query resolutions compare against it before reuse.
@@ -164,6 +167,7 @@ export function createWorld(): World {
     sparse: new Int32Array(INITIAL_WORLD_CAPACITY),
     freeHead: NO_FREE_SLOT,
     nextIndex: 0,
+    resources: new Map(),
     queryEpoch: 0,
   };
 
@@ -363,6 +367,7 @@ export function destroyWorld(world: World): void {
   state.sparse = new Int32Array(INITIAL_WORLD_CAPACITY);
   state.freeHead = NO_FREE_SLOT;
   state.nextIndex = 0;
+  state.resources.clear();
   state.queryEpoch += 1;
 
   // Mark as destroyed so register/getStorage will error

@@ -36,6 +36,14 @@ export { type EachView, type ViewApplyFilter, each } from "./entity/each.js";
 export type { EachFilter, QueryFilter } from "./filter.js";
 export { type QueryView, query } from "./query.js";
 export {
+  type Resource,
+  type ResourceFields,
+  getResource,
+  resetResource,
+  resource,
+  setResource,
+} from "./resource.js";
+export {
   type OptionalOverridesFor,
   disable,
   disableMany,
