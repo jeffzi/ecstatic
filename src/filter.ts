@@ -1,8 +1,10 @@
 /**
  * Filter resolution: map an all/any/none component filter onto a storage's
  * optional bitmasks, producing a Matcher (or a skip/trivial outcome) per
- * storage. Resolution allocates nothing per call — the three id arrays are
- * read directly, with no normalized filter object.
+ * storage. `resolveFilterMasks` allocates nothing per call — the three id
+ * arrays are read directly, with no normalized filter object.
+ * `normalizeFilter` does allocate one axes tuple per call, so callers on hot
+ * paths pay one small allocation per resolution.
  */
 
 import type { ComponentDescriptor } from "./component.js";
