@@ -128,10 +128,10 @@ function getColumnCtorForMarker(marker: WidthMarkerType): NumericColumnCtor {
 /** Select the default TypedArray column constructor for an unmarked scalar default. */
 function defaultColumnCtor(value: unknown): NumericColumnCtor | undefined {
   if (typeof value === "number") {
-    return Float64Array; // default numeric type is Float64
+    return Float64Array;
   }
   if (typeof value === "boolean") {
-    return Uint8Array; // boolean uses Uint8
+    return Uint8Array;
   }
   return undefined; // strings and others use plain arrays
 }
@@ -166,7 +166,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 /** Throws unless fields is a plain object with all-valid field names; returns it unchanged otherwise. */
 function validateFields(componentName: string, fields: unknown): Record<string, unknown> {
   if (!isPlainObject(fields)) {
-    throw new Error(`component fields must be a table: ${componentName}`);
+    throw new Error(`component fields must be an object: ${componentName}`);
   }
 
   const defaults = fields;
@@ -205,13 +205,11 @@ function descriptorFromDefaults(
     const defaultValue = defaults[fieldName];
 
     if (defaultValue === REF_SENTINEL) {
-      // Reference field: no default value (undefined), marked as reference
       defaultValues.push(undefined);
       isReference.push(true);
       columnCtors.push(undefined);
       normalizedDefaults[fieldName] = undefined;
     } else if (isWidthMarker(defaultValue)) {
-      // Width-marked numeric default: extract the value, store the column constructor
       defaultValues.push(defaultValue.value);
       isReference.push(false);
       columnCtors.push(getColumnCtorForMarker(defaultValue.__ecstatic_width_marker));
@@ -221,9 +219,8 @@ function descriptorFromDefaults(
       defaultValue !== null &&
       !Array.isArray(defaultValue)
     ) {
-      // Table defaults are not supported; only ref() fields can hold tables
       throw new Error(
-        "ecstatic: table defaults are not supported; declare the field with ref<T>() and initialize it explicitly",
+        "ecstatic: object defaults are not supported; declare the field with ref<T>() and initialize it explicitly",
       );
     } else {
       // Scalar default (number, string, boolean, array)

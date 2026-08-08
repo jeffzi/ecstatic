@@ -1,13 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { entityIndex, MAX_INDEX } from "../src/entity-id.js";
+import { MAX_INDEX } from "../src/entity-id.js";
 import { archetype, components, ref, spawn } from "../src/index.js";
 import { createWorld, register } from "../src/world.js";
-
-/** Dense row of a live entity: sparse lookup by entity index. */
-function rowOf(storage: { sparse: Int32Array }, id: number): number {
-  return storage.sparse[entityIndex(id)]!;
-}
+import { rowOf } from "./fixtures.js";
 
 const { SpawnTestPosition: Position } = components({
   SpawnTestPosition: { x: 0, y: 0 },
@@ -128,7 +124,7 @@ describe("spawn", () => {
     expect(storage.entities[1]).toBe(id2);
   });
 
-  it("stores table override by reference (no clone)", () => {
+  it("stores object override by reference (no clone)", () => {
     const { SpawnRefStats: Stats } = components({
       SpawnRefStats: { data: ref() },
     });
@@ -136,11 +132,11 @@ describe("spawn", () => {
     const Arch = archetype([Stats]);
     const storage = register(world, Arch);
 
-    const tbl = { hp: 100 };
-    spawn(storage, { [Stats.__ecstatic_name]: { data: tbl } });
+    const obj = { hp: 100 };
+    spawn(storage, { [Stats.__ecstatic_name]: { data: obj } });
 
     const col = storage.columns.get(Stats)!;
-    expect(col.data![0]).toBe(tbl);
+    expect(col.data![0]).toBe(obj);
 
     // Spawn without override reads undefined for ref field
     spawn(storage);

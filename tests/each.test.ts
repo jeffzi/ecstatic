@@ -271,3 +271,115 @@ describe("each — created via spawnMany", () => {
     expect(storage.n).toBe(3);
   });
 });
+
+describe("each — multi-storage", () => {
+  const { EachMultiStunned: Stunned } = components({ EachMultiStunned: {} });
+
+  function createTwoStorages() {
+    const world = createWorld();
+    const posOnly = register(world, archetype([Position], [Stunned]));
+    const posVel = register(world, archetype([Position, Velocity], [Stunned]));
+    return { world, posOnly, posVel };
+  }
+
+  it("visits every row of each storage in turn", () => {
+    const { posOnly, posVel } = createTwoStorages();
+    const a1 = spawn(posOnly);
+    const a2 = spawn(posOnly);
+    const b1 = spawn(posVel);
+
+    const visited: number[] = [];
+    each([posOnly, posVel], (e) => {
+      visited.push(e.id);
+    });
+
+    expect(visited).toStrictEqual([a2, a1, b1]);
+  });
+
+  it("applies per-storage filter resolution across storages", () => {
+    const { posOnly, posVel } = createTwoStorages();
+    const a1 = spawn(posOnly, { EachMultiStunned: true });
+    spawn(posOnly);
+    const b1 = spawn(posVel, { EachMultiStunned: true });
+    spawn(posVel);
+
+    const visited: number[] = [];
+    each([posOnly, posVel], { all: [Stunned] }, (e) => {
+      visited.push(e.id);
+    });
+
+    expect(new Set(visited)).toStrictEqual(new Set([a1, b1]));
+  });
+
+  it("skips a storage that can never match the filter", () => {
+    const { posOnly, posVel } = createTwoStorages();
+    spawn(posOnly);
+    const b1 = spawn(posVel);
+
+    // Velocity is absent from posOnly: that whole storage is skipped.
+    const visited: number[] = [];
+    each([posOnly, posVel], { all: [Velocity] }, (e) => {
+      visited.push(e.id);
+    });
+
+    expect(visited).toStrictEqual([b1]);
+  });
+
+  it("supports nested multi-storage iteration", () => {
+    const { posOnly, posVel } = createTwoStorages();
+    const a1 = spawn(posOnly);
+    const b1 = spawn(posVel);
+
+    const pairs: [number, number][] = [];
+    each([posOnly, posVel], (outer) => {
+      each([posOnly, posVel], (inner) => {
+        pairs.push([outer.id, inner.id]);
+      });
+    });
+
+    expect(pairs).toStrictEqual([
+      [a1, a1],
+      [a1, b1],
+      [b1, a1],
+      [b1, b1],
+    ]);
+  });
+
+  it("accepts a component-set spread as the all-filter", () => {
+    const { posOnly, posVel } = createTwoStorages();
+    spawn(posOnly);
+    const b1 = spawn(posVel);
+
+    const Movable = [Position, Velocity] as const;
+    const visited: number[] = [];
+    each([posOnly, posVel], [...Movable], (e) => {
+      visited.push(e.id);
+    });
+
+    expect(visited).toStrictEqual([b1]);
+  });
+});
+
+describe("each — argument validation", () => {
+  it("errors on a filter with a missing callback", () => {
+    const world = createWorld();
+    const storage = register(world, archetype([Position]));
+    spawn(storage);
+
+    expect(() => {
+      // @ts-expect-error the callback is required — runtime validates too
+      each(storage, [Position]);
+    }).toThrow("invalid each arguments");
+  });
+
+  it("errors on a non-object second argument", () => {
+    const world = createWorld();
+    const storage = register(world, archetype([Position]));
+    spawn(storage);
+
+    expect(() => {
+      // @ts-expect-error a number is neither a filter nor a callback
+      each(storage, 42, () => {});
+    }).toThrow("invalid each arguments");
+  });
+});

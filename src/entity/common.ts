@@ -41,12 +41,10 @@ export function validateEntity(storage: Storage, id: EntityId): void {
 
   const index = entityIndex(id);
 
-  // Check staleness: generation must match
   if (storage.generation[index] !== id) {
     throw new Error(ERROR_STALE_ENTITY_ID);
   }
 
-  // Check wrong storage: entityArch[index] must be the storage or compatible
   if (storage.world.entityArch[index] !== storage) {
     throw new Error(ERROR_WRONG_STORAGE);
   }

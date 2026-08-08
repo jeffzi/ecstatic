@@ -6,6 +6,7 @@ import {
   components,
   createWorld,
   despawn,
+  enable,
   get,
   ref,
   register,
@@ -72,12 +73,15 @@ describe("get", () => {
   });
 
   describe("when field descriptor is invalid", () => {
-    it("errors when component has no data fields (optional tag)", () => {
+    it("errors when component has no data fields (enabled optional tag)", () => {
       const AccessTag = component("AccessTag");
       const world = createWorld();
       const Arch = archetype([Position], [AccessTag]);
       const storage = register(world, Arch);
       const id = spawn(storage);
+      // Enabled so the access clears the disabled-optional guard and reaches
+      // the no-data-fields check.
+      enable(storage, id, AccessTag);
 
       expect(() => {
         get(storage, id, { __ecstatic_component: AccessTag, __ecstatic_field: "x" });
@@ -303,4 +307,72 @@ describe("boolean fields", () => {
       expect(get(storage, id, Comp.flag)).toBe(value);
     },
   );
+});
+
+describe("get/set on a disabled optional component", () => {
+  // The disabled-optional guard is DEBUG-gated: under NDEBUG the access
+  // reads/writes the pre-populated slot silently instead of throwing.
+  const { AccessShield: Shield } = components({
+    AccessShield: { hp: 50, defense: 10 },
+  });
+
+  function createShieldStorage() {
+    const world = createWorld();
+    const storage = register(world, archetype([Position], [Shield]));
+    return { world, storage };
+  }
+
+  it("get errors for a disabled optional component", () => {
+    const { storage } = createShieldStorage();
+    const id = spawn(storage);
+
+    expect(() => {
+      get(storage, id, Shield.hp);
+    }).toThrow("component AccessShield not enabled on entity");
+  });
+
+  it("set errors for a disabled optional component (field-descriptor form)", () => {
+    const { storage } = createShieldStorage();
+    const id = spawn(storage);
+
+    expect(() => {
+      set(storage, id, Shield.hp, 5);
+    }).toThrow("component AccessShield not enabled on entity");
+  });
+
+  it("set errors for a disabled optional component (component+values form)", () => {
+    const { storage } = createShieldStorage();
+    const id = spawn(storage);
+
+    expect(() => {
+      set(storage, id, Shield, { hp: 5 });
+    }).toThrow("component AccessShield not enabled on entity");
+  });
+
+  it("get on an enabled optional component returns the override", () => {
+    const { storage } = createShieldStorage();
+    const id = spawn(storage);
+    enable(storage, id, Shield, { hp: 33, defense: 4 });
+
+    expect(get(storage, id, Shield.hp)).toBe(33);
+  });
+
+  it("set on an enabled optional component writes the field", () => {
+    const { storage } = createShieldStorage();
+    const id = spawn(storage);
+    enable(storage, id, Shield);
+
+    set(storage, id, Shield.hp, 42);
+
+    expect(get(storage, id, Shield.hp)).toBe(42);
+  });
+
+  it("leaves required-component access unaffected", () => {
+    const { storage } = createShieldStorage();
+    const id = spawn(storage);
+
+    set(storage, id, Position.x, 9);
+
+    expect(get(storage, id, Position.x)).toBe(9);
+  });
 });

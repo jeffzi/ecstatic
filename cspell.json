@@ -16,6 +16,7 @@
     ".fallow"
   ],
   "words": [
+    "arities",
     "codegen",
     "cooldown",
     "cooldowns",
@@ -52,7 +53,9 @@
     "tstl",
     "ttsc",
     "typechecks",
+    "uncallable",
     "untimed",
+    "unvalidated",
     "userland",
     "worktree"
   ]
