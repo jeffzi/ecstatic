@@ -158,7 +158,12 @@ export function setResource<R extends Resource>(
 ): void {
   const data = world.resources.get(res) ?? initResource(world, res);
   for (const key in values) {
-    data[key] = cloneValue(values[key]);
+    // An explicitly-undefined entry leaves the field untouched (same contract
+    // as writeFieldOverrides); exactOptionalPropertyTypes already rejects it
+    // at compile time, so this only guards untyped callers.
+    if (values[key] !== undefined) {
+      data[key] = cloneValue(values[key]);
+    }
   }
 }
 

@@ -99,9 +99,18 @@ function compactAndFreeMarked(storage: Storage, indices: number[], count: number
       relationSourceCleanup(storage, sparse[index]!, index);
     }
   }
+  // Target cleanup: relations-outer with the watermark hoisted, so the
+  // per-relation bucket map is fetched once per relation, not per entity.
   if (world.relations.length > 0) {
-    for (let k = 0; k < count; k++) {
-      relationTargetCleanup(world, indices[k]!);
+    const maxTarget = world.maxTargetIndex;
+    for (const rel of world.relations) {
+      const relMap = world.reverseMap.get(rel)!;
+      for (let k = 0; k < count; k++) {
+        const index = indices[k]!;
+        if (index <= maxTarget) {
+          relMap.delete(index);
+        }
+      }
     }
   }
 
@@ -316,10 +325,19 @@ function despawnManyStorageNoIds(storage: Storage): void {
     }
   }
   // Target cleanup runs even for relation-free storages — a dying entity may
-  // be the target of relations on OTHER archetypes.
+  // be the target of relations on OTHER archetypes. Relations-outer with the
+  // watermark hoisted: one bucket-map fetch per relation, not per entity.
   if (world.relations.length > 0) {
-    for (let row = 0; row < oldN; row++) {
-      relationTargetCleanup(world, entityIndex(storage.entities[row]!));
+    const maxTarget = world.maxTargetIndex;
+    const reverseMap = world.reverseMap;
+    for (const rel of world.relations) {
+      const relMap = reverseMap.get(rel)!;
+      for (let row = 0; row < oldN; row++) {
+        const index = entityIndex(storage.entities[row]!);
+        if (index <= maxTarget) {
+          relMap.delete(index);
+        }
+      }
     }
   }
 
