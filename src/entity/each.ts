@@ -24,10 +24,19 @@ import type { IsTagFields } from "./spawn.js";
 
 /**
  * Slot type of one component in a view: literal `true` for tags, the mutable
- * fields record otherwise.
+ * fields record otherwise. A relation exposes only its data fields — the
+ * `target` column is not accessorized (read it with `getTarget`, write it
+ * with `link`), so a pure link types as a tag slot.
  */
-export type ViewSlotValue<P> =
-  IsTagFields<ComponentFields<P>> extends true ? true : ComponentFields<P>;
+export type ViewSlotValue<P> = P extends {
+  readonly __ecstatic_relation_meta: { fields: infer T extends object };
+}
+  ? IsTagFields<T> extends true
+    ? true
+    : T
+  : IsTagFields<ComponentFields<P>> extends true
+    ? true
+    : ComponentFields<P>;
 
 /**
  * The view object passed to the each() callback: an `id` accessor plus one
@@ -133,7 +142,7 @@ type ViewApplyFilterImpl<
 > = V extends infer U ? Omit<PromoteAll<U, All>, ComponentName<None>> : never;
 
 /** A generated view paired with its row-index rebinder. */
-interface BoundView {
+export interface BoundView {
   view: EachView;
   bind: (rowIndex: number) => void;
 }
@@ -215,6 +224,32 @@ function buildView(storage: Storage): BoundView {
 
 /** Per-storage view pool, indexed by nesting depth. */
 const viewPools = new WeakMap<Storage, { depth: number; views: BoundView[] }>();
+
+/**
+ * Check out the storage's pooled view for the current nesting depth,
+ * building it on first use. Every acquire must be paired with a
+ * {@link releaseView} (in a `finally`, so a throwing callback unwinds the
+ * depth) — nested iterations over the same storage get distinct views.
+ */
+export function acquireView(storage: Storage): BoundView {
+  let pool = viewPools.get(storage);
+  if (pool === undefined) {
+    pool = { depth: 0, views: [] };
+    viewPools.set(storage, pool);
+  }
+  let bound = pool.views[pool.depth];
+  if (bound === undefined) {
+    bound = buildView(storage);
+    pool.views.push(bound);
+  }
+  pool.depth++;
+  return bound;
+}
+
+/** Return a view checked out by {@link acquireView} to the storage's pool. */
+export function releaseView(storage: Storage): void {
+  viewPools.get(storage)!.depth--;
+}
 
 /**
  * Iterate entities in a storage, calling fn once per entity with a view.
@@ -327,19 +362,7 @@ export function eachStorageMatched(
     return;
   }
 
-  let pool = viewPools.get(storage);
-  if (pool === undefined) {
-    pool = { depth: 0, views: [] };
-    viewPools.set(storage, pool);
-  }
-
-  let bound = pool.views[pool.depth];
-  if (bound === undefined) {
-    bound = buildView(storage);
-    pool.views.push(bound);
-  }
-
-  pool.depth++;
+  const bound = acquireView(storage);
   try {
     if (activeMatcher === null) {
       for (let i = storage.n - 1; i >= 0; i--) {
@@ -358,6 +381,6 @@ export function eachStorageMatched(
       }
     }
   } finally {
-    pool.depth--;
+    releaseView(storage);
   }
 }
