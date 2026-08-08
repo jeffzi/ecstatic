@@ -14,7 +14,7 @@ describe("archetype", () => {
     const arch = archetype([Position, Velocity]);
 
     expectTypeOf(arch).toEqualTypeOf<
-      ArchetypeDescriptor<readonly [typeof Position, typeof Velocity]>
+      ArchetypeDescriptor<readonly [typeof Position, typeof Velocity], readonly []>
     >();
   });
 

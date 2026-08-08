@@ -18,22 +18,29 @@ export type { ComponentDescriptor } from "./component.js";
 /** Archetype descriptor stored in the cache and returned to users */
 export interface ArchetypeDescriptor<
   C extends readonly ComponentDescriptor[] = readonly ComponentDescriptor[],
+  O extends readonly ComponentDescriptor[] = readonly ComponentDescriptor[],
 > {
   readonly id: number;
   readonly components: C;
-  readonly optionals: readonly ComponentDescriptor[];
+  readonly optionals: O;
   readonly componentByName: Map<string, ComponentDescriptor>;
   readonly componentLookup: Set<ComponentDescriptor>;
   readonly optionalBits: Map<string, number>;
   readonly optionalNotBits: Map<string, number>;
   readonly optionalBitLookup: Map<ComponentDescriptor, number>;
   readonly optionalNotBitLookup: Map<ComponentDescriptor, number>;
-  readonly archetype: ArchetypeDescriptor;
+  readonly archetype: ArchetypeDescriptor<C, O>;
 }
 
 /** Component tuple captured by a typed archetype descriptor. */
 export type ComponentsOf<A> =
   A extends ArchetypeDescriptor<infer C> ? C : readonly ComponentDescriptor[];
+
+/** Optionals tuple captured by a typed archetype descriptor. */
+export type OptionalsOf<A> =
+  A extends ArchetypeDescriptor<readonly ComponentDescriptor[], infer O>
+    ? O
+    : readonly ComponentDescriptor[];
 
 /** Module-level counter for archetype IDs */
 let nextArchetypeId = 0;
@@ -68,6 +75,10 @@ const RESERVED_NAMES = new Set<string>([
   // Runtime bookkeeping
   "generation",
   "despawnClear",
+  "hasDespawnClear",
+  "hasOptionalData",
+  "matchers",
+  "matcherMatched",
 ]);
 
 /**
@@ -96,10 +107,10 @@ function computeArchetypeKey(
  * @throws If any component name is reserved (on archetypes)
  * @throws If any component appears in both required and optional, or twice in one list
  */
-export function archetype<const C extends readonly ComponentDescriptor[]>(
-  required?: C,
-  optionals?: readonly ComponentDescriptor[],
-): ArchetypeDescriptor<C>;
+export function archetype<
+  const C extends readonly ComponentDescriptor[] = readonly [],
+  const O extends readonly ComponentDescriptor[] = readonly [],
+>(required?: C, optionals?: O): ArchetypeDescriptor<C, O>;
 export function archetype(
   required: readonly ComponentDescriptor[] = [],
   optionals: readonly ComponentDescriptor[] = [],
@@ -168,7 +179,6 @@ function buildArchetypeDescriptor(
     componentLookup.add(comp);
   }
 
-  // Build optional bit tables
   // Bits are assigned as 1, 2, 4, 8, ... in declaration order
   const optionalBits = new Map<string, number>();
   const optionalNotBits = new Map<string, number>();
@@ -176,9 +186,8 @@ function buildArchetypeDescriptor(
   const optionalNotBitLookup = new Map<ComponentDescriptor, number>();
 
   for (let i = 0; i < optionals.length; i++) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const comp = optionals[i]!;
-    const bit = 1 << i; // 2^i: 1, 2, 4, 8, ...
+    const bit = 1 << i;
     const notBit = ~bit >>> 0; // 32-bit bitwise complement
 
     optionalBits.set(comp.__ecstatic_name, bit);

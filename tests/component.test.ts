@@ -18,7 +18,7 @@ import {
 import { asMutableDescriptor } from "./fixtures.js";
 
 describe("component", () => {
-  it("returns a descriptor table", () => {
+  it("returns a descriptor object", () => {
     const { ComponentSpecPosition: Position } = components({
       ComponentSpecPosition: { x: 0, y: 0 },
     });
@@ -48,7 +48,7 @@ describe("component", () => {
     expect(asMutableDescriptor(Sprite).__ecstatic_defaults.flip).toBe(false);
   });
 
-  it("tags are 0-field descriptor tables", () => {
+  it("tags are 0-field descriptors", () => {
     const { ComponentSpecStunned: Stunned } = components({ ComponentSpecStunned: {} });
     expect(asMutableDescriptor(Stunned).__ecstatic_name).toBe("ComponentSpecStunned");
     expect(asMutableDescriptor(Stunned).__ecstatic_fields.length).toBe(0);
@@ -117,11 +117,11 @@ describe("component", () => {
       expect(ref1).toBe(ref2);
     });
 
-    it("errors on table default that is not ref()", () => {
+    it("errors on object default that is not ref()", () => {
       expect(() => {
-        // @ts-expect-error table defaults are rejected at the type level too
-        components({ ComponentSpecRefRejectTable: { tbl: { a: 1 } } });
-      }).toThrow(/declare the field with ref/);
+        // @ts-expect-error object defaults are rejected at the type level too
+        components({ ComponentSpecRefRejectObject: { data: { a: 1 } } });
+      }).toThrow(/object defaults are not supported/);
     });
 
     it("marks ref field in __ecstatic_is_reference", () => {
@@ -240,7 +240,7 @@ describe("special object types rejection", () => {
       components({
         ComponentSpecValidation_date: new Date(),
       } as unknown as Record<string, Record<string, FieldDefault>>);
-    }).toThrow(/component fields must be a table/);
+    }).toThrow(/component fields must be an object/);
   });
 
   it("rejects Map as component fields argument", () => {
@@ -248,7 +248,7 @@ describe("special object types rejection", () => {
       components({
         ComponentSpecValidation_map: new Map(),
       } as unknown as Record<string, Record<string, FieldDefault>>);
-    }).toThrow(/component fields must be a table/);
+    }).toThrow(/component fields must be an object/);
   });
 
   it("rejects Set as component fields argument", () => {
@@ -256,6 +256,6 @@ describe("special object types rejection", () => {
       components({
         ComponentSpecValidation_set: new Set(),
       } as unknown as Record<string, Record<string, FieldDefault>>);
-    }).toThrow(/component fields must be a table/);
+    }).toThrow(/component fields must be an object/);
   });
 });

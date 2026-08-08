@@ -62,7 +62,7 @@ describe("components", () => {
   it("rejects invalid single-component field defaults without reserving the name", () => {
     expect(() => {
       component("ComponentsSpecInvalidSingle", 0 as unknown as Record<string, FieldDefault>);
-    }).toThrow(/component fields must be a table/);
+    }).toThrow(/component fields must be an object/);
 
     const Position = component("ComponentsSpecInvalidSingle", { x: 0, y: 0 });
     expect(asMutableDescriptor(Position).__ecstatic_name).toBe("ComponentsSpecInvalidSingle");
@@ -74,7 +74,7 @@ describe("components", () => {
       components({
         ComponentsSpecInvalidBatch: false as unknown as Record<string, FieldDefault>,
       });
-    }).toThrow(/component fields must be a table/);
+    }).toThrow(/component fields must be an object/);
 
     const defs = components({
       ComponentsSpecInvalidBatch: { x: 0, y: 0 },
@@ -94,7 +94,7 @@ describe("components", () => {
         [validName]: { x: 0, y: 0 },
         [invalidName]: false as unknown as Record<string, FieldDefault>,
       });
-    }).toThrow(/component fields must be a table/);
+    }).toThrow(/component fields must be an object/);
 
     const valid = component(validName, { x: 0, y: 0 });
     expect(asMutableDescriptor(valid).__ecstatic_name).toBe(validName);

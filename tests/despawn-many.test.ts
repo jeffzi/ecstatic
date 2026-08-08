@@ -143,23 +143,19 @@ describe("despawnMany storage form", () => {
       const id2 = spawn(storage);
       const id3 = spawn(storage);
 
-      // First attempt: error on duplicate id1
       expect(() => {
         despawnMany(storage, [id1, id2, id1]);
       }).toThrow();
 
-      // Verify all still alive
       expect(alive(storage, id1)).toBe(true);
       expect(alive(storage, id2)).toBe(true);
       expect(alive(storage, id3)).toBe(true);
       expect(storage.n).toBe(3);
 
-      // Retry with deduped list succeeds
       expect(() => {
         despawnMany(storage, [id1, id2]);
       }).not.toThrow();
 
-      // Results are correct
       expect(alive(storage, id1)).toBe(false);
       expect(alive(storage, id2)).toBe(false);
       expect(alive(storage, id3)).toBe(true);

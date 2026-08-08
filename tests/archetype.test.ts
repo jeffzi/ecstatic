@@ -169,6 +169,20 @@ describe("archetype", () => {
       }).toThrow(/component name sparse is reserved on archetypes/);
     });
 
+    it.each(["matchers", "matcherMatched", "hasOptionalData", "hasDespawnClear"])(
+      "rejects matcher/optional bookkeeping name '%s'",
+      (name) => {
+        const { [`Reserved_${name}`]: Comp } = components({
+          [`Reserved_${name}`]: { x: 0 },
+        });
+        asMutableDescriptor(Comp).__ecstatic_name = name;
+
+        expect(() => {
+          archetype([Comp!]);
+        }).toThrow(`component name ${name} is reserved on archetypes`);
+      },
+    );
+
     it("rejects reserved name 'archetype'", () => {
       const { ReservedArch: Comp } = components({
         ReservedArch: { x: 0 },

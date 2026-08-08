@@ -84,7 +84,6 @@ describe("spawnMany", () => {
       const Arch = archetype([Position]);
       const storage = register(world, Arch);
 
-      // Spawn initial entities
       const id1 = spawnMany(storage, 1)[0]!;
       const id2 = spawnMany(storage, 1)[0]!;
       const id3 = spawnMany(storage, 1)[0]!;
@@ -96,7 +95,6 @@ describe("spawnMany", () => {
       // spawnMany should reuse those slots
       const newIds = spawnMany(storage, 2);
 
-      // The new entities are alive
       expect(alive(storage, newIds[0]!)).toBe(true);
       expect(alive(storage, newIds[1]!)).toBe(true);
 
@@ -104,7 +102,6 @@ describe("spawnMany", () => {
       expect(alive(storage, id1)).toBe(false);
       expect(alive(storage, id2)).toBe(false);
 
-      // Original id3 is still alive
       expect(alive(storage, id3)).toBe(true);
     });
 
@@ -119,7 +116,6 @@ describe("spawnMany", () => {
       // Spawn a new entity in the freed slot (new generation)
       const newId = spawnMany(storage, 1)[0]!;
 
-      // Old ID is stale, new ID is alive
       expect(alive(storage, id)).toBe(false);
       expect(alive(storage, newId)).toBe(true);
     });
@@ -139,11 +135,9 @@ describe("spawnMany", () => {
       // spawnMany 2: first comes from freelist (id1's slot), second is fresh
       const newIds = spawnMany(storage, 2);
 
-      // Both new entities are alive
       expect(alive(storage, newIds[0]!)).toBe(true);
       expect(alive(storage, newIds[1]!)).toBe(true);
 
-      // Old id1 is stale, id2 and id3 are still alive
       expect(alive(storage, id1)).toBe(false);
       expect(alive(storage, id2)).toBe(true);
       expect(alive(storage, id3)).toBe(true);
@@ -161,15 +155,12 @@ describe("spawnMany", () => {
       despawn(storage, old1);
       despawn(storage, old2);
 
-      // spawnMany should produce distinct IDs (no duplicates)
       const newIds = spawnMany(storage, 4);
 
-      // All returned IDs are alive
       for (const id of newIds) {
         expect(alive(storage, id)).toBe(true);
       }
 
-      // All returned IDs are unique (no aliasing)
       const seen = new Set<number>();
       for (const id of newIds) {
         expect(seen.has(id)).toBe(false);
@@ -232,14 +223,11 @@ describe("spawnMany", () => {
       // Now spawn only 2 into the same buffer — tail (indices 2-4) must be cleared
       const result = spawnMany(storage, 2, buf);
 
-      // Result and buf should be the same array
       expect(result).toBe(buf);
 
-      // First 2 entries should have new EntityIds and be alive
       expect(alive(storage, buf[0]!)).toBe(true);
       expect(alive(storage, buf[1]!)).toBe(true);
 
-      // Tail entries cleared
       expect(buf).toHaveLength(2);
     });
 
@@ -313,7 +301,6 @@ describe("spawnMany", () => {
       world.nextIndex = MAX_INDEX;
       world.freeHead = -1;
 
-      // Snapshot world state before the call.
       const beforeN = storage.n;
       const beforeNextIndex = world.nextIndex;
       const beforeFreeHead = world.freeHead;
@@ -362,7 +349,6 @@ describe("spawnMany", () => {
       // Simulate nextIndex one step below the ceiling: 1 fresh slot is possible, but 2 are not.
       world.nextIndex = MAX_INDEX - 1;
 
-      // Snapshot state.
       const beforeN = storage.n;
       const beforeNextIndex = world.nextIndex;
       const beforeFreeHead = world.freeHead;
