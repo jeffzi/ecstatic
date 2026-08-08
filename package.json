@@ -1,7 +1,7 @@
 {
   "name": "ecstatic",
-  "version": "0.2.0",
-  "description": "Archetype-based ECS in TypeScript",
+  "version": "0.3.0",
+  "description": "Statically typed archetype-based ECS",
   "keywords": [
     "ecs",
     "entity-component-system",
