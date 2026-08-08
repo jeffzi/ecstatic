@@ -36,6 +36,7 @@ export { despawn, despawnMany } from "./entity/despawn.js";
 export { type EachView, type ViewApplyFilter, each } from "./entity/each.js";
 export type { EachFilter, QueryFilter } from "./filter.js";
 export { type QueryView, query } from "./query.js";
+export { countSources, getSources, hasSources, querySources } from "./query-sources.js";
 export {
   type Relation,
   type RelationConstraints,

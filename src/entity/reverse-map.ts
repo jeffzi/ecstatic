@@ -42,6 +42,16 @@ export function sourceBucket(
 }
 
 /**
+ * The relation's single-storage flag: the sole source storage while one
+ * storage has ever sourced the relation, `false` once sources span multiple
+ * storages, `undefined` before the first insert.
+ */
+export function soleStorage(relMap: RelationReverseMap): Storage | false | undefined {
+  const flag = relMap.get(SINGLE_STORAGE_KEY);
+  return flag instanceof Map ? undefined : flag;
+}
+
+/**
  * Insert a source entity index into the reverse map for a relation.
  * The per-target bucket is lazily created; the top-level `rel` entry is
  * pre-initialized at registration time.
