@@ -68,3 +68,16 @@ describe("unlink", () => {
     unlink(world, source, Free);
   });
 });
+
+describe("multi-component constraint on link", () => {
+  const Multi = relation("LinkTd_Multi", [Position, Health]);
+  const multiStorage = register(world, archetype([Position, Health], [Multi]));
+  const multiSource = spawn(multiStorage);
+  const goodTarget = spawn(multiStorage);
+
+  it("demands a target satisfying With<[A, B]>", () => {
+    link(world, multiSource, Multi, goodTarget);
+    // @ts-expect-error the target's archetype lacks Health
+    link(world, multiSource, Multi, positionTarget);
+  });
+});

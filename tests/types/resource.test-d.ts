@@ -4,6 +4,7 @@ import {
   createWorld,
   getResource,
   type Resource,
+  type ResourceFields,
   resetResource,
   setResource,
 } from "../../src/index.js";
@@ -17,6 +18,18 @@ describe("resource", () => {
 
     // @ts-expect-error a raw number is not a Resource
     getResource(world, 0);
+  });
+
+  it("preserves the literal name and field shape in the brand", () => {
+    const Time = resource("Time", { delta: 0 });
+    expectTypeOf(Time).toEqualTypeOf<Resource<"Time", { delta: number }>>();
+  });
+
+  it("resolves ResourceFields to the declared field record", () => {
+    expectTypeOf<ResourceFields<typeof Score>>().toEqualTypeOf<{
+      value: number;
+      label: string;
+    }>();
   });
 });
 
@@ -50,5 +63,11 @@ describe("resetResource", () => {
   it("takes any resource and returns void", () => {
     expectTypeOf(resetResource).returns.toEqualTypeOf<void>();
     expectTypeOf(resetResource).parameter(1).toEqualTypeOf<Resource>();
+  });
+
+  it("rejects a raw number at the call site", () => {
+    const world = createWorld();
+    // @ts-expect-error a raw number is not a Resource
+    resetResource(world, 42);
   });
 });

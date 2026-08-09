@@ -47,6 +47,26 @@ describe("enable/disable typing", () => {
     has(relStorage, relId, Rel);
   });
 
+  it("rejects a relation in the record form", () => {
+    const Rel = relation("EnDisTd_RecRel");
+    const relStorage = register(world, archetype([Position], [Shield, Rel]));
+    const relId = spawn(relStorage);
+    // @ts-expect-error relations are toggled via link()/unlink()
+    enable(relStorage, relId, { EnDisTd_RecRel: true });
+    // @ts-expect-error relations are toggled via link()/unlink()
+    disable(relStorage, relId, { EnDisTd_RecRel: true });
+    void relId;
+  });
+
+  it("rejects a relation in the array disable form", () => {
+    const Rel = relation("EnDisTd_ArrRel");
+    const relStorage = register(world, archetype([Position], [Shield, Rel]));
+    const relId = spawn(relStorage);
+    // @ts-expect-error relations are toggled via link()/unlink()
+    disable(relStorage, relId, [Rel]);
+    void relId;
+  });
+
   it("rejects required and off-archetype components with sentence errors", () => {
     // @ts-expect-error Position is required, not optional
     enable(storage, id, Position);
@@ -115,6 +135,16 @@ describe("enableMany/disableMany typing", () => {
     disableMany(storage, [id], [Position]);
     // @ts-expect-error Health is not on this archetype
     disableMany(storage, [Health]);
+  });
+
+  it("rejects a relation in the record form", () => {
+    const Rel = relation("EnDisManyTd_Rel");
+    const relStorage = register(world, archetype([Position], [Shield, Rel]));
+    const relId = spawn(relStorage);
+    // @ts-expect-error relations are toggled via link()/unlink()
+    enableMany(relStorage, [relId], { EnDisManyTd_Rel: true });
+    // @ts-expect-error relations are toggled via link()/unlink()
+    disableMany(relStorage, [relId], [Rel]);
   });
 
   it("rejects the empty tuple in disableMany", () => {

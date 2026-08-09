@@ -11,6 +11,12 @@ describe("spawn", () => {
     expectTypeOf(spawn(storage)).toExtend<EntityId>();
   });
 
+  it("returns the exact branded EntityId for the archetype", () => {
+    expectTypeOf(spawn(storage)).toEqualTypeOf<
+      EntityId<typeof storage extends { readonly archetype: infer A } ? A : never>
+    >();
+  });
+
   it("accepts partial component overrides", () => {
     spawn(storage, { Position: { x: 100 } });
     spawn(storage, { Health: { hp: 50 } });
