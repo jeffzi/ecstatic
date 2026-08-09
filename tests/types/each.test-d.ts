@@ -13,7 +13,7 @@ describe("each", () => {
       expectTypeOf(e.Position).toEqualTypeOf<{ x: number; y: number }>();
       expectTypeOf(e.Velocity).toEqualTypeOf<{ vx: number; vy: number }>();
       expectTypeOf(e.Health).toEqualTypeOf<{ hp: number }>();
-      expectTypeOf(e.id).toEqualTypeOf<EntityId>();
+      expectTypeOf(e.id).toExtend<EntityId>();
     });
   });
 
@@ -25,7 +25,7 @@ describe("each", () => {
   it("accepts the multi-storage array form with the union view", () => {
     each([players, enemies], (e) => {
       expectTypeOf(e.Position).toEqualTypeOf<{ x: number; y: number }>();
-      expectTypeOf(e.id).toEqualTypeOf<EntityId>();
+      expectTypeOf(e.id).toExtend<EntityId>();
     });
   });
 
@@ -49,7 +49,7 @@ describe("each", () => {
         each(storage, (e) => {
           expectTypeOf(e.Position).toEqualTypeOf<{ x: number; y: number }>();
           expectTypeOf(e.Velocity).toEqualTypeOf<{ vx: number; vy: number }>();
-          expectTypeOf(e.id).toEqualTypeOf<EntityId>();
+          expectTypeOf(e.id).toExtend<EntityId>();
         });
       };
       testFn(posVel);

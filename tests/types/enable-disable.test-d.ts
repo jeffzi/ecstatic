@@ -8,7 +8,9 @@ import {
   disableMany,
   enable,
   enableMany,
+  has,
   register,
+  relation,
   spawn,
 } from "../../src/index.js";
 import { Health, Position, Shield, Stunned } from "./_fixtures.js";
@@ -31,6 +33,38 @@ describe("enable/disable typing", () => {
     enable(storage, id, Shield, { wrong: 1 });
     // @ts-expect-error string is not assignable to number
     enable(storage, id, Shield, { hp: "oops" });
+  });
+
+  it("rejects relations with the link/unlink sentence error", () => {
+    const Rel = relation("EnDisTd_Rel");
+    const relStorage = register(world, archetype([Position], [Rel]));
+    const relId = spawn(relStorage);
+    // @ts-expect-error relations are toggled via link()/unlink()
+    enable(relStorage, relId, Rel);
+    // @ts-expect-error relations are toggled via link()/unlink()
+    disable(relStorage, relId, Rel);
+    // @ts-expect-error relations are toggled via link()/unlink()
+    has(relStorage, relId, Rel);
+  });
+
+  it("rejects a relation in the record form", () => {
+    const Rel = relation("EnDisTd_RecRel");
+    const relStorage = register(world, archetype([Position], [Shield, Rel]));
+    const relId = spawn(relStorage);
+    // @ts-expect-error relations are toggled via link()/unlink()
+    enable(relStorage, relId, { EnDisTd_RecRel: true });
+    // @ts-expect-error relations are toggled via link()/unlink()
+    disable(relStorage, relId, { EnDisTd_RecRel: true });
+    void relId;
+  });
+
+  it("rejects a relation in the array disable form", () => {
+    const Rel = relation("EnDisTd_ArrRel");
+    const relStorage = register(world, archetype([Position], [Shield, Rel]));
+    const relId = spawn(relStorage);
+    // @ts-expect-error relations are toggled via link()/unlink()
+    disable(relStorage, relId, [Rel]);
+    void relId;
   });
 
   it("rejects required and off-archetype components with sentence errors", () => {
@@ -101,6 +135,16 @@ describe("enableMany/disableMany typing", () => {
     disableMany(storage, [id], [Position]);
     // @ts-expect-error Health is not on this archetype
     disableMany(storage, [Health]);
+  });
+
+  it("rejects a relation in the record form", () => {
+    const Rel = relation("EnDisManyTd_Rel");
+    const relStorage = register(world, archetype([Position], [Shield, Rel]));
+    const relId = spawn(relStorage);
+    // @ts-expect-error relations are toggled via link()/unlink()
+    enableMany(relStorage, [relId], { EnDisManyTd_Rel: true });
+    // @ts-expect-error relations are toggled via link()/unlink()
+    disableMany(relStorage, [relId], [Rel]);
   });
 
   it("rejects the empty tuple in disableMany", () => {

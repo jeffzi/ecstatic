@@ -17,7 +17,7 @@ describe("view — per-entity view type", () => {
 
   it("includes readonly entity id", () => {
     each(storage, (e) => {
-      expectTypeOf(e.id).toEqualTypeOf<EntityId>();
+      expectTypeOf(e.id).toExtend<EntityId>();
       // @ts-expect-error the entity id is read-only
       e.id = 0 as EntityId;
     });

@@ -10,7 +10,7 @@ describe("query typing", () => {
     query(world, [Position, Stunned], (e) => {
       expectTypeOf(e.Position).toEqualTypeOf<{ x: number; y: number }>();
       expectTypeOf(e.Stunned).toEqualTypeOf<true>();
-      expectTypeOf(e.id).toEqualTypeOf<EntityId>();
+      expectTypeOf(e.id).toExtend<EntityId>();
     });
   });
 

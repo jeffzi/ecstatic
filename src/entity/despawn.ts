@@ -22,6 +22,7 @@ import type { EntityId } from "../entity-id.js";
 import { entityIndex, initialEntityId, MAX_GEN, MAX_INDEX } from "../entity-id.js";
 import { ERROR_WRONG_STORAGE } from "../errors.js";
 import type { Storage, WorldState } from "../world.js";
+import { reverseRemove } from "./reverse-map.js";
 
 /**
  * Module-level scratch storage for bulk despawn operations.
@@ -29,6 +30,38 @@ import type { Storage, WorldState } from "../world.js";
  */
 const DESPAWN_LIVE_INDICES: number[] = [];
 const DESPAWN_WORLD_BUCKETS: Map<Storage, number[]> = new Map();
+
+/**
+ * Source cleanup: remove a dying entity from every target's reverse bucket.
+ * Must run before swap-and-pop while the row's relation data is still at
+ * `row`. Reads the pre-computed parallel arrays (no per-component lookups);
+ * a 0 target means "never linked / unlinked" and needs no removal.
+ */
+function relationSourceCleanup(storage: Storage, row: number, index: number): void {
+  const relCols = storage.relationTargetColumns;
+  const relDescriptors = storage.relationDescriptors;
+  const reverseMap = storage.world.reverseMap;
+  for (let ri = 0; ri < storage.relationN; ri++) {
+    const targetId = relCols[ri]![row]!;
+    if (targetId !== 0) {
+      reverseRemove(reverseMap, relDescriptors[ri]!, entityIndex(targetId), index);
+    }
+  }
+}
+
+/**
+ * Target cleanup: drop every reverse bucket keyed by a dying entity's index.
+ * The watermark test rejects most entities (anything never targeted, and
+ * every entity in relation-free worlds) before touching the relation list.
+ */
+function relationTargetCleanup(world: WorldState, index: number): void {
+  if (index <= world.maxTargetIndex) {
+    const reverseMap = world.reverseMap;
+    for (const rel of world.relations) {
+      reverseMap.get(rel)!.delete(index);
+    }
+  }
+}
 
 /**
  * Advance a slot's generation by one (add MAX_INDEX to the packed ID),
@@ -56,6 +89,30 @@ function compactAndFreeMarked(storage: Storage, indices: number[], count: number
   const world = storage.world;
   const n = storage.n;
   const boundary = n - count;
+
+  // Relation cleanup must precede compaction: the source pass reads each
+  // dying row's target columns through `sparse`, which the fill overwrites.
+  if (storage.relationN > 0) {
+    const sparse = world.sparse;
+    for (let k = 0; k < count; k++) {
+      const index = indices[k]!;
+      relationSourceCleanup(storage, sparse[index]!, index);
+    }
+  }
+  // Target cleanup: relations-outer with the watermark hoisted, so the
+  // per-relation bucket map is fetched once per relation, not per entity.
+  if (world.relations.length > 0) {
+    const maxTarget = world.maxTargetIndex;
+    for (const rel of world.relations) {
+      const relMap = world.reverseMap.get(rel)!;
+      for (let k = 0; k < count; k++) {
+        const index = indices[k]!;
+        if (index <= maxTarget) {
+          relMap.delete(index);
+        }
+      }
+    }
+  }
 
   if (boundary !== 0) {
     fillFreedSlots(storage, indices, count, boundary);
@@ -260,6 +317,30 @@ function despawnManyStorageNoIds(storage: Storage): void {
   const generation = world.generation;
   let freeHead = world.freeHead;
 
+  // Relation cleanup must precede the free loop below, which overwrites the
+  // sparse links the reverse map is keyed against.
+  if (storage.relationN > 0) {
+    for (let row = 0; row < oldN; row++) {
+      relationSourceCleanup(storage, row, entityIndex(storage.entities[row]!));
+    }
+  }
+  // Target cleanup runs even for relation-free storages — a dying entity may
+  // be the target of relations on OTHER archetypes. Relations-outer with the
+  // watermark hoisted: one bucket-map fetch per relation, not per entity.
+  if (world.relations.length > 0) {
+    const maxTarget = world.maxTargetIndex;
+    const reverseMap = world.reverseMap;
+    for (const rel of world.relations) {
+      const relMap = reverseMap.get(rel)!;
+      for (let row = 0; row < oldN; row++) {
+        const index = entityIndex(storage.entities[row]!);
+        if (index <= maxTarget) {
+          relMap.delete(index);
+        }
+      }
+    }
+  }
+
   for (let row = 0; row < oldN; row++) {
     const index = entityIndex(storage.entities[row]!);
     generation[index] = nextGeneration(generation[index]!, index);
@@ -325,6 +406,16 @@ function despawnManyWorldNoIds(world: WorldState): void {
   for (const storage of world.storages.values()) {
     despawnManyStorageNoIds(storage);
   }
+  // Rebuild the reverse map from scratch: no live targets remain. The
+  // per-relation entries must be re-created — link/reverseInsert index them
+  // unguarded (registration pre-initializes them; a bare wipe would leave
+  // them missing and crash the next link). The target-index bound resets too.
+  const reverseMap = world.reverseMap;
+  reverseMap.clear();
+  for (const rel of world.relations) {
+    reverseMap.set(rel, new Map());
+  }
+  world.maxTargetIndex = -1;
 }
 
 /**
@@ -366,6 +457,13 @@ function despawnManyWorldWithIds(world: WorldState, ids: EntityId[]): void {
 function despawnEntity(storage: Storage, index: number): void {
   const row = storage.sparse[index]!;
   const last = storage.n - 1;
+
+  // Relation cleanup must precede swap-and-pop: the source pass reads the
+  // dying row's target columns at `row`.
+  if (storage.relationN > 0) {
+    relationSourceCleanup(storage, row, index);
+  }
+  relationTargetCleanup(storage.world, index);
 
   if (row !== last) {
     storage.entities[row] = storage.entities[last]!;

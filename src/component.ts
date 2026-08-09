@@ -138,15 +138,28 @@ function defaultColumnCtor(value: unknown): NumericColumnCtor | undefined {
 
 const FIELD_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** Validate field names against ^[A-Za-z_][A-Za-z0-9_]*$ */
-function validateFieldName(componentName: string, fieldName: unknown): asserts fieldName is string {
+/**
+ * Validates a field name against `^[A-Za-z_][A-Za-z0-9_]*$`.
+ *
+ * Shared by `component()` and `resource()` so both namespaces accept exactly
+ * the same field names; `kind` only selects the noun in the error message.
+ *
+ * @param kind - Declaration kind naming the field group.
+ * @param ownerName - Name of the component or resource declaring the field.
+ * @param fieldName - Candidate field name.
+ */
+export function validateFieldName(
+  kind: "component" | "resource",
+  ownerName: string,
+  fieldName: unknown,
+): asserts fieldName is string {
   if (typeof fieldName !== "string") {
-    throw new Error(`component field names must be strings: ${componentName}`);
+    throw new Error(`${kind} field names must be strings: ${ownerName}`);
   }
 
   if (!FIELD_NAME_PATTERN.test(fieldName)) {
     throw new Error(
-      `component field name must be a valid ASCII identifier (^[A-Za-z_][A-Za-z0-9_]*$): ${componentName}.${fieldName}`,
+      `${kind} field name must be a valid ASCII identifier (^[A-Za-z_][A-Za-z0-9_]*$): ${ownerName}.${fieldName}`,
     );
   }
 }
@@ -171,7 +184,7 @@ function validateFields(componentName: string, fields: unknown): Record<string, 
 
   const defaults = fields;
   for (const fieldName in defaults) {
-    validateFieldName(componentName, fieldName);
+    validateFieldName("component", componentName, fieldName);
   }
 
   return defaults;
@@ -262,6 +275,19 @@ export function ref<T = unknown>(): RefMarker<T> {
 }
 
 /**
+ * Shared descriptor-construction path for component() and relation():
+ * validates the name and fields, registers the name (relations share the
+ * component namespace), and builds the descriptor.
+ */
+export function createDescriptor(name: string, rawFields: unknown): Record<string, unknown> {
+  assertNameAvailable(name);
+  const defaults = validateFields(name, rawFields);
+  const descriptor = descriptorFromDefaults(name, defaults);
+  seenNames.add(name);
+  return descriptor;
+}
+
+/**
  * Register a single component descriptor from a name and optional field defaults.
  * If fields is omitted, the result is a tag (0-field component).
  */
@@ -271,11 +297,7 @@ export function component<N extends string, T extends Record<string, FieldDefaul
   fields: T,
 ): keyof T extends never ? Tag<N> : Component<N, InferFields<T>>;
 export function component(name: string, fields?: Record<string, unknown>): unknown {
-  assertNameAvailable(name);
-  const defaults = validateFields(name, fields ?? {});
-  const descriptor = descriptorFromDefaults(name, defaults);
-  seenNames.add(name);
-  return descriptor;
+  return createDescriptor(name, fields ?? {});
 }
 
 /**
@@ -383,7 +405,7 @@ type InferFieldValue<D> =
             : D;
 
 /** Map a defaults record to the record of field value types. */
-type InferFields<T> = { [K in keyof T]: InferFieldValue<T[K]> };
+export type InferFields<T> = { [K in keyof T]: InferFieldValue<T[K]> };
 
 /** Extract the value type carried by a field descriptor. */
 export type FieldValue<D> = D extends FieldDescriptor<infer V> ? V : never;

@@ -18,9 +18,11 @@ import {
   ERROR_DISABLE_MANY_EMPTY,
   ERROR_OPTIONAL_CHECK_EMPTY,
   errorNotOptional,
+  errorRelationToggle,
   errorUnknownComponent,
 } from "../errors.js";
 import { applyMaskAnd, applyMaskOr, refreshMatchersAll, refreshMatchersRows } from "../matcher.js";
+import { getRelationMeta } from "../relation.js";
 import type { SoAColumns, Storage, World } from "../world.js";
 import { resolveEntityArch, validateEntity } from "./common.js";
 import type { IsTagFields, OptionalSpawnValue } from "./spawn.js";
@@ -46,13 +48,17 @@ type OptionalNames<A> = ComponentName<OptionalsOf<A>[number]>;
  */
 export type CheckOptional<C, All extends string, Opts extends string> = string extends Opts
   ? C
-  : C extends { readonly __ecstatic_name: Opts }
-    ? C
-    : C extends { readonly __ecstatic_name: infer N extends string }
-      ? N extends All
-        ? `an optional component (${N} is required, not optional)`
-        : `an optional component (${N} is not on this archetype)`
-      : never;
+  : C extends { readonly __ecstatic_relation_meta: object }
+    ? C extends { readonly __ecstatic_name: infer N extends string }
+      ? `an optional component (${N} is a relation — use link()/unlink() instead)`
+      : never
+    : C extends { readonly __ecstatic_name: Opts }
+      ? C
+      : C extends { readonly __ecstatic_name: infer N extends string }
+        ? N extends All
+          ? `an optional component (${N} is required, not optional)`
+          : `an optional component (${N} is not on this archetype)`
+        : never;
 
 /** Tuple form of {@link CheckOptional}: validates every element. */
 export type CheckOptionalList<
@@ -112,12 +118,20 @@ export type OptionalOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescr
 // Toggle primitives
 // ---------------------------------------------------------------------------
 
+/** Rejects relation components in enable/disable operations — link/unlink own them. */
+function rejectRelation(comp: ComponentDescriptor, targetOp: "link" | "unlink"): void {
+  const rel = getRelationMeta(comp);
+  if (rel !== undefined) {
+    throw new Error(errorRelationToggle(rel.__ecstatic_name, targetOp));
+  }
+}
+
 /**
  * Write per-field value overrides into a component's SoA columns at dense
  * index `di`. Only fields present in `values` are written; absent fields keep
  * their current slot values. Values are stored by reference (no clone).
  */
-function writeFieldOverrides(
+export function writeFieldOverrides(
   soa: SoAColumns,
   fields: string[],
   di: number,
@@ -131,7 +145,7 @@ function writeFieldOverrides(
   }
 }
 
-function enableOne(
+export function enableOne(
   storage: Storage,
   di: number,
   comp: ComponentDescriptor,
@@ -151,7 +165,7 @@ function enableOne(
   }
 }
 
-function disableOne(storage: Storage, di: number, comp: ComponentDescriptor): void {
+export function disableOne(storage: Storage, di: number, comp: ComponentDescriptor): void {
   const notBit = storage.optionalNotBitLookup.get(comp);
   if (notBit === undefined) {
     throw new Error(errorNotOptional(comp.__ecstatic_name));
@@ -194,6 +208,7 @@ function resolveEnableOverrides(
     if (comp === undefined) {
       throw new Error(errorUnknownComponent(name));
     }
+    rejectRelation(comp, "link");
     if (!storage.optionalBitLookup.has(comp)) {
       throw new Error(errorNotOptional(name));
     }
@@ -321,6 +336,7 @@ export function enable(
     return;
   }
 
+  rejectRelation(compOrRecord, "link");
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the overload signatures type values as the component's partial field record
   enableOne(storage, di, compOrRecord, values as Record<string, unknown> | undefined);
 }
@@ -367,6 +383,7 @@ export function disable(
   const di = storage.sparse[entityIndex(id)]!;
 
   if (isComponentDescriptor(compOrArray)) {
+    rejectRelation(compOrArray, "unlink");
     disableOne(storage, di, compOrArray);
     return;
   }
@@ -395,6 +412,7 @@ function combineDisableBits(
   let combinedBit = 0;
   let combinedNotBit = 0xff_ff_ff_ff;
   for (const comp of comps) {
+    rejectRelation(comp, "unlink");
     const notBit = storage.optionalNotBitLookup.get(comp);
     if (notBit === undefined) {
       throw new Error(errorNotOptional(comp.__ecstatic_name));

@@ -9,8 +9,11 @@
 import type { ArchetypeDescriptor, ComponentDescriptor } from "./archetype.js";
 import { NO_FREE_SLOT } from "./entity-id.js";
 import { despawnMany } from "./entity/despawn.js";
+import type { RelationReverseMap } from "./entity/reverse-map.js";
 import { ERROR_WORLD_DESTROYED } from "./errors.js";
 import type { Matcher } from "./matcher.js";
+import type { RelationDescriptor } from "./relation.js";
+import { getRelationMeta } from "./relation.js";
 
 /**
  * Initial world capacity: number of entity slots pre-allocated.
@@ -43,6 +46,21 @@ export interface WorldState {
 
   /** Next fresh index to allocate (when freelist is empty) */
   nextIndex: number;
+
+  /** Resource ID → data record, created on first access from the registered defaults */
+  resources: Map<number, Record<string, unknown>>;
+
+  /** Relation descriptors registered in this world (deduped across archetypes) */
+  relations: RelationDescriptor[];
+
+  /** True once any registered archetype carries a relation */
+  hasAnyRelations: boolean;
+
+  /** Relation → reverse index (target index → source bucket; key -1 = single-storage flag) */
+  readonly reverseMap: Map<ComponentDescriptor, RelationReverseMap>;
+
+  /** Highest target index that ever received a reverse entry (-1 = none) */
+  maxTargetIndex: number;
 
   /**
    * Bumped whenever the archetype set changes (register/destroyWorld);
@@ -126,6 +144,21 @@ export interface Storage<A extends ArchetypeDescriptor = ArchetypeDescriptor> {
    */
   hasOptionalData: boolean;
 
+  /**
+   * Pre-computed relation target columns, parallel with `relationDescriptors`
+   * and `relationOptionalBits` (0 for required relations, the presence bit for
+   * optionals) — iterating only relations keeps despawn source cleanup free of
+   * per-component descriptor checks. Refreshed on storage growth alongside
+   * `flatColumns`.
+   */
+  relationTargetColumns: Float64Array[];
+  relationDescriptors: ComponentDescriptor[];
+  relationOptionalBits: number[];
+  relationN: number;
+
+  /** True when the archetype carries any relation (required or optional) */
+  hasRelations: boolean;
+
   /** Cached descriptor lookups for all components (required + optional) */
   readonly componentByName: Map<string, ComponentDescriptor>;
   readonly componentLookup: Set<ComponentDescriptor>;
@@ -164,6 +197,11 @@ export function createWorld(): World {
     sparse: new Int32Array(INITIAL_WORLD_CAPACITY),
     freeHead: NO_FREE_SLOT,
     nextIndex: 0,
+    resources: new Map(),
+    relations: [],
+    hasAnyRelations: false,
+    reverseMap: new Map(),
+    maxTargetIndex: -1,
     queryEpoch: 0,
   };
 
@@ -247,6 +285,71 @@ export function collectFlatColumns(
 }
 
 /**
+ * Track an archetype's relation descriptors in the world for later
+ * reverse-map operations (deduped across archetypes, reverse-map entries
+ * pre-initialized). Returns true when the archetype carries any relation.
+ */
+function registerWorldRelations(state: WorldState, arch: ArchetypeDescriptor): boolean {
+  let hasRelations = false;
+  for (const comp of [...arch.components, ...arch.optionals]) {
+    const relMeta = getRelationMeta(comp);
+    if (relMeta !== undefined) {
+      hasRelations = true;
+      state.hasAnyRelations = true;
+      if (!state.relations.includes(relMeta)) {
+        state.relations.push(relMeta);
+        state.reverseMap.set(relMeta, new Map());
+      }
+    }
+  }
+  return hasRelations;
+}
+
+/** The parallel relation bookkeeping arrays of a storage (see Storage docs). */
+interface RelationColumns {
+  relationTargetColumns: Float64Array[];
+  relationDescriptors: ComponentDescriptor[];
+  relationOptionalBits: number[];
+}
+
+/**
+ * Pre-compute the relation target columns for fast despawn source cleanup:
+ * required relations first (bit 0), then optionals with their presence bit.
+ */
+function collectRelationColumns(
+  arch: ArchetypeDescriptor,
+  columns: Map<ComponentDescriptor, SoAColumns>,
+): RelationColumns {
+  const relationTargetColumns: Float64Array[] = [];
+  const relationDescriptors: ComponentDescriptor[] = [];
+  const relationOptionalBits: number[] = [];
+
+  for (const comp of arch.components) {
+    if (getRelationMeta(comp) !== undefined) {
+      const targetCol = columns.get(comp)?.target;
+      if (targetCol instanceof Float64Array) {
+        relationTargetColumns.push(targetCol);
+        relationDescriptors.push(comp);
+        relationOptionalBits.push(0);
+      }
+    }
+  }
+  for (const comp of arch.optionals) {
+    if (getRelationMeta(comp) !== undefined) {
+      const targetCol = columns.get(comp)?.target;
+      const optBit = arch.optionalBitLookup.get(comp);
+      if (targetCol instanceof Float64Array && optBit !== undefined) {
+        relationTargetColumns.push(targetCol);
+        relationDescriptors.push(comp);
+        relationOptionalBits.push(optBit);
+      }
+    }
+  }
+
+  return { relationTargetColumns, relationDescriptors, relationOptionalBits };
+}
+
+/**
  * Create a storage object for a single archetype in a world.
  */
 function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
@@ -254,9 +357,13 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
 
   const despawnClear: Array<unknown>[] = [];
 
+  // Relations always need columns (for the target field); data-carrying
+  // optionals need columns for their fields. Pure tag optionals get none.
   const allComps = [
     ...arch.components,
-    ...arch.optionals.filter((opt) => opt.__ecstatic_fields.length > 0),
+    ...arch.optionals.filter(
+      (opt) => opt.__ecstatic_fields.length > 0 || getRelationMeta(opt) !== undefined,
+    ),
   ];
 
   for (const comp of allComps) {
@@ -276,6 +383,10 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
 
   const flatColumns = collectFlatColumns(columns);
 
+  const hasRelations = registerWorldRelations(state, arch);
+  const { relationTargetColumns, relationDescriptors, relationOptionalBits } =
+    collectRelationColumns(arch, columns);
+
   const storage = {
     id: arch.id,
     world: state,
@@ -291,7 +402,16 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
     sparse: state.sparse,
     despawnClear,
     hasDespawnClear: despawnClear.length > 0,
-    hasOptionalData: arch.optionals.some((opt) => opt.__ecstatic_fields.length > 0),
+    // Optional relations need the default fill for sentinel target-column init
+    // even when they carry no data fields.
+    hasOptionalData: arch.optionals.some(
+      (opt) => opt.__ecstatic_fields.length > 0 || getRelationMeta(opt) !== undefined,
+    ),
+    relationTargetColumns,
+    relationDescriptors,
+    relationOptionalBits,
+    relationN: relationDescriptors.length,
+    hasRelations,
     componentByName: arch.componentByName,
     componentLookup: arch.componentLookup,
     optionalBitLookup: arch.optionalBitLookup,
@@ -331,6 +451,12 @@ function createSoA(comp: ComponentDescriptor, capacity: number): SoAColumns {
     }
   }
 
+  // Relations get a `target` column outside __ecstatic_fields: packed entity
+  // ids are floats, same as storage.entities.
+  if (getRelationMeta(comp) !== undefined) {
+    soa.target = new Float64Array(capacity);
+  }
+
   return soa;
 }
 
@@ -363,6 +489,11 @@ export function destroyWorld(world: World): void {
   state.sparse = new Int32Array(INITIAL_WORLD_CAPACITY);
   state.freeHead = NO_FREE_SLOT;
   state.nextIndex = 0;
+  state.resources.clear();
+  state.relations = [];
+  state.hasAnyRelations = false;
+  state.reverseMap.clear();
+  state.maxTargetIndex = -1;
   state.queryEpoch += 1;
 
   // Mark as destroyed so register/getStorage will error

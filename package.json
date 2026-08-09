@@ -41,7 +41,7 @@
     "check:type": "tsc -p tsconfig.json --noEmit && tsc -p examples/tsconfig.json --noEmit && tsc -p benchmarks/tsconfig.json --noEmit",
     "check:typelint": "oxlint --type-aware",
     "check": "run-s -c check:static check:quality",
-    "examples": "npm run build && tsx examples/basics.ts && tsx examples/iteration.ts && tsx examples/component-sets.ts && tsx examples/relationships.ts",
+    "examples": "npm run build && tsx examples/basics.ts && tsx examples/iteration.ts && tsx examples/component-sets.ts && tsx examples/relationships.ts && tsx examples/resources.ts && tsx examples/game-loop.ts",
     "fix:fmt": "oxfmt",
     "fix:lint": "oxlint --fix",
     "fix:md": "markdownlint-cli2 --fix \"**/*.md\"",
