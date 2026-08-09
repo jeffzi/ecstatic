@@ -6,7 +6,7 @@
 
 import {
   alive,
-  archetype,
+  Archetype,
   components,
   createWorld,
   despawn,
@@ -32,10 +32,10 @@ const { Position, Velocity, Health, OnFire } = components({
   OnFire: {},
 });
 
-const EnemyArch = archetype([Position, Velocity, Health], [OnFire]);
+class Enemy extends Archetype([Position, Velocity, Health], [OnFire]) {}
 
 const world = createWorld();
-const enemies = register(world, EnemyArch);
+const enemies = register(world, Enemy);
 
 const Time = resource("Time", { dt: 0, frame: 0 });
 const FrameStats = resource("FrameStats", { damageDealt: 0 });

@@ -6,7 +6,8 @@
  * All state is mutable; world operations (spawn, despawn, set) mutate storages in place.
  */
 
-import type { ArchetypeDescriptor, ComponentDescriptor } from "./archetype.js";
+import type { ArchetypeDescriptor, ArchetypeRef, ComponentDescriptor } from "./archetype.js";
+import { resolveArchetype } from "./archetype.js";
 import { NO_FREE_SLOT } from "./entity-id.js";
 import { despawnMany } from "./entity/despawn.js";
 import type { RelationReverseMap } from "./entity/reverse-map.js";
@@ -214,27 +215,34 @@ export function createWorld(): World {
  * Idempotent: registering the same archetype twice returns the same storage object.
  *
  * @param world - The world to register in
- * @param arch - The archetype descriptor to register
+ * @param arch - The archetype descriptor, or a class extending `Archetype()`, to register
  * @returns The storage object for this archetype in this world
  *
  * @throws If the world is destroyed
+ * @throws If the class form is an `Archetype()` result that was never subclassed, or an
+ *   indirect subclass of one
  */
-export function register<A extends ArchetypeDescriptor>(world: World, arch: A): Storage<A>;
-export function register(world: World, arch: ArchetypeDescriptor): Storage {
+export function register<A extends ArchetypeDescriptor>(
+  world: World,
+  arch: ArchetypeRef<A>,
+): Storage<A>;
+export function register(world: World, arch: ArchetypeRef): Storage {
   const state = world as WorldState;
 
   if (state.destroyed) {
     throw new Error(ERROR_WORLD_DESTROYED);
   }
 
-  const existing = state.storages.get(arch.id);
+  const descriptor = resolveArchetype(arch);
+
+  const existing = state.storages.get(descriptor.id);
   if (existing) {
     return existing;
   }
 
-  const storage = createStorage(state, arch);
+  const storage = createStorage(state, descriptor);
 
-  state.storages.set(arch.id, storage);
+  state.storages.set(descriptor.id, storage);
 
   // Archetype set changed: cached query resolutions must re-resolve.
   state.queryEpoch += 1;
@@ -246,21 +254,26 @@ export function register(world: World, arch: ArchetypeDescriptor): Storage {
  * Retrieve the storage for an archetype in a world.
  *
  * @param world - The world to query
- * @param arch - The archetype to look up
+ * @param arch - The archetype descriptor, or a class extending `Archetype()`, to look up
  * @returns The storage object (must be registered)
  *
  * @throws If the world is destroyed
  * @throws If the archetype is not registered in this world
+ * @throws If the class form is an `Archetype()` result that was never subclassed, or an
+ *   indirect subclass of one
  */
-export function getStorage<A extends ArchetypeDescriptor>(world: World, arch: A): Storage<A>;
-export function getStorage(world: World, arch: ArchetypeDescriptor): Storage {
+export function getStorage<A extends ArchetypeDescriptor>(
+  world: World,
+  arch: ArchetypeRef<A>,
+): Storage<A>;
+export function getStorage(world: World, arch: ArchetypeRef): Storage {
   const state = world as WorldState;
 
   if (state.destroyed) {
     throw new Error(ERROR_WORLD_DESTROYED);
   }
 
-  const storage = state.storages.get(arch.id);
+  const storage = state.storages.get(resolveArchetype(arch).id);
   if (!storage) {
     throw new Error("archetype not registered in this world");
   }

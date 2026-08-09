@@ -109,21 +109,30 @@ export type OptionalSpawnValue<P> =
  * fields, and wrong value types are compile errors; `false` on a required
  * component is rejected at the type level. Falls back to the untyped record
  * form for a bare `Storage`.
+ *
+ * The trailing `extends infer S ? { [K in keyof S]: S[K] } : never` is
+ * display-driven: it collapses the three-way intersection into one object
+ * literal so hovers and errors print flat keys instead of `{...} & {} & {...}`.
+ * The mapped type stays inline — a named `Flat<T>` alias would keep its own
+ * alias symbol and print `Flat<{...} & {} & {...}>` instead. Being homomorphic
+ * over `keyof S`, it preserves each member's optionality modifiers.
  */
 export type SpawnOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescriptor extends A
   ? SpawnOverrides
   : {
-      [P in ComponentsOf<A>[number] as IsRelationSlot<P> extends true
-        ? never
-        : ComponentName<P>]?: RequiredSpawnValue<P>;
-    } & {
-      // Required relations MUST be provided at spawn — their keys are non-optional.
-      [P in ComponentsOf<A>[number] as IsRelationSlot<P> extends true
-        ? ComponentName<P>
-        : never]: RelationSpawnValue<P>;
-    } & {
-      [P in OptionalsOf<A>[number] as ComponentName<P>]?: OptionalSpawnValue<P>;
-    };
+        [P in ComponentsOf<A>[number] as IsRelationSlot<P> extends true
+          ? never
+          : ComponentName<P>]?: RequiredSpawnValue<P>;
+      } & {
+        // Required relations MUST be provided at spawn — their keys are non-optional.
+        [P in ComponentsOf<A>[number] as IsRelationSlot<P> extends true
+          ? ComponentName<P>
+          : never]: RelationSpawnValue<P>;
+      } & {
+        [P in OptionalsOf<A>[number] as ComponentName<P>]?: OptionalSpawnValue<P>;
+      } extends infer S
+    ? { [K in keyof S]: S[K] }
+    : never;
 
 /**
  * Spawn an entity with optional component field overrides.

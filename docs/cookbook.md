@@ -11,6 +11,7 @@ All code examples below assume the following imports:
 import {
   alive,
   archetype,
+  Archetype,
   component,
   components,
   countSources,
@@ -43,7 +44,7 @@ import {
 } from "ecstatic";
 ```
 
-`Archetype` and `EntityId` are available as types from the same import.
+`EntityId` is available as a type from the same import.
 
 ## Recommended project layout
 
@@ -99,6 +100,41 @@ Systems still import from `"./schema"` (the index re-export), so nothing else ch
 The `update()` function in `main.ts` is the single source of truth for execution order.
 Reading it top-to-bottom shows the entire frame. When the order is wrong, there's exactly
 one place to fix it. See [Game loop structure](#game-loop-structure) for the full pattern.
+
+## Named archetypes and composition
+
+Declare an archetype as a class when its name should surface in types, editor tooltips, and
+error messages — `Storage`, `EntityId`, and `each` views all display the declared name:
+
+```typescript
+class Ship extends Archetype([Position, Health], [Frozen]) {}
+
+const ships = register(world, Ship); // Storage<Ship>
+const id = spawn(ships); // EntityId<Ship>
+```
+
+The class is a declaration, not an object: `new Ship()` is a compile error and throws at
+runtime. `register` and `getStorage` accept the class and a plain `archetype(...)` descriptor
+interchangeably.
+
+Reuse component lists by spreading — from a shared `as const` set, or from another declared
+archetype's `components`/`optionals` statics:
+
+```typescript
+const Transform = [Position, Velocity] as const;
+
+class Mover extends Archetype([...Transform]) {}
+class Vehicle extends Archetype([...Transform, Health], [Frozen]) {}
+class Tank extends Archetype([...Vehicle.components, Cannon], [...Vehicle.optionals]) {}
+```
+
+Do not subclass a declared archetype: a class body cannot add components, so
+`class Tank extends Vehicle {}` could only alias the same archetype under a second name, and
+registration rejects it. Spreads are the composition mechanism.
+
+Archetypes are canonicalized by their component lists: two classes declaring identical lists
+are the same archetype and share one storage pool, whatever their names. When two nouns need
+separate pools, give each a distinguishing component — a tag is enough.
 
 ## Allocation-free event queue
 
@@ -266,7 +302,7 @@ disable when it expires.
 const Cooldown = component("Cooldown", { remaining: 0 });
 
 // Declare as optional on the archetype
-const Player = archetype([Position, Health], [Cooldown]);
+class Player extends Archetype([Position, Health], [Cooldown]) {}
 
 // Start cooldown
 enable(players, playerId, Cooldown, { remaining: 2.0 });
@@ -348,14 +384,14 @@ const { Idle, Moving, Attacking } = components({
   Attacking: {},
 });
 
-const Enemy = archetype([Position, Health], [Idle, Moving, Attacking]);
+class Enemy extends Archetype([Position, Health], [Idle, Moving, Attacking]) {}
 
 // Spawn enemies in the Idle state — optional overrides at spawn time
 const enemy = spawn(enemies, { Idle: true });
 
 // Transition: disable old state, enable new state
 function setState(
-  storage: Storage<typeof Enemy>,
+  storage: Storage<Enemy>,
   entity: EntityId,
   to: typeof Idle | typeof Moving | typeof Attacking,
 ): void {
@@ -400,7 +436,7 @@ const { Parent, Offset } = components({
   Offset: { x: 0, y: 0 },
 });
 
-const Attachment = archetype([Position, Parent, Offset]);
+class Attachment extends Archetype([Position, Parent, Offset]) {}
 const attachments = register(world, Attachment);
 
 // Spawn a child attached to a parent
@@ -571,7 +607,7 @@ allocation in the hot path after initialization.
 ```typescript
 const Active = component("Active");
 
-const Bullet = archetype([Position, Velocity], [Active]);
+class Bullet extends Archetype([Position, Velocity], [Active]) {}
 const bullets = register(world, Bullet);
 
 // Freelist of inactive bullet IDs
