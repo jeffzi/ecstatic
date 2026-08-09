@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { archetype } from "../src/archetype.js";
 import { component, components, isComponentDescriptor, ref } from "../src/component.js";
-import { entityIndex } from "../src/entity-id.js";
+import { type EntityId, entityIndex } from "../src/entity-id.js";
 import { get, getTarget } from "../src/entity/access.js";
+import { alive } from "../src/entity/common.js";
 import { despawn } from "../src/entity/despawn.js";
 import { each } from "../src/entity/each.js";
 import { link, unlink } from "../src/entity/relation.js";
@@ -403,6 +404,146 @@ describe("optional relation birth-link at spawn", () => {
 
     const row = rowOf(storage, second);
     expect(storage.columns.get(getRelationMeta(OptionalRecycle)!)!.target![row]).toBe(0);
+  });
+});
+
+const BirthLinkAtomic_Rel = relation("BirthLinkAtomic_Rel");
+
+/** World plus a source archetype carrying the optional relation and a plain target archetype. */
+function createAtomicFixture() {
+  const world = createWorld();
+  const storage = register(world, archetype([RelSpec_Comp], [BirthLinkAtomic_Rel]));
+  const targetStorage = register(world, archetype([RelSpec_Comp]));
+  return { storage, targetStorage, world };
+}
+
+type AtomicFixture = ReturnType<typeof createAtomicFixture>;
+
+/** Entity ids an unfiltered `each` walk visits in `storage`. */
+function visitAll(storage: AtomicFixture["storage"]): number[] {
+  const visited: number[] = [];
+  each(storage, (e) => {
+    visited.push(e.id);
+  });
+  return visited;
+}
+
+/**
+ * Entity ids the `all: [BirthLinkAtomic_Rel]` matcher visits in `storage`.
+ *
+ * Also doubles as matcher warm-up: calling it during Arrange materializes and
+ * refreshes the cached matcher, so a later call exercises the cached path — the
+ * one that can observe a stale presence bit left on a recycled row.
+ */
+function visitLinked(storage: AtomicFixture["storage"]): number[] {
+  const visited: number[] = [];
+  each(storage, { all: [BirthLinkAtomic_Rel] }, (e) => {
+    visited.push(e.id);
+  });
+  return visited;
+}
+
+interface InvalidTargetCase {
+  readonly label: string;
+  readonly error: string;
+  readonly makeTarget: (fixture: AtomicFixture) => EntityId;
+}
+
+interface RowStateCase {
+  readonly label: string;
+  /** Brings `storage` to the desired allocation state, leaving it with zero live rows. */
+  readonly prepare: (fixture: AtomicFixture) => void;
+}
+
+const invalidTargets: InvalidTargetCase[] = [
+  {
+    error: "stale target ID for relation BirthLinkAtomic_Rel",
+    label: "a stale target",
+    makeTarget: ({ targetStorage }) => {
+      const id = spawn(targetStorage);
+      despawn(targetStorage, id);
+      return id;
+    },
+  },
+  {
+    error: "optional relation BirthLinkAtomic_Rel requires a target value",
+    label: "a zero target",
+    makeTarget: (): EntityId => {
+      // @ts-expect-error 0 is the unlinked sentinel, never a valid entity id
+      return 0;
+    },
+  },
+];
+
+const rowStates: RowStateCase[] = [
+  {
+    label: "fresh",
+    prepare: () => {
+      // A brand-new storage already allocates the next spawn on a fresh row.
+    },
+  },
+  {
+    label: "recycled",
+    prepare: ({ storage, targetStorage }) => {
+      const target = spawn(targetStorage);
+      const first = spawn(storage, { BirthLinkAtomic_Rel: { target } });
+      visitLinked(storage);
+      despawn(storage, first);
+    },
+  },
+];
+
+const atomicCases = invalidTargets.flatMap((invalid) =>
+  rowStates.map((row) => ({
+    error: invalid.error,
+    makeTarget: invalid.makeTarget,
+    name: `${invalid.label} on a ${row.label} row`,
+    prepare: row.prepare,
+  })),
+);
+
+describe("checked-mode birth-link validation", () => {
+  it.each(atomicCases)("rejects $name without mutating the world", (testCase) => {
+    const fixture = createAtomicFixture();
+    testCase.prepare(fixture);
+    const { storage, world } = fixture;
+    const target = testCase.makeTarget(fixture);
+    const beforeN = storage.n;
+    const beforeNextIndex = world.nextIndex;
+    const beforeFreeHead = world.freeHead;
+
+    expect(() => {
+      spawn(storage, { BirthLinkAtomic_Rel: { target } });
+    }).toThrow(testCase.error);
+
+    expect(storage.n).toBe(beforeN);
+    expect(world.nextIndex).toBe(beforeNextIndex);
+    expect(world.freeHead).toBe(beforeFreeHead);
+    expect(visitAll(storage)).toStrictEqual([]);
+    expect(visitLinked(storage)).toStrictEqual([]);
+  });
+
+  it("reuses the recycled slot cleanly after a rejected birth-link spawn", () => {
+    const { storage, targetStorage, world } = createAtomicFixture();
+    const target = spawn(targetStorage);
+    const first = spawn(storage, { BirthLinkAtomic_Rel: { target } });
+    visitLinked(storage);
+    despawn(storage, first);
+    const stale = spawn(targetStorage);
+    despawn(targetStorage, stale);
+    expect(() => {
+      spawn(storage, { BirthLinkAtomic_Rel: { target: stale } });
+    }).toThrow("stale target ID for relation BirthLinkAtomic_Rel");
+
+    const reused = spawn(storage, { BirthLinkAtomic_Rel: { target } });
+
+    expect(entityIndex(reused)).toBe(entityIndex(first));
+    expect(alive(storage, first)).toBe(false);
+    expect(alive(storage, reused)).toBe(true);
+    expect(storage.n).toBe(1);
+    expect(get(storage, reused, BirthLinkAtomic_Rel.target)).toBe(target);
+    expect(sourceIndices(world, BirthLinkAtomic_Rel, target)).toStrictEqual([entityIndex(reused)]);
+    expect(visitLinked(storage)).toStrictEqual([reused]);
   });
 });
 

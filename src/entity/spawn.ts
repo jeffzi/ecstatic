@@ -132,8 +132,12 @@ export type SpawnOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescript
  * precomputed packed ID, appends a dense row, and initializes component
  * fields with defaults or override values (stored by reference, no clone).
  *
+ * Atomic in checked mode: a relation birth-link target that is missing, 0, or
+ * stale is rejected before any allocation, so the world is left untouched.
+ *
  * @throws If the world is out of entity indices
  * @throws If an override sets a required component to `false`
+ * @throws (checked mode) If a relation birth-link target is missing, 0, or stale
  */
 export function spawn<A extends ArchetypeDescriptor>(
   storage: WithoutRequiredRelations<A>,
@@ -145,6 +149,10 @@ export function spawn<A extends ArchetypeDescriptor>(
 ): EntityId<A>;
 export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   const state = storage.world;
+
+  if (DEBUG && storage.relationN > 0) {
+    assertRelationTargets(storage, overrides);
+  }
 
   const index = allocateOneIndex(state);
 
@@ -178,6 +186,66 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   }
 
   return eid;
+}
+
+/**
+ * Validate every relation birth-link target in `overrides` before a row exists
+ * (DEBUG-gated at the call sites).
+ *
+ * Running ahead of allocation is what makes a rejected checked-mode spawn
+ * atomic. The write path commits `storage.n`, `entityArch`, the presence mask,
+ * the target column, the matcher flags, and reverse-map entries with no unwind,
+ * so a throw from inside it leaves a half-spawned row that `each` still visits
+ * and that a matcher can match on a recycled row's stale presence bit. Every
+ * value-dependent relation check belongs here, never in the write path.
+ *
+ * `relationDescriptors` lists required relations before optionals, so errors
+ * surface in archetype declaration order.
+ */
+function assertRelationTargets(storage: Storage, overrides: SpawnOverrides | undefined): void {
+  const relN = storage.relationN;
+  for (let ri = 0; ri < relN; ri++) {
+    const name = storage.relationDescriptors[ri]!.__ecstatic_name;
+    const optional = storage.relationOptionalBits[ri] !== 0;
+    assertRelationTarget(storage.world, name, optional, overrides?.[name]);
+  }
+}
+
+/**
+ * Validate one relation's spawn override value against the birth-link grammar:
+ * a required relation must name a live target, an optional one may omit the
+ * birth link entirely but cannot name a dead or sentinel target.
+ */
+function assertRelationTarget(
+  state: WorldState,
+  name: string,
+  optional: boolean,
+  raw: Record<string, unknown> | boolean | undefined,
+): void {
+  // `false` on an optional relation means "stay unlinked"; on a required one
+  // resolveRequiredOverride owns the "cannot be disabled" error.
+  if (raw === false) {
+    return;
+  }
+
+  const rawTarget = raw === undefined || raw === true ? undefined : raw.target;
+  if (rawTarget === undefined) {
+    if (optional) {
+      return;
+    }
+    throw new Error(errorRequiredRelationTarget(name));
+  }
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- override targets are EntityIds (branded numbers)
+  const target = rawTarget as number;
+  if (target === 0) {
+    throw new Error(
+      optional ? errorOptionalRelationTarget(name) : errorRequiredRelationTarget(name),
+    );
+  }
+  if (state.generation[entityIndex(target)] !== target) {
+    throw new Error(errorStaleTarget(name));
+  }
 }
 
 /**
@@ -427,9 +495,9 @@ function applyOptionalOverrides(
 
 /**
  * Birth-link an optional relation for `count` rows starting at `denseStart`:
- * validate the override target (DEBUG-gated; a 0 target under NDEBUG skips
- * the write and reverse insert, leaving the sentinel), write the target
- * column, and record each source in the target's reverse bucket.
+ * write the target column and record each source in the target's reverse
+ * bucket. Targets are pre-validated by `assertRelationTargets`, so this write
+ * path never throws — see that function before adding a check here.
  */
 function birthLinkOptional(
   storage: Storage,
@@ -442,21 +510,17 @@ function birthLinkOptional(
   const state = storage.world;
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- override targets are EntityIds (branded numbers)
   const target = rawTarget as number;
+  // Only reachable under NDEBUG, where the 0 sentinel is unvalidated: leave the
+  // sentinel in place so the row spawns unlinked with no reverse entry.
   if (target === 0) {
-    if (DEBUG) {
-      throw new Error(errorOptionalRelationTarget(comp.__ecstatic_name));
-    }
-  } else {
-    if (DEBUG && state.generation[target % MAX_INDEX] !== target) {
-      throw new Error(errorStaleTarget(comp.__ecstatic_name));
-    }
-    const targetCol = soa.target!;
-    const targetIdx = entityIndex(target);
-    for (let i = 0; i < count; i++) {
-      const di = denseStart + i;
-      targetCol[di] = target;
-      reverseInsert(state, comp, targetIdx, storage, entityIndex(storage.entities[di]!));
-    }
+    return;
+  }
+  const targetCol = soa.target!;
+  const targetIdx = entityIndex(target);
+  for (let i = 0; i < count; i++) {
+    const di = denseStart + i;
+    targetCol[di] = target;
+    reverseInsert(state, comp, targetIdx, storage, entityIndex(storage.entities[di]!));
   }
 }
 
@@ -464,10 +528,11 @@ function birthLinkOptional(
  * Record reverse-map entries for the required relations of `count` freshly
  * spawned rows, reading targets from the already-initialized target columns.
  *
- * DEBUG validates target presence (0 = not provided) and liveness before any
- * reverse-map write — a stale target would seed a reverse entry that aliases
- * onto a reused slot. Under NDEBUG both checks are absent: the entity spawns
- * unlinked on a 0 target, and no reverse entry is recorded.
+ * Target presence (0 = not provided) and liveness are validated by
+ * `assertRelationTargets` before the row exists — a stale target would seed a
+ * reverse entry that aliases onto a reused slot. Under NDEBUG both checks are
+ * absent: the entity spawns unlinked on a 0 target, and no reverse entry is
+ * recorded.
  */
 function insertRequiredRelationEntries(storage: Storage, denseStart: number, count: number): void {
   const state = storage.world;
@@ -490,9 +555,9 @@ function insertRequiredRelationEntries(storage: Storage, denseStart: number, cou
 }
 
 /**
- * Validate (DEBUG-gated) and record one required-relation birth entry.
- * A 0 target means "not provided": DEBUG throws, NDEBUG leaves the entity
- * unlinked with no reverse entry.
+ * Record one required-relation birth entry. A 0 target means "not provided",
+ * only reachable under NDEBUG, where the entity is left unlinked with no
+ * reverse entry.
  */
 function insertRequiredEntry(
   state: WorldState,
@@ -502,13 +567,7 @@ function insertRequiredEntry(
   di: number,
 ): void {
   if (target === 0) {
-    if (DEBUG) {
-      throw new Error(errorRequiredRelationTarget(relDesc.__ecstatic_name));
-    }
     return;
-  }
-  if (DEBUG && state.generation[target % MAX_INDEX] !== target) {
-    throw new Error(errorStaleTarget(relDesc.__ecstatic_name));
   }
   reverseInsert(state, relDesc, entityIndex(target), storage, entityIndex(storage.entities[di]!));
 }
@@ -599,9 +658,11 @@ function fillBatch(
  *
  * The optional 4th argument is an out buffer (ignored if 3rd is already an array).
  *
- * Atomic: if allocation would overflow MAX_INDEX, no mutation occurs.
+ * Atomic: no mutation occurs if allocation would overflow MAX_INDEX, or if
+ * checked mode rejects a relation birth-link target.
  *
  * @throws If the batch would exceed entity index capacity
+ * @throws (checked mode) If a relation birth-link target is missing, 0, or stale
  */
 export function spawnMany<A extends ArchetypeDescriptor>(
   storage: WithoutRequiredRelations<A>,
@@ -641,6 +702,10 @@ export function spawnMany(
   }
 
   assertBatchCapacity(state, count);
+
+  if (DEBUG && storage.relationN > 0) {
+    assertRelationTargets(storage, overrides);
+  }
 
   // Grow storage arrays for dense rows in one shot (after we know count)
   const denseStart = storage.n;
