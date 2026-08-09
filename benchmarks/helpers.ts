@@ -108,8 +108,12 @@ export function makeBareWorld<A extends ArchetypeDescriptor>(arch: A): BareCtx<A
   const n = DEFAULT_N;
   const world = createWorld();
   const storage = register(world, arch);
+  // Widened to bare Storage: the generic A is unresolved here, so the
+  // no-overrides spawn form (rejected for required-relation archetypes)
+  // cannot be proven applicable; bench archetypes carry no relations.
+  const untyped: Storage = storage;
   for (let i = 0; i < n; i++) {
-    spawn(storage);
+    spawn(untyped);
   }
   return { world, storage, n };
 }

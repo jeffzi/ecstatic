@@ -38,3 +38,35 @@ export function errorUnknownComponent(name: string): string {
 export function errorNotEnabled(name: string): string {
   return `component ${name} not enabled on entity`;
 }
+
+/** Message for a required relation spawned without a target (DEBUG-gated). */
+export function errorRequiredRelationTarget(name: string): string {
+  return `required relation ${name} must receive a target at spawn`;
+}
+
+/** Message for a relation target whose generation no longer matches (DEBUG-gated). */
+export function errorStaleTarget(name: string): string {
+  return `stale target ID for relation ${name}`;
+}
+
+/** Message for an optional relation birth-link given target 0 (DEBUG-gated). */
+export function errorOptionalRelationTarget(name: string): string {
+  return `optional relation ${name} requires a target value`;
+}
+
+/** Thrown by link/unlink/getTarget when the entity's archetype lacks the relation. */
+export const ERROR_RELATION_NOT_ON_ARCHETYPE = "relation not on this entity's archetype";
+
+/** Thrown by set when a write names a relation's reserved target field. */
+export const ERROR_RELATION_TARGET_WRITE =
+  "cannot write relation target field — use link() instead";
+
+/** Message for unlinking a relation the archetype declares required. */
+export function errorUnlinkRequired(name: string): string {
+  return `cannot unlink required relation ${name}`;
+}
+
+/** Message for enable/disable given a relation — link/unlink own relation toggles. */
+export function errorRelationToggle(name: string, targetOp: "link" | "unlink"): string {
+  return `${name} is a relation — use ${targetOp}() instead`;
+}

@@ -8,7 +8,13 @@ describe("spawn", () => {
   const storage = register(world, archetype([Position, Health]));
 
   it("returns the branded EntityId", () => {
-    expectTypeOf(spawn(storage)).toEqualTypeOf<EntityId>();
+    expectTypeOf(spawn(storage)).toExtend<EntityId>();
+  });
+
+  it("returns the exact branded EntityId for the archetype", () => {
+    expectTypeOf(spawn(storage)).toEqualTypeOf<
+      EntityId<typeof storage extends { readonly archetype: infer A } ? A : never>
+    >();
   });
 
   it("accepts partial component overrides", () => {

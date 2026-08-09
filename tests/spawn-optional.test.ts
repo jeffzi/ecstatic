@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { archetype, components, despawn, despawnMany, spawn, spawnMany } from "../src/index.js";
+import {
+  archetype,
+  components,
+  despawn,
+  despawnMany,
+  getRelationMeta,
+  relation,
+  spawn,
+  spawnMany,
+} from "../src/index.js";
 import { createWorld, register } from "../src/world.js";
 import { rowOf } from "./fixtures.js";
 
@@ -183,5 +192,28 @@ describe("hasOptionalData flag", () => {
     const storage = register(world, archetype([Position], [Stunned, OnFire]));
 
     expect(storage.hasOptionalData).toBe(false);
+  });
+
+  it("is true when a pure-link optional relation joins tag-only optionals", () => {
+    const Owner = relation("SpawnOptRelation_Owner");
+    const world = createWorld();
+    const storage = register(world, archetype([Position], [Stunned, Owner]));
+
+    // Sentinel target-column init runs through the optional-defaults path.
+    expect(storage.hasOptionalData).toBe(true);
+  });
+});
+
+describe("spawn mixing optional relations with plain optionals", () => {
+  it("enables the plain optional and leaves the omitted relation unlinked", () => {
+    const Follows = relation("SpawnOptRelation_Follows");
+    const world = createWorld();
+    const storage = register(world, archetype([Position], [Shield, Follows]));
+
+    const id = spawn(storage, { SpawnOptShield: { hp: 7 } });
+
+    const row = rowOf(storage, id);
+    expect(storage.mask[row]).toBe(storage.optionalBitLookup.get(Shield));
+    expect(storage.columns.get(getRelationMeta(Follows)!)!.target![row]).toBe(0);
   });
 });

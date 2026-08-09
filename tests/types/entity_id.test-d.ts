@@ -16,7 +16,7 @@ describe("EntityId", () => {
     const world = createWorld();
     const players = register(world, archetype([Position, Health]));
 
-    expectTypeOf(spawn(players)).toEqualTypeOf<EntityId>();
+    expectTypeOf(spawn(players)).toExtend<EntityId>();
   });
 
   it("rejects raw numbers where an EntityId is required", () => {
@@ -50,8 +50,10 @@ describe("EntityId", () => {
     const id1 = spawn(movers1);
     const id2 = spawn(movers2);
 
-    // Cross-world misuse is a runtime check; the static type is the same.
-    expectTypeOf(id1).toEqualTypeOf<EntityId>();
-    expectTypeOf(id2).toEqualTypeOf<EntityId>();
+    // Cross-world misuse is a runtime check; the static type is the same
+    // (mutual toExtend: toEqualTypeOf rejects branded intersections).
+    expectTypeOf(id1).toExtend<typeof id2>();
+    expectTypeOf(id2).toExtend<typeof id1>();
+    expectTypeOf(id1).toExtend<EntityId>();
   });
 });

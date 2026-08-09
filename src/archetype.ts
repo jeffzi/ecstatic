@@ -79,6 +79,12 @@ const RESERVED_NAMES = new Set<string>([
   "hasOptionalData",
   "matchers",
   "matcherMatched",
+  // Relation bookkeeping
+  "relationTargetColumns",
+  "relationDescriptors",
+  "relationOptionalBits",
+  "relationN",
+  "hasRelations",
 ]);
 
 /**
