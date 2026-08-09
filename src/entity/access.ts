@@ -12,10 +12,27 @@ import {
   ERROR_RELATION_TARGET_WRITE,
   errorNotEnabled,
 } from "../errors.js";
-import type { Relation, RelationConstraints, RelationTargetFieldDescriptor } from "../relation.js";
+import type {
+  Relation,
+  RelationConstraints,
+  RelationFields,
+  RelationTargetFieldDescriptor,
+} from "../relation.js";
 import { getRelationMeta } from "../relation.js";
 import type { Storage, TypedArray, World } from "../world.js";
 import { resolveEntityArch } from "./common.js";
+
+/**
+ * Values record accepted by the record form of `set`.
+ *
+ * A relation's reserved `target` key is typed as the error sentence, so a
+ * write fails to compile — the target column is owned by `link`/`unlink`.
+ * Every other declared field stays settable, and a plain component keeps all
+ * of its fields even when one is literally named `target`.
+ */
+type SettableFields<C> = C extends { readonly __ecstatic_relation_meta: unknown }
+  ? Partial<RelationFields<C>> & { readonly target?: typeof ERROR_RELATION_TARGET_WRITE }
+  : Partial<ComponentFields<C>>;
 
 /**
  * Guard against writing the reserved `target` field of a relation — the
@@ -156,7 +173,7 @@ export function set<C extends ComponentDescriptor>(
   storageOrWorld: Storage | World,
   id: EntityId,
   comp: C,
-  values: Partial<ComponentFields<C>>,
+  values: SettableFields<C>,
 ): void;
 export function set(
   storageOrWorld: Storage | World,
