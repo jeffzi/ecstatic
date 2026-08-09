@@ -10,6 +10,16 @@ import {
 } from "../src/index.js";
 import { getResourceMeta, resource } from "../src/resource.js";
 
+/** Message of the error `fn` throws; throws itself when `fn` completes. */
+function messageOfThrow(fn: () => unknown): string {
+  try {
+    fn();
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  throw new Error("expected the call to throw, but it returned");
+}
+
 describe("resource", () => {
   it("returns unique numeric IDs", () => {
     const A = resource("ResourceTestA", { val: 0 });
@@ -45,6 +55,50 @@ describe("resource", () => {
     component("ResourceTestSharedName");
 
     expect(() => resource("ResourceTestSharedName", { value: 0 })).not.toThrow();
+  });
+
+  it("snapshots defaults at registration so later mutation of the caller's object is inert", () => {
+    const defaults = { hp: 1, pos: { x: 1 } };
+    const Vitals = resource("ResourceTestRegistrationSnapshot", defaults);
+
+    defaults.hp = 5;
+    defaults.pos.x = 5;
+
+    expect(getResource(createWorld(), Vitals)).toStrictEqual({ hp: 1, pos: { x: 1 } });
+  });
+
+  describe("field name validation", () => {
+    it.each([
+      { label: "starting with a digit", field: "1field" },
+      { label: "containing a hyphen", field: "field-name" },
+      { label: "containing a space", field: "field name" },
+      { label: "with non-ASCII characters", field: "café" },
+    ])("rejects a field name $label", ({ field, label }) => {
+      const name = `ResourceTestFieldValidation_${label.replaceAll(" ", "_")}`;
+
+      expect(() => resource(name, { [field]: 0 })).toThrow();
+    });
+
+    it("names the resource and the offending field in the error", () => {
+      const message = messageOfThrow(() =>
+        resource("ResourceTestFieldMessage", { "bad-field": 0 }),
+      );
+
+      expect(message).toContain("bad-field");
+      expect(message).toContain("ResourceTestFieldMessage");
+      expect(message).toContain("resource");
+    });
+
+    it("accepts field names starting with a letter or underscore", () => {
+      expect(() =>
+        resource("ResourceTestFieldValidation_valid", {
+          field: 0,
+          _field: 0,
+          Field1_name: 0,
+          Field: 0,
+        }),
+      ).not.toThrow();
+    });
   });
 });
 
@@ -113,6 +167,38 @@ describe("getResource", () => {
     expect(second.seen.size).toBe(1);
   });
 
+  it("shares objects held as Set members across worlds", () => {
+    const member = { hits: 0 };
+    const Bag = resource("ResourceTestSetMemberSharing", { seen: new Set([member]) });
+    const w1 = createWorld();
+    const w2 = createWorld();
+
+    expect([...getResource(w1, Bag).seen][0]).toBe(member);
+    expect([...getResource(w2, Bag).seen][0]).toBe(member);
+  });
+
+  it("shares objects used as Map keys across worlds", () => {
+    const key = { id: 1 };
+    const Index = resource("ResourceTestMapKeySharing", { byKey: new Map([[key, 1]]) });
+    const w1 = createWorld();
+    const w2 = createWorld();
+
+    expect([...getResource(w1, Index).byKey.keys()][0]).toBe(key);
+    expect([...getResource(w2, Index).byKey.keys()][0]).toBe(key);
+  });
+
+  it("isolates objects held in array defaults per world", () => {
+    const item = { hp: 1 };
+    const Bag = resource("ResourceTestArrayItemIsolation", { items: [item] });
+    const w1 = createWorld();
+    const w2 = createWorld();
+
+    getResource(w1, Bag).items[0]!.hp = 9;
+
+    expect(getResource(w2, Bag).items[0]!.hp).toBe(1);
+    expect(item.hp).toBe(1);
+  });
+
   it("shares class instances by reference", () => {
     class Logger {
       lines: string[] = [];
@@ -164,6 +250,19 @@ describe("setResource", () => {
     shared.scale = 12;
 
     expect(getResource(world, Settings).ui.scale).toBe(5);
+  });
+
+  it("writes only the values object's own keys", () => {
+    class ScoreValues {
+      value = 7;
+    }
+    // Enumerable but inherited: `for...in` walks it, `Object.hasOwn` rejects it.
+    Object.defineProperty(ScoreValues.prototype, "combo", { enumerable: true, value: 99 });
+    const world = createWorld();
+
+    setResource(world, Score, new ScoreValues());
+
+    expect(getResource(world, Score)).toStrictEqual({ value: 7, combo: 1 });
   });
 
   it("clones caller-owned containers on write", () => {
