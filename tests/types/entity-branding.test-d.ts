@@ -80,6 +80,14 @@ describe("With", () => {
   it("a plain EntityId does not satisfy a non-empty constraint", () => {
     expectTypeOf(plainId).not.toExtend<With<typeof Position>>();
   });
+
+  it("an archetype-branded id satisfies With<A | B> union form", () => {
+    const world = createWorld();
+    const players = register(world, archetype([Position, Health]));
+    const id = spawn(players);
+
+    expectTypeOf(id).toExtend<With<typeof Position | typeof Health>>();
+  });
 });
 
 describe("view id branding", () => {

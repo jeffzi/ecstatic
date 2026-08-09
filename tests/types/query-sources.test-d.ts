@@ -3,8 +3,10 @@ import { describe, expectTypeOf, it } from "vitest";
 import type { EntityId } from "../../src/index.js";
 import {
   archetype,
+  countSources,
   createWorld,
   getSources,
+  hasSources,
   querySources,
   register,
   relation,
@@ -14,11 +16,12 @@ import { Position, Shield, Stunned } from "./_fixtures.js";
 
 const PureRel = relation("QSTd_Pure");
 const DataRel = relation("QSTd_Data", [], { weight: 0 });
+const ConstrainedRel = relation("QSTd_Constrained", [Position]);
 
 const world = createWorld();
 const simple = register(world, archetype([Position]));
 register(world, archetype([Position, DataRel], [Shield, Stunned]));
-register(world, archetype([Position], [PureRel]));
+register(world, archetype([Position], [PureRel, ConstrainedRel]));
 const target = spawn(simple);
 
 describe("querySources view typing", () => {
@@ -77,5 +80,35 @@ describe("getSources typing", () => {
     expectTypeOf(getSources(world, DataRel, target)).toEqualTypeOf<EntityId[]>();
     const out: EntityId[] = [];
     expectTypeOf(getSources(world, DataRel, target, out)).toEqualTypeOf<EntityId[]>();
+  });
+});
+
+describe("hasSources / countSources typing", () => {
+  it("hasSources returns boolean", () => {
+    expectTypeOf(hasSources(world, DataRel, target)).toEqualTypeOf<boolean>();
+  });
+
+  it("countSources returns number", () => {
+    expectTypeOf(countSources(world, DataRel, target)).toEqualTypeOf<number>();
+  });
+});
+
+describe("source-query functions accept constraint-agnostic targets", () => {
+  const unconstrainedTarget: EntityId = target;
+
+  it("querySources accepts a target that does not satisfy the relation's constraints", () => {
+    querySources(world, ConstrainedRel, unconstrainedTarget, (_view) => {});
+  });
+
+  it("getSources accepts a constraint-agnostic target", () => {
+    getSources(world, ConstrainedRel, unconstrainedTarget);
+  });
+
+  it("hasSources accepts a constraint-agnostic target", () => {
+    hasSources(world, ConstrainedRel, unconstrainedTarget);
+  });
+
+  it("countSources accepts a constraint-agnostic target", () => {
+    countSources(world, ConstrainedRel, unconstrainedTarget);
   });
 });

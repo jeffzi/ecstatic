@@ -6,6 +6,7 @@ import {
   component,
   createWorld,
   get,
+  ref,
   register,
   relation,
   set,
@@ -89,6 +90,26 @@ describe("set on a plain component that declares a target field", () => {
 
   it("accepts the record form including the target field", () => {
     set(storage, id, Anchor, { target: 7, slack: 2 });
+  });
+});
+
+describe("set with ref and scalar fields on a relation", () => {
+  interface Handle {
+    readonly kind: "handle";
+  }
+  const RefRel = relation("GetSetTd_RefRel", [], { handle: ref<Handle>(), amount: 0 });
+  const world = createWorld();
+  const storage = register(world, archetype([Position, RefRel]));
+  const targetId = spawn(register(world, archetype([Position])));
+  const id = spawn(storage, { GetSetTd_RefRel: { target: targetId } });
+
+  it("accepts undefined for a ref field", () => {
+    set(storage, id, RefRel.handle, undefined);
+  });
+
+  it("rejects undefined for a scalar field", () => {
+    // @ts-expect-error undefined is not assignable to number
+    set(storage, id, RefRel.amount, undefined);
   });
 });
 
