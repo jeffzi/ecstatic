@@ -7,13 +7,15 @@
  * matching `getTarget` — no aliasing onto a recycled slot. An unregistered
  * relation (no reverse-map entry) also visits nothing.
  *
- * On a warm world these functions allocate no data structures of their own:
- * `hasSources`/`countSources` only probe the bucket, and `querySources`
- * binds the same pooled per-storage views as `query`, released in a
- * `finally` so a throwing callback unwinds cleanly. The bucket walks do go
- * through the engine's Map iteration protocol, whose transient iterator
- * objects optimized JS engines elide — the allocation gate measures the
- * heap-delta contract, not this module.
+ * On a warm world the unfiltered paths allocate no data structures of their
+ * own: `hasSources`/`countSources` only probe the bucket, and unfiltered
+ * `querySources` binds the same pooled per-storage views as `query`,
+ * released in a `finally` so a throwing callback unwinds cleanly. The
+ * filtered `querySources` overloads pay `normalizeFilter`'s one axes tuple
+ * per storage resolution. The bucket walks do go through the engine's Map
+ * iteration protocol, whose transient iterator objects optimized JS engines
+ * elide — the allocation gate measures the heap-delta contract, not this
+ * module.
  */
 
 import type { ComponentDescriptor } from "./component.js";
@@ -179,10 +181,9 @@ function isTrivialMatcher(matcher: Matcher): boolean {
 
 /**
  * Dispatch the filtered walk: when the single-storage flag holds a storage,
- * the matcher and view resolve once and the loop needs no per-element
- * storage handling — the compare-free fast path. Otherwise sources
- * interleave across archetypes and per-storage state is cached behind a
- * storage-identity compare.
+ * the matcher and view resolve once and the loop reads them from locals — the
+ * fast path. Otherwise sources interleave across archetypes and per-storage
+ * state is cached behind a storage-identity compare.
  */
 function querySourcesFiltered(
   bucket: SourceBucket,
@@ -193,7 +194,7 @@ function querySourcesFiltered(
   if (sole !== false && sole !== undefined) {
     querySourcesFilteredSole(bucket, sole, filter, callback);
   } else {
-    querySourcesFilteredMulti(bucket, filter, callback);
+    querySourcesFilteredMulti(bucket.entries(), undefined, filter, callback);
   }
 }
 
@@ -208,9 +209,26 @@ function querySourcesFilteredSole(
     return;
   }
   const skipMatchCheck = isTrivialMatcher(matcher);
+  const entries = bucket.entries();
+  // The single-storage flag was read before the walk, so a source from
+  // another archetype can still join the bucket mid-callback (registering an
+  // archetype degrades the flag, but this walk already captured it). Rows
+  // belong to `sole` only while their storage compares equal; the first
+  // foreign entry hands the rest of the walk to the multi-storage loop, which
+  // re-resolves the matcher and view per storage.
+  let foreign: [number, Storage] | undefined;
   const bound = acquireView(sole);
   try {
-    for (const sourceIndex of bucket.keys()) {
+    for (;;) {
+      const next = entries.next();
+      if (next.done === true) {
+        break;
+      }
+      const [sourceIndex, storage] = next.value;
+      if (storage !== sole) {
+        foreign = next.value;
+        break;
+      }
       // Read sparse and matched through their owners each row: growth inside
       // the callback replaces both arrays (the each() invariant).
       const di = sole.sparse[sourceIndex]!;
@@ -222,14 +240,15 @@ function querySourcesFilteredSole(
   } finally {
     releaseView(sole);
   }
+  if (foreign !== undefined) {
+    querySourcesFilteredMulti(entries, foreign, filter, callback);
+  }
 }
 
 /**
- * Per-storage state for the multi-storage filtered walk. Unlike the
- * original's Lua truthiness fold (mask numbers are truthy in Lua, 0
- * included), JS needs the three per-storage outcomes as explicit state:
- * skip the storage entirely, skip the per-row check, or test the matcher's
- * matched flags.
+ * Per-storage state for the multi-storage filtered walk. Three explicit
+ * outcomes needed per storage: skip the storage entirely, skip the per-row
+ * check, or test the matcher's matched flags.
  */
 interface MultiStorageState {
   skipStorage: boolean;
@@ -265,14 +284,22 @@ function enterStorage(
   state.bound = acquireView(storage);
 }
 
-// The flat bucket interleaves sources from different archetypes in insertion
-// order, so the per-storage state is refreshed only when the entry's storage
-// changes (storage-identity compare).
+/**
+ * Walk bucket entries with per-storage state, refreshed only when the entry's
+ * storage changes (storage-identity compare) — the flat bucket interleaves
+ * sources from different archetypes in insertion order.
+ *
+ * `pending` is an entry already pulled from `entries`: the sole walk pulls one
+ * to detect a foreign storage and hands the remainder of the walk over here,
+ * so that entry is processed before the iterator advances again.
+ */
 function querySourcesFilteredMulti(
-  bucket: SourceBucket,
+  entries: MapIterator<[number, Storage]>,
+  pending: [number, Storage] | undefined,
   filter: readonly ComponentDescriptor[] | EachFilter,
   callback: (view: EachView) => void,
 ): void {
+  let pendingEntry = pending;
   let lastStorage: Storage | undefined;
   const state: MultiStorageState = {
     skipStorage: false,
@@ -282,7 +309,19 @@ function querySourcesFilteredMulti(
     bound: undefined,
   };
   try {
-    for (const [sourceIndex, storage] of bucket) {
+    for (;;) {
+      let entry: [number, Storage];
+      if (pendingEntry !== undefined) {
+        entry = pendingEntry;
+        pendingEntry = undefined;
+      } else {
+        const next = entries.next();
+        if (next.done === true) {
+          break;
+        }
+        entry = next.value;
+      }
+      const [sourceIndex, storage] = entry;
       if (storage !== lastStorage) {
         lastStorage = storage;
         enterStorage(state, storage, filter);

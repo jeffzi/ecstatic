@@ -324,6 +324,166 @@ describe("querySources", () => {
 
     expect(visited).toBe(2);
   });
+
+  describe("when a callback adds a source mid-pass", () => {
+    it("binds a cross-archetype source to its own row on a filtered walk", () => {
+      const Rel = relation("QSLinkCross_Rel");
+      const { QSLinkCross_Data, QSLinkCross_Other } = components({
+        QSLinkCross_Data: { v: 0 },
+        QSLinkCross_Other: { w: 0 },
+      });
+      const world = createWorld();
+      const simple = register(world, archetype([QSSpec_Comp]));
+      const storageA = register(world, archetype([QSSpec_Comp, Rel], [QSLinkCross_Data]));
+      const storageB = register(world, archetype([QSLinkCross_Other, Rel], [QSLinkCross_Data]));
+
+      const target = spawn(simple);
+      const decoy = spawn(simple);
+      const sourceA = spawn(storageA, {
+        QSLinkCross_Data: { v: 1 },
+        QSLinkCross_Rel: { target },
+      });
+      const sourceB = spawn(storageB, {
+        QSLinkCross_Data: { v: 2 },
+        QSLinkCross_Rel: { target: decoy },
+      });
+
+      const seen: [number, number][] = [];
+      let linked = false;
+      querySources(world, Rel, target, { all: [QSLinkCross_Data] }, (e) => {
+        seen.push([e.id, e.QSLinkCross_Data.v]);
+        if (!linked) {
+          linked = true;
+          link(world, sourceB, Rel, target);
+        }
+      });
+
+      expect(seen).toStrictEqual([
+        [sourceA, 1],
+        [sourceB, 2],
+      ]);
+    });
+
+    it("binds a source from an archetype registered mid-pass to its own row", () => {
+      const Rel = relation("QSLinkLate_Rel");
+      const { QSLinkLate_Data, QSLinkLate_Other } = components({
+        QSLinkLate_Data: { v: 0 },
+        QSLinkLate_Other: { w: 0 },
+      });
+      const world = createWorld();
+      const simple = register(world, archetype([QSSpec_Comp]));
+      const storageA = register(world, archetype([QSSpec_Comp, Rel], [QSLinkLate_Data]));
+
+      const target = spawn(simple);
+      const sourceA = spawn(storageA, { QSLinkLate_Data: { v: 1 }, QSLinkLate_Rel: { target } });
+
+      const seen: [number, number][] = [];
+      let sourceB: number | undefined;
+      querySources(world, Rel, target, { all: [QSLinkLate_Data] }, (e) => {
+        seen.push([e.id, e.QSLinkLate_Data.v]);
+        if (sourceB === undefined) {
+          const storageB = register(world, archetype([QSLinkLate_Other, Rel], [QSLinkLate_Data]));
+          sourceB = spawn(storageB, { QSLinkLate_Data: { v: 2 }, QSLinkLate_Rel: { target } });
+        }
+      });
+
+      expect(seen).toStrictEqual([
+        [sourceA, 1],
+        [sourceB, 2],
+      ]);
+    });
+
+    it("skips a source from an archetype registered mid-pass that fails the filter", () => {
+      const Rel = relation("QSLinkLateSkip_Rel");
+      const { QSLinkLateSkip_Data, QSLinkLateSkip_Other } = components({
+        QSLinkLateSkip_Data: { v: 0 },
+        QSLinkLateSkip_Other: { w: 0 },
+      });
+      const world = createWorld();
+      const simple = register(world, archetype([QSSpec_Comp]));
+      const storageA = register(world, archetype([QSSpec_Comp, Rel], [QSLinkLateSkip_Data]));
+
+      const target = spawn(simple);
+      const sourceA = spawn(storageA, {
+        QSLinkLateSkip_Data: { v: 1 },
+        QSLinkLateSkip_Rel: { target },
+      });
+
+      const seen: [number, number][] = [];
+      let spawned = false;
+      querySources(world, Rel, target, { all: [QSLinkLateSkip_Data] }, (e) => {
+        seen.push([e.id, e.QSLinkLateSkip_Data.v]);
+        if (!spawned) {
+          spawned = true;
+          // storageB lacks the filtered component entirely, so its source must be skipped
+          const storageB = register(world, archetype([QSLinkLateSkip_Other, Rel]));
+          spawn(storageB, { QSLinkLateSkip_Rel: { target } });
+        }
+      });
+
+      expect(seen).toStrictEqual([[sourceA, 1]]);
+    });
+
+    it("binds a same-archetype source to its own row on a filtered walk", () => {
+      const Rel = relation("QSLinkSame_Rel");
+      const { QSLinkSame_Data } = components({ QSLinkSame_Data: { v: 0 } });
+      const world = createWorld();
+      const simple = register(world, archetype([QSSpec_Comp]));
+      const storage = register(world, archetype([QSSpec_Comp, Rel], [QSLinkSame_Data]));
+
+      const target = spawn(simple);
+      const decoy = spawn(simple);
+      const sourceA = spawn(storage, { QSLinkSame_Data: { v: 1 }, QSLinkSame_Rel: { target } });
+      const sourceB = spawn(storage, {
+        QSLinkSame_Data: { v: 2 },
+        QSLinkSame_Rel: { target: decoy },
+      });
+
+      const seen: [number, number][] = [];
+      let linked = false;
+      querySources(world, Rel, target, { all: [QSLinkSame_Data] }, (e) => {
+        seen.push([e.id, e.QSLinkSame_Data.v]);
+        if (!linked) {
+          linked = true;
+          link(world, sourceB, Rel, target);
+        }
+      });
+
+      expect(seen).toStrictEqual([
+        [sourceA, 1],
+        [sourceB, 2],
+      ]);
+    });
+
+    it("binds a cross-archetype source to its own row on an unfiltered walk", () => {
+      const Rel = relation("QSLinkUnfiltered_Rel", [], { weight: 0 });
+      const { QSLinkUnfiltered_Other } = components({ QSLinkUnfiltered_Other: { w: 0 } });
+      const world = createWorld();
+      const simple = register(world, archetype([QSSpec_Comp]));
+      const storageA = register(world, archetype([QSSpec_Comp, Rel]));
+      const storageB = register(world, archetype([QSLinkUnfiltered_Other, Rel]));
+
+      const target = spawn(simple);
+      const decoy = spawn(simple);
+      const sourceA = spawn(storageA, { QSLinkUnfiltered_Rel: { target, weight: 1 } });
+      const sourceB = spawn(storageB, { QSLinkUnfiltered_Rel: { target: decoy, weight: 2 } });
+
+      const seen: [number, number][] = [];
+      let linked = false;
+      querySources(world, Rel, target, (e) => {
+        seen.push([e.id, e.QSLinkUnfiltered_Rel.weight]);
+        if (!linked) {
+          linked = true;
+          link(world, sourceB, Rel, target, { weight: 2 });
+        }
+      });
+
+      expect(seen).toStrictEqual([
+        [sourceA, 1],
+        [sourceB, 2],
+      ]);
+    });
+  });
 });
 
 describe("hasSources / countSources", () => {
