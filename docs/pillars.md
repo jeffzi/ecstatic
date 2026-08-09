@@ -57,6 +57,30 @@ rendering, expiry). This mapping is also the discipline that prevents archetype 
 flying, burning monster is the `Monster` archetype with `Flying` and `OnFire` optionals — never
 a `FlyingFireMonster` archetype.
 
+### Named declarations
+
+The nominal pillar extends to the type level: `class Ship extends Archetype([Position,
+Health], [Frozen]) {}` declares an archetype whose _name_ is its type, so every derived type —
+`Storage<Ship>`, `EntityId<Ship>`, `each` views — reads as the noun it is, in tooltips and in
+error messages. A class is the one TypeScript construct that binds a runtime value and a named
+type in a single declaration; nothing else avoids either a second declaration or an unreadable
+structural type. The class is a declaration, not an object: constructing it is a compile error
+and a runtime throw, and `archetype()` remains the value primitive both forms share.
+
+Two consequences are load-bearing:
+
+- **Canonicalization ignores names.** Identical component lists are the same archetype — and
+  the same storage — under any number of names. Two nouns that need separate pools declare a
+  distinguishing component; a second name alone is not a second pool.
+- **Composition is spreads, never subclassing.** `class Tank extends
+Archetype([...Vehicle.components, Cannon], [...Vehicle.optionals]) {}` reuses a declared
+  archetype's lists; `as const` component arrays compose the same way. `class Tank extends
+Vehicle {}` is rejected at registration — a class body cannot add components, so extending
+  an archetype class could only alias its storage under a second name, and an alias that looks
+  like a subtype is a trap, not a feature. There is no `IsA` relation: an archetype declared
+  from another's parts is a sibling pool, and iterating a "base shape" across pools is
+  `query()`'s job (the structural escape hatch above).
+
 ## 3. Immediate operations
 
 `spawn`, `despawn`, `enable`, `disable` take effect at the call site. No command buffers, no
