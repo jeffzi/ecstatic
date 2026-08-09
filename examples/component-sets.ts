@@ -1,13 +1,14 @@
 // Shared component sets and spread archetype declarations.
 //
 // Demonstrates: reusable const arrays spread into archetype lists, optional
-// lists. Composition of sets from other sets.
+// lists, and filter clauses. Composition of sets from other sets.
 
 import {
   Archetype,
   components,
   createWorld,
   each,
+  enable,
   get,
   register,
   type Storage,
@@ -75,6 +76,18 @@ console.log(`sign position: (${get(panels, sign, Position.x)}, ${get(panels, sig
 console.log(
   `dragon hp: ${get(bosses, dragon, Health.hp)}, armor: ${get(bosses, dragon, Armor.defense)}`,
 );
+
+// ---------------------------------------------------------------------------
+// Filtered iteration — spread sets into filter arrays
+// ---------------------------------------------------------------------------
+
+enable(vehicles, car, OnFire);
+enable(vehicles, car, Poisoned);
+spawn(vehicles);
+
+each(vehicles, { all: [...StatusEffects] }, (e) => {
+  console.log(`vehicle ${e.id} is burning and poisoned at (${e.Position.x}, ${e.Position.y})`);
+});
 
 // ---------------------------------------------------------------------------
 // Movement system — works across any archetype that spread Transform
