@@ -13,7 +13,7 @@ import {
   createDescriptor,
   type FieldDefault,
   type FieldDescriptor,
-  type InferFields,
+  type InferFieldValue,
 } from "./component.js";
 import type { EntityId } from "./entity-id.js";
 
@@ -112,7 +112,7 @@ export function relation<N extends string>(name: N): Relation<N, NoFields, []>;
 export function relation<N extends string, T extends Record<string, FieldDefault>>(
   name: N,
   defaults: (T extends readonly unknown[] ? never : T) & CheckRelationTarget<T>,
-): Relation<N, InferFields<T>, []>;
+): Relation<N, { [K in keyof T]: InferFieldValue<T[K]> }, []>;
 export function relation<N extends string, Comps extends Component[]>(
   name: N,
   constraints: [...Comps],
@@ -125,7 +125,7 @@ export function relation<
   name: N,
   constraints: [...Comps],
   defaults: T & CheckRelationTarget<T>,
-): Relation<N, InferFields<T>, Comps>;
+): Relation<N, { [K in keyof T]: InferFieldValue<T[K]> }, Comps>;
 export function relation(
   name: string,
   arg2?: ComponentDescriptor[] | Record<string, unknown>,
