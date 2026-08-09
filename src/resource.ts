@@ -11,6 +11,7 @@
  * data. Class instances and functions are shared by reference.
  */
 
+import { validateFieldName } from "./component.js";
 import type { World } from "./world.js";
 
 /** Metadata stored for each registered resource type. */
@@ -88,17 +89,28 @@ function cloneValue<T>(value: T): T {
   return cloneUnknown(value) as T;
 }
 
-/** Registers a new resource type and returns its numeric ID. */
+/**
+ * Registers a new resource type and returns its numeric ID.
+ *
+ * Field names must be ASCII identifiers, the same rule `component()` applies.
+ * `defaults` is deep-copied here, so mutating the caller's object afterwards
+ * cannot reach any world: the registered snapshot is what worlds initialize
+ * from. See `cloneUnknown` for which values are copied and which are shared.
+ */
 export function resource<N extends string, T extends object>(name: N, defaults: T): Resource<N, T> {
   if (resourceNames.has(name)) {
     throw new Error(`resource name already registered: ${name}`);
   }
 
+  const defaultsRecord: Record<string, unknown> = {};
+  // Object.entries widens the declared shape to an indexable record without a cast
+  for (const [field, value] of Object.entries(defaults)) {
+    validateFieldName("resource", name, field);
+    defaultsRecord[field] = cloneValue(value);
+  }
+
   const id = nextResourceId;
   nextResourceId = id + 1;
-
-  // Object.entries widens the declared shape to an indexable record without a cast
-  const defaultsRecord: Record<string, unknown> = Object.fromEntries(Object.entries(defaults));
 
   // Sort field names for deterministic byte-order ordering (not locale-dependent)
   // oxlint-disable-next-line unicorn/no-array-sort -- in-place sort of a fresh array; toSorted() would copy for no reason
@@ -125,8 +137,8 @@ function fillFromDefaults(data: Record<string, unknown>, meta: ResourceMeta): vo
   const fields = meta.fields;
   const defaults = meta.defaults;
   for (let i = 0; i < fields.length; i++) {
-    const f = fields[i]!;
-    data[f] = cloneValue(defaults[f]);
+    const field = fields[i]!;
+    data[field] = cloneValue(defaults[field]);
   }
 }
 
@@ -158,10 +170,12 @@ export function setResource<R extends Resource>(
 ): void {
   const data = world.resources.get(res) ?? initResource(world, res);
   for (const key in values) {
-    // An explicitly-undefined entry leaves the field untouched (same contract
-    // as writeFieldOverrides); exactOptionalPropertyTypes already rejects it
-    // at compile time, so this only guards untyped callers.
-    if (values[key] !== undefined) {
+    // Only the value object's own keys are written — an enumerable property
+    // inherited from its prototype is not part of the write set. An
+    // explicitly-undefined entry leaves the field untouched (same contract as
+    // writeFieldOverrides); exactOptionalPropertyTypes already rejects it at
+    // compile time, so this only guards untyped callers.
+    if (Object.hasOwn(values, key) && values[key] !== undefined) {
       data[key] = cloneValue(values[key]);
     }
   }

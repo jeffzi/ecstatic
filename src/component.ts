@@ -138,15 +138,28 @@ function defaultColumnCtor(value: unknown): NumericColumnCtor | undefined {
 
 const FIELD_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** Validate field names against ^[A-Za-z_][A-Za-z0-9_]*$ */
-function validateFieldName(componentName: string, fieldName: unknown): asserts fieldName is string {
+/**
+ * Validates a field name against `^[A-Za-z_][A-Za-z0-9_]*$`.
+ *
+ * Shared by `component()` and `resource()` so both namespaces accept exactly
+ * the same field names; `kind` only selects the noun in the error message.
+ *
+ * @param kind - Declaration kind naming the field group.
+ * @param ownerName - Name of the component or resource declaring the field.
+ * @param fieldName - Candidate field name.
+ */
+export function validateFieldName(
+  kind: "component" | "resource",
+  ownerName: string,
+  fieldName: unknown,
+): asserts fieldName is string {
   if (typeof fieldName !== "string") {
-    throw new Error(`component field names must be strings: ${componentName}`);
+    throw new Error(`${kind} field names must be strings: ${ownerName}`);
   }
 
   if (!FIELD_NAME_PATTERN.test(fieldName)) {
     throw new Error(
-      `component field name must be a valid ASCII identifier (^[A-Za-z_][A-Za-z0-9_]*$): ${componentName}.${fieldName}`,
+      `${kind} field name must be a valid ASCII identifier (^[A-Za-z_][A-Za-z0-9_]*$): ${ownerName}.${fieldName}`,
     );
   }
 }
@@ -171,7 +184,7 @@ function validateFields(componentName: string, fields: unknown): Record<string, 
 
   const defaults = fields;
   for (const fieldName in defaults) {
-    validateFieldName(componentName, fieldName);
+    validateFieldName("component", componentName, fieldName);
   }
 
   return defaults;
