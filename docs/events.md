@@ -169,11 +169,11 @@ entities will ever have the optional enabled at any given time, consider a separ
 
 ```typescript
 // Poor fit: Shield enabled on <5% of 10,000 enemies — 95% of the scan is branch misses
-const Enemy = archetype([Hp, Position, Velocity], [Shield]);
+class Enemy extends Archetype([Hp, Position, Velocity], [Shield]) {}
 
 // Better: dedicated archetype, dense iteration, no wasted scans
-const Enemy = archetype([Hp, Position, Velocity]);
-const ShieldedEnemy = archetype([Hp, Position, Velocity, Shield]);
+class Enemy extends Archetype([Hp, Position, Velocity]) {}
+class ShieldedEnemy extends Archetype([Hp, Position, Velocity, Shield]) {}
 ```
 
 The threshold is workload-dependent — measure before splitting an archetype over it.
@@ -332,7 +332,7 @@ the old.
 **Example — enemy death → corpse:**
 
 ```typescript
-const Corpse = archetype([Position, Sprite, DecayTimer]);
+class Corpse extends Archetype([Position, Sprite, DecayTimer]) {}
 const corpses = register(world, Corpse);
 
 // Death system
