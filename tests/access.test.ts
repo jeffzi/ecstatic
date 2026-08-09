@@ -404,6 +404,7 @@ describe("set relation target field guard", () => {
     const entityId = spawn(storage, { SetGuardRecord: { target: targetId } });
 
     expect(() => {
+      // @ts-expect-error cannot write relation target field — use link() instead
       set(storage, entityId, SetGuardRecord, { target: targetId });
     }).toThrow("cannot write relation target field — use link() instead");
   });

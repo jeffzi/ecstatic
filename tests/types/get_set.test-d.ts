@@ -1,7 +1,16 @@
 import { describe, expectTypeOf, it } from "vitest";
 
 import type { EntityId } from "../../src/index.js";
-import { archetype, createWorld, get, register, relation, set, spawn } from "../../src/index.js";
+import {
+  archetype,
+  component,
+  createWorld,
+  get,
+  register,
+  relation,
+  set,
+  spawn,
+} from "../../src/index.js";
 import { Position } from "./_fixtures.js";
 
 describe("get", () => {
@@ -60,6 +69,26 @@ describe("set on relation fields", () => {
   it("allows data fields and reading the target", () => {
     set(storage, id, Rel.weight, 5);
     expectTypeOf(get(storage, id, Rel.target)).toExtend<EntityId>();
+  });
+
+  it("rejects the reserved target field in the record form", () => {
+    // @ts-expect-error cannot write relation target field — use link() instead
+    set(storage, id, Rel, { target: targetId });
+  });
+
+  it("allows data fields in the record form", () => {
+    set(storage, id, Rel, { weight: 5 });
+  });
+});
+
+describe("set on a plain component that declares a target field", () => {
+  const Anchor = component("GetSetTd_Anchor", { target: 0, slack: 1 });
+  const world = createWorld();
+  const storage = register(world, archetype([Anchor]));
+  const id = spawn(storage);
+
+  it("accepts the record form including the target field", () => {
+    set(storage, id, Anchor, { target: 7, slack: 2 });
   });
 });
 
