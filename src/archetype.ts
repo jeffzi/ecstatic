@@ -32,6 +32,23 @@ export interface ArchetypeDescriptor<
   readonly archetype: ArchetypeDescriptor<C, O>;
 }
 
+/**
+ * Base class produced by {@link Archetype}, carrying the canonical descriptor
+ * of the archetype it declares.
+ */
+interface ArchetypeDeclarationBase {
+  readonly __ecstatic_archetype: ArchetypeDescriptor;
+}
+
+/**
+ * An archetype in either declaration form: the descriptor returned by
+ * {@link archetype}, or a class declared with
+ * `class Ship extends Archetype(...) {}`.
+ */
+export type ArchetypeRef<A extends ArchetypeDescriptor = ArchetypeDescriptor> =
+  | A
+  | (new (...args: never[]) => A);
+
 /** Component tuple captured by a typed archetype descriptor. */
 export type ComponentsOf<A> =
   A extends ArchetypeDescriptor<infer C> ? C : readonly ComponentDescriptor[];
@@ -133,6 +150,115 @@ export function archetype(
 
   archetypeCache.set(key, descriptor);
   return descriptor;
+}
+
+/**
+ * Declare an archetype as a class, so the type carries the name you give it:
+ *
+ * ```ts
+ * class Ship extends Archetype([Position, Health], [Frozen]) {}
+ * const ships = register(world, Ship);
+ * ```
+ *
+ * The returned constructor is a declaration, not a value factory: it must be
+ * subclassed, and neither it nor its subclasses may be instantiated. The single
+ * `never` parameter turns `new Ship()` into a compile error; the runtime guard
+ * catches callers that cast past it.
+ *
+ * Component lists are validated and canonicalized by {@link archetype}, so a
+ * class and an equivalent descriptor name the same archetype.
+ *
+ * The declared lists stay readable as `components` and `optionals` statics, with
+ * their tuple types intact, so one declaration composes into another:
+ *
+ * ```ts
+ * class Vehicle extends Archetype([Position, Health], [Frozen]) {}
+ * class Tank extends Archetype([...Vehicle.components, Cannon], [...Vehicle.optionals]) {}
+ * ```
+ *
+ * @param required - Component descriptors required on every entity in this archetype
+ * @param optionals - Component descriptors that may or may not be present (up to 32)
+ * @returns A constructor to extend, carrying the canonical archetype descriptor
+ *
+ * @throws Whatever {@link archetype} throws for the given component lists
+ */
+export function Archetype<
+  const C extends readonly ComponentDescriptor[] = readonly [],
+  const O extends readonly ComponentDescriptor[] = readonly [],
+>(
+  required?: C,
+  optionals?: O,
+): (new (archetypeClassesAreNotConstructable: never) => ArchetypeDescriptor<C, O>) & {
+  readonly components: C;
+  readonly optionals: O;
+};
+export function Archetype(
+  required: readonly ComponentDescriptor[] = [],
+  optionals: readonly ComponentDescriptor[] = [],
+): (new (archetypeClassesAreNotConstructable: never) => ArchetypeDescriptor) & {
+  readonly components: readonly ComponentDescriptor[];
+  readonly optionals: readonly ComponentDescriptor[];
+} {
+  const descriptor = archetype(required, optionals);
+
+  // The instance type is unreachable — the constructor always throws — so merging
+  // the descriptor into it costs no runtime members and lets `register(world, Ship)`
+  // read the archetype straight off the class's instance type.
+  // oxlint-disable-next-line typescript/no-unsafe-declaration-merging -- uninitialized merged members are unobservable without an instance
+  interface ArchetypeDeclaration extends ArchetypeDescriptor {}
+
+  class ArchetypeDeclaration {
+    static readonly __ecstatic_archetype: ArchetypeDescriptor = descriptor;
+
+    /** Required components of the declared archetype, in declaration order. */
+    static readonly components: readonly ComponentDescriptor[] = descriptor.components;
+
+    /** Optional components of the declared archetype, in declaration order. */
+    static readonly optionals: readonly ComponentDescriptor[] = descriptor.optionals;
+
+    constructor() {
+      throw new Error(
+        "archetype classes are declarations, not instances: use `class Ship extends Archetype(...) {}` and pass the class itself",
+      );
+    }
+  }
+
+  return ArchetypeDeclaration;
+}
+
+/** Type guard for the class {@link Archetype} returns, before it is subclassed. */
+function isArchetypeDeclarationBase(value: unknown): value is ArchetypeDeclarationBase {
+  return typeof value === "function" && Object.hasOwn(value, "__ecstatic_archetype");
+}
+
+/**
+ * Resolve an archetype in either declaration form to its canonical descriptor.
+ *
+ * @param arch - An archetype descriptor, or a class extending {@link Archetype}
+ * @returns The canonical descriptor the argument names
+ *
+ * @throws If given the {@link Archetype} return value itself, which carries no name
+ * @throws If given a class that does not extend {@link Archetype} directly
+ */
+export function resolveArchetype(arch: ArchetypeRef): ArchetypeDescriptor {
+  if (typeof arch !== "function") {
+    return arch;
+  }
+
+  if (isArchetypeDeclarationBase(arch)) {
+    throw new Error(
+      "an Archetype() result must be subclassed to carry a name: declare `class Ship extends Archetype(...) {}` and pass Ship",
+    );
+  }
+
+  const base: unknown = Object.getPrototypeOf(arch);
+  if (!isArchetypeDeclarationBase(base)) {
+    throw new Error(
+      `${arch.name} must extend Archetype() directly; extending a declared archetype class would give one archetype two names`,
+    );
+  }
+
+  return base.__ecstatic_archetype;
 }
 
 /**

@@ -8,7 +8,7 @@ export const VERSION: string = readPackageVersion(
 );
 
 export type { ArchetypeDescriptor, ComponentsOf, OptionalsOf } from "./archetype.js";
-export { archetype } from "./archetype.js";
+export { Archetype, archetype } from "./archetype.js";
 export {
   type Component,
   type ComponentDescriptor,
