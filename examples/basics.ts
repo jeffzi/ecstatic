@@ -6,7 +6,7 @@
 
 import {
   alive,
-  archetype,
+  Archetype,
   components,
   createWorld,
   despawn,
@@ -39,7 +39,7 @@ const { Position, Health, Label, Stunned, OnFire } = components({
 
 // Archetype: fixed entity layout. Required components are always present;
 // optional components (second list) can be toggled per-entity at runtime.
-const Enemy = archetype([Position, Health, Label], [Stunned, OnFire]);
+class Enemy extends Archetype([Position, Health, Label], [Stunned, OnFire]) {}
 
 // ---------------------------------------------------------------------------
 // World setup

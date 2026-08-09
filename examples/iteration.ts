@@ -2,7 +2,7 @@
 //
 // Demonstrates: each() with view callbacks, despawnMany().
 
-import { archetype, components, createWorld, despawnMany, each, register, spawn } from "ecstatic";
+import { Archetype, components, createWorld, despawnMany, each, register, spawn } from "ecstatic";
 
 const { Position, Velocity, Health, OnFire } = components({
   Position: { x: 0, y: 0 },
@@ -11,8 +11,8 @@ const { Position, Velocity, Health, OnFire } = components({
   OnFire: {},
 });
 
-const Enemy = archetype([Position, Health], [OnFire]);
-const Bullet = archetype([Position, Velocity]);
+class Enemy extends Archetype([Position, Health], [OnFire]) {}
+class Bullet extends Archetype([Position, Velocity]) {}
 
 const world = createWorld();
 const enemies = register(world, Enemy);
