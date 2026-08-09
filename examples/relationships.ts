@@ -7,7 +7,7 @@
 
 import {
   alive,
-  archetype,
+  Archetype,
   components,
   createWorld,
   despawn,
@@ -49,15 +49,15 @@ const Aggro = relation("Aggro", { threat: 0 });
 // Archetypes & world setup
 // ---------------------------------------------------------------------------
 
-const Ship = archetype([Position, Health]);
-const Turret = archetype([Position, ChildOf]);
-const Projectile = archetype([Position, Target]);
-const Item = archetype([Position], [ContainedIn]);
-const Bag = archetype([Position]);
-const PlayerA = archetype([Position, Affiliation]);
-const Team = archetype([Position]);
-const PlayerB = archetype([Position, MemberOf]);
-const Enemy = archetype([Position, Health, Aggro]);
+class Ship extends Archetype([Position, Health]) {}
+class Turret extends Archetype([Position, ChildOf]) {}
+class Projectile extends Archetype([Position, Target]) {}
+class Item extends Archetype([Position], [ContainedIn]) {}
+class Bag extends Archetype([Position]) {}
+class PlayerA extends Archetype([Position, Affiliation]) {}
+class Team extends Archetype([Position]) {}
+class PlayerB extends Archetype([Position, MemberOf]) {}
+class Enemy extends Archetype([Position, Health, Aggro]) {}
 
 const world = createWorld();
 const ships = register(world, Ship);

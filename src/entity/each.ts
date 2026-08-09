@@ -131,15 +131,26 @@ export type FilteredViewOf<S extends Storage, F> =
       : never
     : never;
 
-type PromoteAll<U, All extends ComponentDescriptor> = Omit<U, ComponentName<All>> & {
-  [C in All as ComponentName<C>]: Exclude<PropertyOf<U, ComponentName<C>>, undefined>;
-};
+/**
+ * The empty-axis checks are display-driven: `Omit<V, never>` and `& {}` are
+ * structural no-ops, but they survive into editor hovers — skipping them keeps
+ * a one-axis filter's view printing as a single Omit/intersection.
+ */
+type PromoteAll<U, All extends ComponentDescriptor> = [All] extends [never]
+  ? U
+  : Omit<U, ComponentName<All>> & {
+      [C in All as ComponentName<C>]: Exclude<PropertyOf<U, ComponentName<C>>, undefined>;
+    };
 
 type ViewApplyFilterImpl<
   V,
   All extends ComponentDescriptor,
   None extends ComponentDescriptor,
-> = V extends infer U ? Omit<PromoteAll<U, All>, ComponentName<None>> : never;
+> = V extends infer U
+  ? [None] extends [never]
+    ? PromoteAll<U, All>
+    : Omit<PromoteAll<U, All>, ComponentName<None>>
+  : never;
 
 /** A generated view paired with its row-index rebinder. */
 export interface BoundView {

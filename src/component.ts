@@ -295,7 +295,7 @@ export function component<N extends string>(name: N): Tag<N>;
 export function component<N extends string, T extends Record<string, FieldDefault>>(
   name: N,
   fields: T,
-): keyof T extends never ? Tag<N> : Component<N, InferFields<T>>;
+): keyof T extends never ? Tag<N> : Component<N, { [K in keyof T]: InferFieldValue<T[K]> }>;
 export function component(name: string, fields?: Record<string, unknown>): unknown {
   return createDescriptor(name, fields ?? {});
 }
@@ -309,7 +309,7 @@ export function components<T extends Record<string, Record<string, FieldDefault>
 ): {
   [K in keyof T]: keyof T[K] extends never
     ? Tag<K & string>
-    : Component<K & string, InferFields<T[K]>>;
+    : Component<K & string, { [F in keyof T[K]]: InferFieldValue<T[K][F]> }>;
 } {
   const result: Record<string, unknown> = {};
   const descriptorsByName = new Map<string, Record<string, unknown>>();
@@ -331,7 +331,7 @@ export function components<T extends Record<string, Record<string, FieldDefault>
   return result as unknown as {
     [K in keyof T]: keyof T[K] extends never
       ? Tag<K & string>
-      : Component<K & string, InferFields<T[K]>>;
+      : Component<K & string, { [F in keyof T[K]]: InferFieldValue<T[K][F]> }>;
   };
 }
 
@@ -390,8 +390,15 @@ export interface RefMarker<out T = unknown> extends ComponentDescriptor {
 /** Allowed field default values: scalars, ref markers, and width markers. */
 export type FieldDefault = number | string | boolean | RefMarker | WidthMarker;
 
-/** Map a declared field default to the field's value type (literals widened). */
-type InferFieldValue<D> =
+/**
+ * Map a declared field default to the field's value type (literals widened).
+ *
+ * Public signatures apply this field-by-field with an inline mapped type
+ * instead of a named `InferFields<T>` alias: TypeScript preserves alias names
+ * in hover display, so a named alias would surface as `InferFields<{...}>` in
+ * every editor tooltip instead of the resolved `{ x: number; y: number }`.
+ */
+export type InferFieldValue<D> =
   D extends RefMarker<infer R>
     ? R | undefined
     : D extends WidthMarker
@@ -403,9 +410,6 @@ type InferFieldValue<D> =
           : D extends string
             ? string
             : D;
-
-/** Map a defaults record to the record of field value types. */
-export type InferFields<T> = { [K in keyof T]: InferFieldValue<T[K]> };
 
 /** Extract the value type carried by a field descriptor. */
 export type FieldValue<D> = D extends FieldDescriptor<infer V> ? V : never;

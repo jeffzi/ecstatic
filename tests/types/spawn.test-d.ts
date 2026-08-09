@@ -1,7 +1,17 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import { archetype, createWorld, type EntityId, register, spawn } from "../../src/index.js";
-import { Health, Position } from "./_fixtures.js";
+import type { SpawnOverrides, SpawnOverridesFor } from "../../src/entity/spawn.js";
+import {
+  Archetype,
+  type ArchetypeDescriptor,
+  archetype,
+  createWorld,
+  type EntityId,
+  register,
+  relation,
+  spawn,
+} from "../../src/index.js";
+import { Health, Position, Stunned } from "./_fixtures.js";
 
 describe("spawn", () => {
   const world = createWorld();
@@ -46,5 +56,28 @@ describe("spawn", () => {
   it("rejects false for required components", () => {
     // @ts-expect-error required components cannot be disabled at spawn
     spawn(storage, { Position: false });
+  });
+});
+
+describe("SpawnOverridesFor", () => {
+  const Guarding = relation("SpawnOverridesForType_Guarding", [Position]);
+
+  class Enemy extends Archetype([Position, Health], [Stunned]) {}
+  class Guard extends Archetype([Health, Guarding]) {}
+
+  it("resolves a relation-free archetype to a single flat object type", () => {
+    expectTypeOf<SpawnOverridesFor<Enemy>>().toEqualTypeOf<{
+      Position?: true | Partial<{ x: number; y: number }>;
+      Health?: true | Partial<{ hp: number }>;
+      Stunned?: boolean;
+    }>();
+  });
+
+  it("keeps a required relation key mandatory", () => {
+    expectTypeOf<Record<string, never>>().not.toExtend<SpawnOverridesFor<Guard>>();
+  });
+
+  it("falls back to the loose record for an untyped descriptor", () => {
+    expectTypeOf<SpawnOverridesFor<ArchetypeDescriptor>>().toEqualTypeOf<SpawnOverrides>();
   });
 });
