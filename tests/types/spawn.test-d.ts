@@ -3,13 +3,13 @@ import { describe, expectTypeOf, it } from "vitest";
 import type { SpawnOverrides, SpawnOverridesFor } from "../../src/entity/spawn.js";
 import {
   Archetype,
-  type ArchetypeDescriptor,
   archetype,
   createWorld,
   type EntityId,
   register,
   relation,
   spawn,
+  type Storage,
 } from "../../src/index.js";
 import { Health, Position, Stunned } from "./_fixtures.js";
 
@@ -77,7 +77,7 @@ describe("SpawnOverridesFor", () => {
     expectTypeOf<Record<string, never>>().not.toExtend<SpawnOverridesFor<Guard>>();
   });
 
-  it("falls back to the loose record for an untyped descriptor", () => {
-    expectTypeOf<SpawnOverridesFor<ArchetypeDescriptor>>().toEqualTypeOf<SpawnOverrides>();
+  it("falls back to the loose record for the archetype of a bare Storage", () => {
+    expectTypeOf<SpawnOverridesFor<Storage["archetype"]>>().toEqualTypeOf<SpawnOverrides>();
   });
 });

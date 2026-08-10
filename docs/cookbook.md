@@ -509,6 +509,41 @@ clearQueue(collisionQueue);
 The `i < j` guard avoids duplicate pairs. Each consumer iterates the same queue independently;
 `clearQueue` resets the count at end of frame.
 
+## Hoisting query filters
+
+`query()` caches which storages match a filter, keyed by the filter object's **identity**. A
+filter written inline is a fresh object on every call, so it misses the cache and re-resolves
+the whole archetype set every frame. Hoist it to module scope and the resolution is computed
+once, then reused until `register` or `destroyWorld` invalidates it.
+
+```typescript
+// Slower: a new array literal each frame, so each frame re-resolves
+function movementSystem(world: World, dt: number) {
+  query(world, [Position, Velocity], (e) => {
+    e.Position.x += e.Velocity.vx * dt;
+  });
+}
+
+// Faster: one stable filter object, resolved once
+const Movable = [Position, Velocity] as const;
+
+function movementSystem(world: World, dt: number) {
+  query(world, Movable, (e) => {
+    e.Position.x += e.Velocity.vx * dt;
+  });
+}
+```
+
+Both filter forms `query()` accepts — the bare component array and the `{all, any, none}`
+object — go through the same identity-keyed cache. Matched-row flags live on the matchers and
+update as entities spawn, enable, and disable, so a hoisted filter never goes stale between
+resolutions.
+
+`each()` and `querySources()` need no hoisting: they resolve a filter to its bitmasks on every
+call and dedupe matchers by mask value, so an inline literal costs the literal plus one small
+tuple and a short scan of the storage's existing matchers, with no cached archetype set to
+miss.
+
 ## Batch vs single-entity operations
 
 `spawnMany`, `despawnMany`, `enableMany`, and `disableMany` exist for specific cases where

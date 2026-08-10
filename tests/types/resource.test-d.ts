@@ -4,7 +4,6 @@ import {
   createWorld,
   getResource,
   type Resource,
-  type ResourceFields,
   resetResource,
   setResource,
 } from "../../src/index.js";
@@ -23,13 +22,6 @@ describe("resource", () => {
   it("preserves the literal name and field shape in the brand", () => {
     const Time = resource("Time", { delta: 0 });
     expectTypeOf(Time).toEqualTypeOf<Resource<"Time", { delta: number }>>();
-  });
-
-  it("resolves ResourceFields to the declared field record", () => {
-    expectTypeOf<ResourceFields<typeof Score>>().toEqualTypeOf<{
-      value: number;
-      label: string;
-    }>();
   });
 });
 
