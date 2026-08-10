@@ -160,12 +160,15 @@ Hot paths allocate nothing after warmup. Columns grow by doubling and never shri
 capacity is recycled through the freelist; `each`/`query` produce no result arrays, no iterator
 objects, and no per-entity views.
 
-This is enforced, not aspired to: the benchmark pipeline runs a red-line allocation gate over
-the hot paths. The gate **measures, never reasons** — V8's escape analysis can remove an
-allocation silently, and stop removing it just as silently, so "that object gets scalar-replaced"
-is never an acceptable argument.
+This is settled by measurement, never by review. A red-line allocation gate over the hot paths is
+the instrument: it holds every operation to a byte budget that only ratchets down. The gate
+**measures, never reasons** — V8's escape analysis can remove an allocation silently, and stop
+removing it just as silently, so "that object gets scalar-replaced" is never an acceptable
+argument.
 
-The one budgeted exception is `spawnMany`'s returned ids array. The budget only ratchets down.
+A few operations carry a nonzero budget: `spawnMany`'s returned ids array is one by design, and a
+call-site record literal the engine declines to scalar-replace is another. Every nonzero budget
+names what allocates and why it stands.
 
 ## 10. Runtime-first: the untransformed runtime is the floor
 
