@@ -3,7 +3,6 @@
  */
 
 import {
-  type ArchetypeDescriptor,
   createWorld,
   destroyWorld,
   type EntityId,
@@ -43,7 +42,14 @@ export function benchRandom(): () => number {
   return mulberry32(SEED);
 }
 
-export interface BenchCtx<A extends ArchetypeDescriptor> {
+/**
+ * Constraint for the archetype a bench world is built around, recovered from
+ * the storage type: the descriptor type itself is not part of the package's
+ * export surface, so it cannot be named directly here.
+ */
+type AnyArchetype = Storage["archetype"];
+
+export interface BenchCtx<A extends AnyArchetype> {
   world: World;
   tracked: EntityId[];
   trackedStorage: Storage<A>;
@@ -97,14 +103,14 @@ export function benchCreateWorld(opts: CreateOpts = {}): BenchCtx<typeof tracked
   return { world, tracked, trackedStorage, n };
 }
 
-export interface BareCtx<A extends ArchetypeDescriptor> {
+export interface BareCtx<A extends AnyArchetype> {
   world: World;
   storage: Storage<A>;
   n: number;
 }
 
 /** Build a world holding nothing but `DEFAULT_N` default-valued entities of one archetype. */
-export function makeBareWorld<A extends ArchetypeDescriptor>(arch: A): BareCtx<A> {
+export function makeBareWorld<A extends AnyArchetype>(arch: A): BareCtx<A> {
   const n = DEFAULT_N;
   const world = createWorld();
   const storage = register(world, arch);
