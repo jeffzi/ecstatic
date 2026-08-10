@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional-component checks: `has` tests whether optional components are enabled and narrows the storage type at compile time; `hasAny` returns true when at least one of the listed optionals is enabled
 - Iteration filters: `each` accepts an `{all, any, none}` filter object (or a bare component array as `{all}` shorthand) to iterate only entities that have every `all` component, at least one `any` component, and no `none` component
 - Multi-storage iteration: `each` accepts an array of storages to iterate across archetypes in one pass
-- Cross-archetype iteration (`query()`): iterate entities across every archetype matching a filter, in one call; hoist the filter object to reuse the cached archetype resolution, since a fresh object literal re-resolves on every call
+- Cross-archetype iteration (`query()`): iterate entities across every archetype matching a filter, in one call
 
 ## [0.2.0] - 2026-07-31
 
