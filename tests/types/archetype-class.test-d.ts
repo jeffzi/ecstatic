@@ -2,8 +2,11 @@ import { describe, expectTypeOf, it } from "vitest";
 
 import {
   Archetype,
+  type ComponentsOf,
   createWorld,
   each,
+  type EntityId,
+  type OptionalsOf,
   register,
   spawn,
   type Storage,
@@ -67,6 +70,32 @@ describe("spawn overrides through a class-registered storage", () => {
   it("rejects unknown component names", () => {
     // @ts-expect-error Velocity is not on this archetype
     spawn(ships, { Velocity: { vx: 1 } });
+  });
+});
+
+describe("generic helper constrained on Storage", () => {
+  function trackedIds<S extends Storage>(
+    storage: S,
+    ids: readonly EntityId<S["archetype"]>[],
+  ): EntityId<S["archetype"]>[] {
+    return ids.slice(0, storage.n);
+  }
+
+  it("narrows entity ids to the storage's archetype", () => {
+    const world = createWorld();
+    const ships = register(world, Ship);
+
+    expectTypeOf(trackedIds(ships, [spawn(ships)])).toEqualTypeOf<EntityId<Ship>[]>();
+  });
+});
+
+describe("component-tuple type helpers on an archetype class", () => {
+  it("extracts the required component tuple", () => {
+    expectTypeOf<ComponentsOf<Ship>>().toEqualTypeOf<readonly [typeof Position, typeof Health]>();
+  });
+
+  it("extracts the optional component tuple", () => {
+    expectTypeOf<OptionalsOf<Ship>>().toEqualTypeOf<readonly [typeof Shield, typeof Stunned]>();
   });
 });
 
