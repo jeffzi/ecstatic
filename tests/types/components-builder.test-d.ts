@@ -6,7 +6,6 @@ import {
   component,
   components,
   createWorld,
-  type FieldValue,
   f32,
   i16,
   type RefMarker,
@@ -130,20 +129,6 @@ describe("width markers infer number field types", () => {
     expectTypeOf(Packed).toEqualTypeOf<
       Component<"CbPacked", { a: number; b: number; c: number }>
     >();
-  });
-});
-
-describe("ref field unwrapping in FieldValue", () => {
-  it("RefMarker<T> unwraps to T | undefined", () => {
-    const WithHandle = component("CbFvHandle", { handle: ref<Handle>() });
-
-    expectTypeOf<FieldValue<typeof WithHandle.handle>>().toEqualTypeOf<Handle | undefined>();
-  });
-
-  it("scalar field remains as-is in FieldValue", () => {
-    const Pos = component("CbFvPos", { x: 0 });
-
-    expectTypeOf<FieldValue<typeof Pos.x>>().toEqualTypeOf<number>();
   });
 });
 

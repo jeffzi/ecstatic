@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
 
+import type { ComponentDescriptor } from "../src/component.js";
 import {
   archetype,
   components,
   despawn,
   despawnMany,
-  getRelationMeta,
   relation,
   spawn,
   spawnMany,
 } from "../src/index.js";
+import { getRelationMeta } from "../src/relation.js";
 import { createWorld, register } from "../src/world.js";
 import { rowOf } from "./fixtures.js";
 
@@ -22,22 +23,14 @@ const { SpawnOptShield: Shield } = components({
 const { SpawnOptStunned: Stunned } = components({ SpawnOptStunned: {} });
 const { SpawnOptOnFire: OnFire } = components({ SpawnOptOnFire: {} });
 
-function createShieldStorage() {
+function createStorage<const O extends readonly ComponentDescriptor[]>(optionals: O) {
   const world = createWorld();
-  const storage = register(world, archetype([Position], [Shield]));
-  return { world, storage };
-}
-
-function createShieldStunnedStorage() {
-  const world = createWorld();
-  const storage = register(world, archetype([Position], [Shield, Stunned]));
-  return { world, storage };
+  return register(world, archetype([Position], optionals));
 }
 
 describe("spawn with optionals", () => {
   it("sets mask to 0 on spawn", () => {
-    const world = createWorld();
-    const storage = register(world, archetype([Position], [Stunned]));
+    const storage = createStorage([Stunned]);
 
     const id = spawn(storage);
 
@@ -45,7 +38,7 @@ describe("spawn with optionals", () => {
   });
 
   it("pre-populates optional SoA with defaults on fresh spawn", () => {
-    const { storage } = createShieldStorage();
+    const storage = createStorage([Shield]);
 
     const id = spawn(storage);
     const row = rowOf(storage, id);
@@ -56,7 +49,7 @@ describe("spawn with optionals", () => {
   });
 
   it("enables an optional data component with defaults on override true", () => {
-    const { storage } = createShieldStorage();
+    const storage = createStorage([Shield]);
 
     const id = spawn(storage, { SpawnOptShield: true });
     const row = rowOf(storage, id);
@@ -69,7 +62,7 @@ describe("spawn with optionals", () => {
   });
 
   it("enables an optional data component and patches listed fields on record override", () => {
-    const { storage } = createShieldStorage();
+    const storage = createStorage([Shield]);
 
     const id = spawn(storage, { SpawnOptShield: { hp: 200 } });
     const row = rowOf(storage, id);
@@ -82,8 +75,7 @@ describe("spawn with optionals", () => {
   });
 
   it("enables an optional tag on override true", () => {
-    const world = createWorld();
-    const storage = register(world, archetype([Position], [Stunned]));
+    const storage = createStorage([Stunned]);
 
     const id = spawn(storage, { SpawnOptStunned: true });
     const row = rowOf(storage, id);
@@ -92,8 +84,7 @@ describe("spawn with optionals", () => {
   });
 
   it("leaves optionals disabled on override false or omission", () => {
-    const world = createWorld();
-    const storage = register(world, archetype([Position], [Stunned, OnFire]));
+    const storage = createStorage([Stunned, OnFire]);
 
     const id = spawn(storage, { SpawnOptStunned: false });
 
@@ -101,7 +92,7 @@ describe("spawn with optionals", () => {
   });
 
   it("reflects exactly the enabled set for mixed overrides", () => {
-    const { storage } = createShieldStunnedStorage();
+    const storage = createStorage([Shield, Stunned]);
 
     const id = spawn(storage, {
       SpawnOptPosition: { x: 5, y: 0 },
@@ -119,7 +110,7 @@ describe("spawn with optionals", () => {
   });
 
   it("applies the optional override grammar to every entity in spawnMany", () => {
-    const { storage } = createShieldStunnedStorage();
+    const storage = createStorage([Shield, Stunned]);
 
     const ids = spawnMany(storage, 3, { SpawnOptShield: { hp: 75 }, SpawnOptStunned: false });
 
@@ -136,7 +127,7 @@ describe("spawn with optionals", () => {
 
 describe("spawn pre-population on recycled slots", () => {
   it("re-populates optional defaults on a recycled slot", () => {
-    const { storage } = createShieldStorage();
+    const storage = createStorage([Shield]);
 
     const idA = spawn(storage, { SpawnOptShield: { hp: 99, defense: 7 } });
     despawn(storage, idA);
@@ -150,7 +141,7 @@ describe("spawn pre-population on recycled slots", () => {
   });
 
   it("re-populates optional defaults on recycled slots through the spawnMany batch path", () => {
-    const { storage } = createShieldStorage();
+    const storage = createStorage([Shield]);
 
     spawnMany(storage, 3, { SpawnOptShield: { hp: 99, defense: 7 } });
     despawnMany(storage);
@@ -166,7 +157,7 @@ describe("spawn pre-population on recycled slots", () => {
   });
 
   it("re-populates a disabled optional's defaults even when the spawn enables another optional", () => {
-    const { storage } = createShieldStunnedStorage();
+    const storage = createStorage([Shield, Stunned]);
 
     const idA = spawn(storage, { SpawnOptShield: { hp: 99, defense: 7 } });
     despawn(storage, idA);
@@ -182,14 +173,13 @@ describe("spawn pre-population on recycled slots", () => {
 
 describe("hasOptionalData flag", () => {
   it("is true when any optional carries data fields", () => {
-    const { storage } = createShieldStorage();
+    const storage = createStorage([Shield]);
 
     expect(storage.hasOptionalData).toBe(true);
   });
 
   it("is false for tag-only optionals", () => {
-    const world = createWorld();
-    const storage = register(world, archetype([Position], [Stunned, OnFire]));
+    const storage = createStorage([Stunned, OnFire]);
 
     expect(storage.hasOptionalData).toBe(false);
   });
