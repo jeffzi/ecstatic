@@ -28,6 +28,50 @@
         "typescript/no-unsafe-type-assertion": "off",
         "unicorn/consistent-function-scoping": "off"
       }
+    },
+    {
+      "files": ["src/**"],
+      "rules": {
+        "import/no-nodejs-modules": "error",
+        "no-restricted-globals": [
+          "error",
+          {
+            "globals": [
+              { "name": "process", "message": "Pillar 13: src/ must be platform-neutral." },
+              { "name": "Buffer", "message": "Pillar 13: src/ must be platform-neutral." },
+              { "name": "window", "message": "Pillar 13: src/ must be platform-neutral." },
+              { "name": "document", "message": "Pillar 13: src/ must be platform-neutral." },
+              { "name": "navigator", "message": "Pillar 13: src/ must be platform-neutral." },
+              { "name": "performance", "message": "Pillar 13: src/ must be platform-neutral." },
+              { "name": "crypto", "message": "Pillar 13: src/ must be platform-neutral." },
+              { "name": "setTimeout", "message": "Pillar 13: src/ must be platform-neutral." },
+              { "name": "setInterval", "message": "Pillar 13: src/ must be platform-neutral." },
+              { "name": "setImmediate", "message": "Pillar 13: src/ must be platform-neutral." },
+              { "name": "queueMicrotask", "message": "Pillar 13: src/ must be platform-neutral." },
+              {
+                "name": "requestAnimationFrame",
+                "message": "Pillar 13: src/ must be platform-neutral."
+              },
+              { "name": "require", "message": "Pillar 13: src/ must be platform-neutral." },
+              { "name": "__dirname", "message": "Pillar 13: src/ must be platform-neutral." },
+              { "name": "__filename", "message": "Pillar 13: src/ must be platform-neutral." }
+            ]
+          }
+        ],
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "Math",
+            "property": "random",
+            "message": "Pillar 12: no nondeterminism in src/."
+          },
+          {
+            "object": "Date",
+            "property": "now",
+            "message": "Pillar 12: no nondeterminism in src/."
+          }
+        ]
+      }
     }
   ],
   "plugins": ["typescript", "unicorn", "oxc", "import", "promise", "vitest"],

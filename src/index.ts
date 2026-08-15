@@ -1,11 +1,5 @@
-import { createRequire } from "node:module";
-
-import { readPackageVersion } from "./version.js";
-
-/** SemVer version string of the ecstatic package. */
-export const VERSION: string = readPackageVersion(
-  createRequire(import.meta.url)("../package.json"),
-);
+export { DEBUG } from "./debug.js";
+export { VERSION } from "./version.js";
 
 export type { ComponentsOf, OptionalsOf } from "./archetype.js";
 export { Archetype, archetype } from "./archetype.js";

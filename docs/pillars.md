@@ -210,3 +210,36 @@ delta/networking tier would capture ops explicitly at caller-owned mutation site
 
 The full argument, including the decision framework for "do I need an event here?", is in
 `docs/events.md`.
+
+## 12. Deterministic
+
+The same sequence of world operations yields the same entity IDs (including generational reuse),
+the same `each`/`query`/`querySources` iteration order, and the same results — across runs and
+across runtimes.
+
+Iteration order is a specified function of spawn/despawn history, not an implementation detail:
+
+- `each` walks dense rows from last to first.
+- Despawn fills the hole with swap-and-pop: the last row moves into the vacated slot.
+- The freelist is LIFO: the next spawn reuses the most recently freed index with an incremented
+  generation.
+
+The runtime never reads wall clock, randomness, hash order, or platform state. Float math is
+whatever the engine gives — no fixed-point promise; that is the game's concern.
+
+Enforcement: lint restrictions on nondeterminism sources (`Math.random`, `Date.now`,
+`performance`, timers) in `src/`, plus a replay test that drives the same op sequence into two
+independently created worlds and asserts identical ID and iteration-order traces.
+
+## 13. Portable: runs wherever JavaScript does
+
+`src/` uses only ECMAScript — no Node builtins, no `process`, no DOM. One build serves browsers,
+Node, workers, and edge runtimes; client simulation code is reusable on the server unchanged.
+
+Debug checks strip via a bundler `define` of `NDEBUG` (pillar 5). No runtime-specific opt-out
+mechanism exists.
+
+Enforcement: `tsconfig.build.json` sets `types: []` so `src/` typechecks against pure ES with
+no `@types/node`; oxlint restricts Node globals, Node imports, and nondeterminism sources in
+`src/`; and a portability test bundles `src/index.ts` with esbuild for a browser target and runs
+it in a bare `node:vm` context (no `process`, no Node builtins).

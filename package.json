@@ -27,6 +27,7 @@
     }
   },
   "scripts": {
+    "bench:measure": "gymrat measure",
     "bench:once": "npm run -s build && tsx --expose-gc benchmarks/main.ts",
     "bench": "gymrat compare",
     "build": "tsc -p tsconfig.build.json",
@@ -38,8 +39,9 @@
     "check:quality": "fallow --fail-on-issues --quiet",
     "check:security": "fallow security",
     "check:spelling": "cspell --no-progress \"**/*.{ts,tsx,mts,cts,md}\"",
-    "check:static": "run-s -c check:lint check:md check:fmt check:actions check:typelint check:spelling check:type",
-    "check:type": "tsc -p tsconfig.json --noEmit && tsc -p examples/tsconfig.json --noEmit && tsc -p benchmarks/tsconfig.json --noEmit",
+    "check:static": "run-s -c check:lint check:md check:fmt check:actions check:typelint check:spelling check:type check:version",
+    "check:version": "tsx scripts/sync-version.ts --check",
+    "check:type": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.build.json --noEmit && tsc -p examples/tsconfig.json --noEmit && tsc -p benchmarks/tsconfig.json --noEmit",
     "check:typelint": "oxlint --type-aware",
     "check": "run-s -c check:static check:quality",
     "examples": "npm run build && tsx examples/basics.ts && tsx examples/iteration.ts && tsx examples/component-sets.ts && tsx examples/relationships.ts && tsx examples/resources.ts && tsx examples/game-loop.ts && tsx examples/optionals.ts",
@@ -51,7 +53,8 @@
     "prepare": "test -d .git && lefthook install || true",
     "prepublishOnly": "npm run build && npm run check && npm run check:package && npm test",
     "test:types": "vitest run --project types",
-    "test": "vitest run --coverage"
+    "test": "vitest run --coverage",
+    "version": "tsx scripts/sync-version.ts && git add src/version.ts"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.0",
@@ -73,6 +76,9 @@
     "tsx": "^4.23.0",
     "typescript": "^7.0.0",
     "vitest": "^4.1.0"
+  },
+  "optionalDependencies": {
+    "gymrat": "file:../gymrat"
   },
   "engines": {
     "node": ">=22"
