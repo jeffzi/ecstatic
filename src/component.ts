@@ -1,14 +1,15 @@
 /**
  * Component system: define components with typed fields and defaults.
- * Module-level name registry prevents duplicate component names.
+ * Module-level name registry returns existing descriptors for equal shapes
+ * and throws on shape conflicts.
  * Fields are validated against the pattern ^[A-Za-z_][A-Za-z0-9_]*$.
  * Field order is deterministic (byte-order sorted).
  * Reference fields hold entity IDs and are unwrapped in APIs.
  * Width markers (f32, i32, etc.) select TypedArray constructors for storage.
  */
 
-/** Module-level name registry to prevent duplicate components */
-const seenNames = new Set<string>();
+/** Module-level name registry: name → descriptor. Returns existing on equal shape, throws on conflict. */
+const seenNames = new Map<string, Record<string, unknown>>();
 
 /** Module-level sentinel for reference field markers, compared by identity */
 const REF_SENTINEL: Record<string, never> = {};
@@ -190,11 +191,35 @@ function validateFields(componentName: string, fields: unknown): Record<string, 
   return defaults;
 }
 
-/** Throws if the name collides with any prior component() or components() call — module-global uniqueness. */
-function assertNameAvailable(name: string): void {
-  if (seenNames.has(name)) {
-    throw new Error(`component name already registered: ${name}`);
+/** Normalized per-field storage plan produced by classifyFieldDefault. */
+interface FieldPlan {
+  readonly value: unknown;
+  readonly isReference: boolean;
+  readonly columnCtor: NumericColumnCtor | undefined;
+}
+
+/** Classifies a single field default into its normalized value, reference flag, and column constructor. */
+function classifyFieldDefault(defaultValue: unknown): FieldPlan {
+  if (defaultValue === REF_SENTINEL) {
+    return { value: undefined, isReference: true, columnCtor: undefined };
   }
+
+  if (isWidthMarker(defaultValue)) {
+    return {
+      value: defaultValue.value,
+      isReference: false,
+      columnCtor: getColumnCtorForMarker(defaultValue.__ecstatic_width_marker),
+    };
+  }
+
+  if (typeof defaultValue === "object" && defaultValue !== null && !Array.isArray(defaultValue)) {
+    throw new Error(
+      "ecstatic: object defaults are not supported; declare the field with ref<T>() and initialize it explicitly",
+    );
+  }
+
+  // Scalar default (number, string, boolean, array)
+  return { value: defaultValue, isReference: false, columnCtor: defaultColumnCtor(defaultValue) };
 }
 
 /** Assumes defaults was already produced by validateFields — does not re-validate field names. */
@@ -211,37 +236,14 @@ function descriptorFromDefaults(
   const isReference: (boolean | undefined)[] = [];
   const columnCtors: (NumericColumnCtor | undefined)[] = [];
 
-  // Normalize defaults: extract values from width markers
   const normalizedDefaults: Record<string, unknown> = {};
 
   for (const fieldName of fields) {
-    const defaultValue = defaults[fieldName];
-
-    if (defaultValue === REF_SENTINEL) {
-      defaultValues.push(undefined);
-      isReference.push(true);
-      columnCtors.push(undefined);
-      normalizedDefaults[fieldName] = undefined;
-    } else if (isWidthMarker(defaultValue)) {
-      defaultValues.push(defaultValue.value);
-      isReference.push(false);
-      columnCtors.push(getColumnCtorForMarker(defaultValue.__ecstatic_width_marker));
-      normalizedDefaults[fieldName] = defaultValue.value;
-    } else if (
-      typeof defaultValue === "object" &&
-      defaultValue !== null &&
-      !Array.isArray(defaultValue)
-    ) {
-      throw new Error(
-        "ecstatic: object defaults are not supported; declare the field with ref<T>() and initialize it explicitly",
-      );
-    } else {
-      // Scalar default (number, string, boolean, array)
-      defaultValues.push(defaultValue);
-      isReference.push(false);
-      columnCtors.push(defaultColumnCtor(defaultValue));
-      normalizedDefaults[fieldName] = defaultValue;
-    }
+    const plan = classifyFieldDefault(defaults[fieldName]);
+    defaultValues.push(plan.value);
+    isReference.push(plan.isReference);
+    columnCtors.push(plan.columnCtor);
+    normalizedDefaults[fieldName] = plan.value;
   }
 
   const descriptor: Record<string, unknown> = {
@@ -274,22 +276,125 @@ export function ref<T = unknown>(): RefMarker<T> {
   return REF_SENTINEL as unknown as RefMarker<T>;
 }
 
+/** Descriptor keys whose arrays define component shape for idempotent registration. */
+const SHAPE_ARRAY_KEYS = [
+  "__ecstatic_fields",
+  "__ecstatic_default_values",
+  "__ecstatic_is_reference",
+  "__ecstatic_column_ctor",
+] as const;
+
+function arraysIdentical(a: unknown[], b: unknown[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function shapeArraysMatch(
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+): boolean {
+  for (const key of SHAPE_ARRAY_KEYS) {
+    const a = existing[key];
+    const b = incoming[key];
+    if (!Array.isArray(a) || !Array.isArray(b)) {
+      if (a !== b) return false;
+      continue;
+    }
+    if (!arraysIdentical(a, b)) return false;
+  }
+  return true;
+}
+
+function relationMetadataMatch(
+  existing: Record<string, unknown>,
+  options?: CreateDescriptorOptions,
+): boolean {
+  const existingIsRelation = existing.isRelation === true;
+  const incomingIsRelation = options?.isRelation === true;
+  if (existingIsRelation !== incomingIsRelation) return false;
+  if (!existingIsRelation) return true;
+  const ec = existing.constraints;
+  const ic = options?.constraints ?? [];
+  if (!Array.isArray(ec)) return false;
+  return arraysIdentical(ec, ic);
+}
+
+/**
+ * Two descriptors have equal shape when their field names, default values,
+ * reference flags, column constructors, and relation metadata all match
+ * element-wise.
+ */
+function shapesEqual(
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+  options?: CreateDescriptorOptions,
+): boolean {
+  return shapeArraysMatch(existing, incoming) && relationMetadataMatch(existing, options);
+}
+
+/** Relation metadata passed to createDescriptor for shape comparison. */
+export interface CreateDescriptorOptions {
+  readonly isRelation?: true;
+  readonly constraints?: ComponentDescriptor[];
+}
+
+/**
+ * Looks up `name` in the idempotent registry. Returns the existing descriptor
+ * when its shape matches `defaults`/`options`, throws on a shape conflict,
+ * and returns `undefined` when the name is unregistered.
+ */
+function resolveExisting(
+  name: string,
+  defaults: Record<string, unknown>,
+  options?: CreateDescriptorOptions,
+): Record<string, unknown> | undefined {
+  const existing = seenNames.get(name);
+  if (existing === undefined) {
+    return undefined;
+  }
+
+  const incoming = descriptorFromDefaults(name, defaults);
+  if (!shapesEqual(existing, incoming, options)) {
+    throw new Error(`component shape conflict: ${name}`);
+  }
+  return existing;
+}
+
 /**
  * Shared descriptor-construction path for component() and relation():
- * validates the name and fields, registers the name (relations share the
- * component namespace), and builds the descriptor.
+ * validates the name and fields, checks the idempotent registry (returns
+ * existing on equal shape, throws on conflict), and builds the descriptor.
  */
-export function createDescriptor(name: string, rawFields: unknown): Record<string, unknown> {
-  assertNameAvailable(name);
+export function createDescriptor(
+  name: string,
+  rawFields: unknown,
+  options?: CreateDescriptorOptions,
+): Record<string, unknown> {
   const defaults = validateFields(name, rawFields);
+
+  const existing = resolveExisting(name, defaults, options);
+  if (existing !== undefined) {
+    return existing;
+  }
+
   const descriptor = descriptorFromDefaults(name, defaults);
-  seenNames.add(name);
+
+  if (options?.isRelation === true) {
+    descriptor.isRelation = true;
+    descriptor.constraints = options.constraints ?? [];
+  }
+
+  seenNames.set(name, descriptor);
   return descriptor;
 }
 
 /**
  * Register a single component descriptor from a name and optional field defaults.
  * If fields is omitted, the result is a tag (0-field component).
+ * Re-declaring with equal shape returns the existing descriptor; different shape throws.
  */
 export function component<N extends string>(name: N): Tag<N>;
 export function component<N extends string, T extends Record<string, FieldDefault>>(
@@ -303,6 +408,8 @@ export function component(name: string, fields?: Record<string, unknown>): unkno
 /**
  * Register multiple component types from a single name-keyed declaration object.
  * Validates all components before registering any names (atomic validation).
+ * Already-registered names with equal shape return existing descriptors;
+ * shape conflicts throw before any new name is registered.
  */
 export function components<T extends Record<string, Record<string, FieldDefault>>>(
   defs: T,
@@ -312,18 +419,24 @@ export function components<T extends Record<string, Record<string, FieldDefault>
     : Component<K & string, { [F in keyof T[K]]: InferFieldValue<T[K][F]> }>;
 } {
   const result: Record<string, unknown> = {};
-  const descriptorsByName = new Map<string, Record<string, unknown>>();
+  const newDescriptors = new Map<string, Record<string, unknown>>();
 
-  // Validate and build all descriptors before registering any names (atomic)
+  // Validate all components before registering any names (atomic).
+  // Already-registered names with equal shape resolve to the existing descriptor;
+  // shape conflicts throw before any new name is registered.
   for (const name in defs) {
-    assertNameAvailable(name);
     const defaults = validateFields(name, defs[name]);
-    descriptorsByName.set(name, descriptorFromDefaults(name, defaults));
+    const existing = resolveExisting(name, defaults);
+
+    if (existing !== undefined) {
+      result[name] = existing;
+    } else {
+      newDescriptors.set(name, descriptorFromDefaults(name, defaults));
+    }
   }
 
-  // All descriptors built successfully: register names and publish results
-  for (const [name, descriptor] of descriptorsByName) {
-    seenNames.add(name);
+  for (const [name, descriptor] of newDescriptors) {
+    seenNames.set(name, descriptor);
     result[name] = descriptor;
   }
 

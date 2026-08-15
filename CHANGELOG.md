@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `DEBUG` is now exported, so application code can branch on whether debug checks are active
+
+### Changed
+
+- `component()`, `components()`, `relation()`, and `resource()` return the existing registration when re-declared with an equal shape instead of throwing; a different shape still throws a conflict error
+- Debug checks opt out via a bare `NDEBUG` global define (`define: { NDEBUG: "true" }` in esbuild/Vite, or `globalThis.NDEBUG = true` without a bundler) instead of `process.env.NDEBUG`
+
+### Fixed
+
+- Package imports in browsers and bundlers no longer fail at load time (`node:module` and `process` references removed from `src/`)
+
 ## [0.4.0] - 2026-08-10
 
 ### Added

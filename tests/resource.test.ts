@@ -39,11 +39,11 @@ describe("resource", () => {
     expect(meta.defaults).toStrictEqual({ fire: false, moveY: 0, moveX: 0 });
   });
 
-  it("throws when the name is already registered", () => {
+  it("throws on re-registration with a different shape", () => {
     resource("ResourceTestDuplicate", { value: 0 });
 
     expect(() => resource("ResourceTestDuplicate", { count: 1 })).toThrow(
-      "resource name already registered: ResourceTestDuplicate",
+      "resource shape conflict: ResourceTestDuplicate",
     );
   });
 
@@ -98,6 +98,201 @@ describe("resource", () => {
           Field: 0,
         }),
       ).not.toThrow();
+    });
+  });
+
+  describe("idempotent registration", () => {
+    class IdempotentLogger {
+      lines: string[] = [];
+    }
+    const sharedLogger = new IdempotentLogger();
+    const sharedHandler = () => 42;
+
+    it.each([
+      {
+        label: "equal primitive defaults",
+        name: "IdempotentPrimitive",
+        defaults: { x: 1, y: "hello", z: true },
+      },
+      {
+        label: "nested records by content",
+        name: "IdempotentNested",
+        defaults: { pos: { x: 0, y: 0 } },
+      },
+      {
+        label: "arrays, Date, Map, and Set by content",
+        name: "IdempotentContainers",
+        defaults: {
+          items: [1, 2],
+          when: new Date(1000),
+          byId: new Map([["a", 1]]),
+          seen: new Set([1, 2]),
+        },
+      },
+      {
+        label: "functions by identity",
+        name: "IdempotentFunc",
+        defaults: { handler: sharedHandler },
+      },
+      {
+        label: "class instances by identity",
+        name: "IdempotentInstance",
+        defaults: { logger: sharedLogger },
+      },
+    ])("matches $label", ({ name, defaults }) => {
+      const id1 = resource(name, defaults);
+      const id2 = resource(name, defaults);
+
+      expect(id2).toBe(id1);
+    });
+
+    it("preserves existing world data through a second declaration", () => {
+      const id1 = resource("IdempotentWorld", { value: 42 });
+      const world = createWorld();
+      setResource(world, id1, { value: 100 });
+
+      const id2 = resource("IdempotentWorld", { value: 42 });
+
+      expect(id2).toBe(id1);
+      expect(getResource(world, id2).value).toBe(100);
+    });
+  });
+
+  describe("shape conflict", () => {
+    class ConflictLogger {
+      lines: string[] = [];
+    }
+
+    it.each([
+      { label: "field names differ", name: "ConflictFields", first: { x: 1 }, second: { y: 1 } },
+      {
+        label: "default values differ",
+        name: "ConflictValues",
+        first: { x: 1 },
+        second: { x: 2 },
+      },
+      {
+        label: "functions differ by identity",
+        name: "ConflictFunc",
+        first: { handler: () => 42 },
+        second: { handler: () => 42 },
+      },
+      {
+        label: "class instances differ by identity",
+        name: "ConflictInstance",
+        first: { logger: new ConflictLogger() },
+        second: { logger: new ConflictLogger() },
+      },
+      {
+        label: "array length differs",
+        name: "ConflictArrayLength",
+        first: { items: [1, 2] },
+        second: { items: [1] },
+      },
+      {
+        label: "array elements differ",
+        name: "ConflictArrayElements",
+        first: { items: [1, 2] },
+        second: { items: [1, 3] },
+      },
+      {
+        label: "Map size differs",
+        name: "ConflictMapSize",
+        first: { m: new Map([["a", 1]]) },
+        second: {
+          m: new Map([
+            ["a", 1],
+            ["b", 2],
+          ]),
+        },
+      },
+      {
+        label: "Map values differ",
+        name: "ConflictMapValues",
+        first: { m: new Map([["a", 1]]) },
+        second: { m: new Map([["a", 2]]) },
+      },
+      {
+        label: "Set size differs",
+        name: "ConflictSetSize",
+        first: { s: new Set([1]) },
+        second: { s: new Set([1, 2]) },
+      },
+      {
+        label: "Set members differ",
+        name: "ConflictSetMembers",
+        first: { s: new Set([1]) },
+        second: { s: new Set([2]) },
+      },
+      {
+        label: "array vs Date",
+        name: "ConflictCrossType_array_vs_Date",
+        first: { x: [1] },
+        second: { x: new Date(0) },
+      },
+      {
+        label: "Date vs array",
+        name: "ConflictCrossType_Date_vs_array",
+        first: { x: new Date(0) },
+        second: { x: [1] },
+      },
+      {
+        label: "record vs Date",
+        name: "ConflictCrossType_record_vs_Date",
+        first: { x: { a: 1 } },
+        second: { x: new Date(0) },
+      },
+      {
+        label: "record vs Map",
+        name: "ConflictCrossType_record_vs_Map",
+        first: { x: { a: 1 } },
+        second: { x: new Map([["a", 1]]) },
+      },
+      {
+        label: "record vs Set",
+        name: "ConflictCrossType_record_vs_Set",
+        first: { x: { a: 1 } },
+        second: { x: new Set([1]) },
+      },
+      {
+        label: "Date vs record",
+        name: "ConflictCrossType_Date_vs_record",
+        first: { x: new Date(0) },
+        second: { x: { a: 1 } },
+      },
+      {
+        label: "Map vs record",
+        name: "ConflictCrossType_Map_vs_record",
+        first: { x: new Map([["a", 1]]) },
+        second: { x: { a: 1 } },
+      },
+      {
+        label: "Set vs record",
+        name: "ConflictCrossType_Set_vs_record",
+        first: { x: new Set([1]) },
+        second: { x: { a: 1 } },
+      },
+      {
+        label: "record key count differs",
+        name: "ConflictCrossType_record_key_count_differs",
+        first: { x: { a: 1 } },
+        second: { x: { a: 1, b: 2 } },
+      },
+    ])("throws on shape conflict: $label", ({ name, first, second }) => {
+      resource(name, first);
+
+      expect(() => resource(name, second)).toThrow(`resource shape conflict: ${name}`);
+    });
+
+    it("leaves the original registration intact", () => {
+      const original = resource("ConflictIntact", { value: 42 });
+      const metaBefore = getResourceMeta(original);
+
+      expect(() => resource("ConflictIntact", { other: 99 })).toThrow(
+        "resource shape conflict: ConflictIntact",
+      );
+
+      expect(getResourceMeta(original)).toStrictEqual(metaBefore);
     });
   });
 });

@@ -43,20 +43,20 @@ describe("components", () => {
     expect(asMutableDescriptor(Stunned).__ecstatic_fields.length).toBe(0);
   });
 
-  it("rejects duplicate names across batched declarations", () => {
+  it("throws on shape conflict across batched declarations", () => {
     components({ ComponentsSpecDuplicate: { x: 0 } });
 
     expect(() => {
       components({ ComponentsSpecDuplicate: { y: 0 } });
-    }).toThrow(/component name already registered/);
+    }).toThrow("component shape conflict: ComponentsSpecDuplicate");
   });
 
-  it("rejects duplicate names across singular and batched declarations", () => {
+  it("throws on shape conflict across singular and batched declarations", () => {
     component("ComponentsSpecDuplicateSingle", { x: 0 });
 
     expect(() => {
       components({ ComponentsSpecDuplicateSingle: { y: 0 } });
-    }).toThrow(/component name already registered/);
+    }).toThrow("component shape conflict: ComponentsSpecDuplicateSingle");
   });
 
   it("rejects invalid single-component field defaults without reserving the name", () => {
@@ -101,5 +101,33 @@ describe("components", () => {
 
     const invalid = component(invalidName, { vx: 0, vy: 0 });
     expect(asMutableDescriptor(invalid).__ecstatic_name).toBe(invalidName);
+  });
+
+  it("re-declaring equal-shape names alongside new names returns existing and new descriptors", () => {
+    const first = component("ComponentsSpecIdempotent_Existing", { x: 0 });
+    const defs = components({
+      ComponentsSpecIdempotent_Existing: { x: 0 },
+      ComponentsSpecIdempotent_New: { y: 0 },
+    });
+    expect(defs.ComponentsSpecIdempotent_Existing).toBe(first);
+    expect(asMutableDescriptor(defs.ComponentsSpecIdempotent_New).__ecstatic_name).toBe(
+      "ComponentsSpecIdempotent_New",
+    );
+  });
+
+  it("rejects entire batch when any name has a shape conflict", () => {
+    component("ComponentsSpecAtomicConflict_Old", { x: 0 });
+    const newName = "ComponentsSpecAtomicConflict_New";
+
+    expect(() => {
+      components({
+        ComponentsSpecAtomicConflict_Old: { y: 0 },
+        [newName]: { z: 0 },
+      });
+    }).toThrow("component shape conflict: ComponentsSpecAtomicConflict_Old");
+
+    expect(() => {
+      component(newName, { z: 0 });
+    }).not.toThrow();
   });
 });
