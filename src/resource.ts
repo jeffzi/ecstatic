@@ -9,6 +9,9 @@
  * Records, arrays, `Date`s, `Map`s, and `Set`s in the defaults are deep-cloned
  * per world, so two worlds never alias the registered defaults or each other's
  * data. Class instances and functions are shared by reference.
+ *
+ * Registration is idempotent: re-declaring a name with structurally equal
+ * defaults returns the existing ID; a different shape throws.
  */
 
 import { validateFieldName } from "./component.js";
@@ -36,7 +39,7 @@ export type ResourceFields<R> = R extends Resource<string, infer T> ? T : never;
 
 let nextResourceId = 0;
 const resourceRegistry = new Map<number, ResourceMeta>();
-const resourceNames = new Set<string>();
+const resourceNames = new Map<string, number>();
 
 /** True for objects whose prototype is `Object.prototype` or `null` — i.e. records, not instances. */
 function isPlainRecord(v: object): v is Record<string, unknown> {
@@ -83,6 +86,70 @@ function cloneUnknown(value: unknown): unknown {
   return copy;
 }
 
+function arraysEqual(a: unknown[], b: unknown[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (!structurallyEqual(a[i], b[i])) return false;
+  }
+  return true;
+}
+
+function mapsEqual(a: Map<unknown, unknown>, b: Map<unknown, unknown>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [key, val] of a) {
+    if (!b.has(key) || !structurallyEqual(val, b.get(key))) return false;
+  }
+  return true;
+}
+
+function setsEqual(a: Set<unknown>, b: Set<unknown>): boolean {
+  if (a.size !== b.size) return false;
+  for (const member of a) {
+    if (!b.has(member)) return false;
+  }
+  return true;
+}
+
+function recordsEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const keysA = Object.keys(a);
+  if (keysA.length !== Object.keys(b).length) return false;
+  for (const key of keysA) {
+    if (!Object.hasOwn(b, key) || !structurallyEqual(a[key], b[key])) return false;
+  }
+  return true;
+}
+
+/**
+ * Type-dispatch comparison for two non-null objects. Falls through to identity
+ * for class instances and functions (they reach `isPlainRecord` which returns
+ * false, so `structurallyEqual`'s `a === b` at the top is the only match).
+ */
+function objectsEqual(a: object, b: object): boolean {
+  if (Array.isArray(a)) return Array.isArray(b) && arraysEqual(a, b);
+  if (Array.isArray(b)) return false;
+  if (a instanceof Date) return b instanceof Date && a.getTime() === b.getTime();
+  if (b instanceof Date) return false;
+  if (a instanceof Map) return b instanceof Map && mapsEqual(a, b);
+  if (b instanceof Map) return false;
+  if (a instanceof Set) return b instanceof Set && setsEqual(a, b);
+  if (b instanceof Set) return false;
+  if (!isPlainRecord(a) || !isPlainRecord(b)) return false;
+  return recordsEqual(a, b);
+}
+
+/**
+ * Mirrors `cloneUnknown`'s type dispatch for equality instead of copying.
+ *
+ * Primitives compare by value, records/arrays/`Date`/`Map`/`Set` compare by
+ * content (recursing into values), and everything else — functions and class
+ * instances — compares by identity (`===`).
+ */
+function structurallyEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || a === null || typeof b !== "object" || b === null) return false;
+  return objectsEqual(a, b);
+}
+
 /** Deep copy of a resource field value. See `cloneUnknown` for what is copied and what is shared. */
 function cloneValue<T>(value: T): T {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the clone preserves the input's shape
@@ -96,10 +163,20 @@ function cloneValue<T>(value: T): T {
  * `defaults` is deep-copied here, so mutating the caller's object afterwards
  * cannot reach any world: the registered snapshot is what worlds initialize
  * from. See `cloneUnknown` for which values are copied and which are shared.
+ *
+ * Re-declaring an already-registered name is idempotent: if `defaults` is
+ * structurally equal to the existing registration, the existing ID is
+ * returned; if the shape differs, this throws.
  */
 export function resource<N extends string, T extends object>(name: N, defaults: T): Resource<N, T> {
-  if (resourceNames.has(name)) {
-    throw new Error(`resource name already registered: ${name}`);
+  const existingId = resourceNames.get(name);
+  if (existingId !== undefined) {
+    const existing = getResourceMeta(existingId);
+    if (!structurallyEqual(defaults, existing.defaults)) {
+      throw new Error(`resource shape conflict: ${name}`);
+    }
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
+    return existingId as Resource<N, T>;
   }
 
   const defaultsRecord: Record<string, unknown> = {};
@@ -117,7 +194,7 @@ export function resource<N extends string, T extends object>(name: N, defaults: 
   const fields = Object.keys(defaultsRecord).sort();
 
   resourceRegistry.set(id, { name, fields, defaults: defaultsRecord });
-  resourceNames.add(name);
+  resourceNames.set(name, id);
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
   return id as Resource<N, T>;
@@ -155,7 +232,7 @@ function initResource(world: World, resId: number): Record<string, unknown> {
   return data;
 }
 
-/** Gets a resource's data. Lazy-initializes from defaults on first access. */
+/** Lazy-initializes from defaults on first access; returns the world's live resource record. */
 export function getResource<R extends Resource>(world: World, res: R): ResourceFields<R> {
   const data = world.resources.get(res) ?? initResource(world, res);
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- data record matches the resource's declared fields
