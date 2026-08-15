@@ -761,3 +761,54 @@ querySources(world, Targets, deadEnemy, (e) => {
 **Prefer `hasSources` over `countSources(...) > 0`.** `hasSources` short-circuits on the
 first source found; `countSources` walks every source. For per-frame polling ("is anyone
 still targeting me?"), the difference matters.
+
+## Hot module replacement
+
+ecstatic's declaration functions are idempotent: calling `component()`, `components()`,
+`relation()`, or `resource()` a second time with the same name and equal shape returns the
+existing registration. A live world's storage stays valid because archetypes resolve to the same
+descriptors they used on first registration.
+
+**Systems swap freely.** Systems are plain functions — replace the function reference at module
+re-evaluation and the next frame runs the new code. No registration step is involved.
+
+**Schema modules survive re-evaluation when the shape is unchanged.** When Vite (or another
+HMR-capable bundler) re-evaluates a module that declares components and resources, each
+declaration returns the original descriptor or ID. The world, its archetypes, and all entity
+data are unaffected.
+
+**Changing a field's shape throws on re-evaluation.** Adding, removing, or renaming a field, or
+changing a default value, width marker, or ref-ness, produces a shape conflict error. The
+bundler falls back to a full page reload because existing SoA storage cannot be reinterpreted
+under the new layout. The original registrations remain intact after the throw.
+
+**Resource defaults that hold functions or class instances compare by identity.** A re-evaluated
+module mints new closures and instances, so the identity check fails and the bundler falls back
+to a full reload. Primitive and container defaults (records, arrays, `Date`, `Map`, `Set`)
+compare by content and survive re-evaluation.
+
+A minimal `import.meta.hot.accept()` in a systems module is enough to enable HMR for the
+common case — schema unchanged, logic updated:
+
+```typescript
+// systems/movement.ts
+import { each, get, set } from "ecstatic";
+
+export function movement(dt: number) {
+  each(ships, (e) => {
+    set(ships, e.id, Position, {
+      x: e.Position.x + e.Velocity.vx * dt,
+      y: e.Position.y + e.Velocity.vy * dt,
+    });
+  });
+}
+
+if (import.meta.hot) {
+  import.meta.hot.accept();
+}
+```
+
+**Surviving a shape change** — keeping the live world across a field rename or a new column —
+requires snapshotting the world state before the swap and restoring it by name with defaults
+filled in for new fields. This is the snapshot-first serialization module described in the
+[design pillars](pillars.md) (see "Consequence for serialization"), not yet implemented.

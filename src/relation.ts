@@ -106,7 +106,8 @@ export function getRelationMeta(value: unknown): RelationDescriptor | undefined 
  *
  * `target` is a reserved field name; declaring it in `defaults` is rejected at
  * compile time and causes a runtime error. Relation names share the component
- * name namespace — duplicates are rejected.
+ * name namespace — re-declaring with equal shape returns the existing descriptor;
+ * different shape throws.
  */
 export function relation<N extends string>(name: N): Relation<N, NoFields, []>;
 export function relation<N extends string, T extends Record<string, FieldDefault>>(
@@ -128,33 +129,30 @@ export function relation<
 ): Relation<N, { [K in keyof T]: InferFieldValue<T[K]> }, Comps>;
 export function relation(
   name: string,
-  arg2?: ComponentDescriptor[] | Record<string, unknown>,
-  arg3?: Record<string, unknown>,
+  constraintsOrDefaults?: ComponentDescriptor[] | Record<string, unknown>,
+  maybeDefaults?: Record<string, unknown>,
 ): unknown {
-  // Parse arguments: detect whether arg2 is a constraints array or defaults object
-  const isArg2Array = Array.isArray(arg2);
+  // Detect whether the second argument is a constraints array or a defaults object
+  const hasConstraints = Array.isArray(constraintsOrDefaults);
 
-  const constraints: ComponentDescriptor[] = isArg2Array ? arg2 : [];
+  const constraints: ComponentDescriptor[] = hasConstraints ? constraintsOrDefaults : [];
 
-  const defaults: Record<string, unknown> = arg3 ?? (isArg2Array ? {} : (arg2 ?? {}));
+  const defaults: Record<string, unknown> =
+    maybeDefaults ?? (hasConstraints ? {} : (constraintsOrDefaults ?? {}));
 
   if ("target" in defaults) {
     throw new Error(`relation field name 'target' is reserved: ${name}`);
   }
 
-  const descriptor = createDescriptor(name, defaults);
+  const descriptor = createDescriptor(name, defaults, { isRelation: true, constraints });
 
-  descriptor.isRelation = true;
-
-  descriptor.constraints = constraints;
-
-  // Attach synthetic `target` field descriptor so `get(storage, id, Rel.target)` works.
-  // The target SoA column is created at archetype initialization; this descriptor
-  // enables the standard field-access resolution path to find it.
-  descriptor.target = {
-    __ecstatic_component: descriptor,
-    __ecstatic_field: "target",
-  };
+  // Idempotent path: descriptor already has target from a prior registration
+  if (!("target" in descriptor)) {
+    descriptor.target = {
+      __ecstatic_component: descriptor,
+      __ecstatic_field: "target",
+    };
+  }
 
   return descriptor;
 }

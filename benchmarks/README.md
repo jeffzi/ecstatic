@@ -7,9 +7,14 @@ This file covers running the suite and how much of the original Lua suite it cur
 
 ## Running
 
-`npm run bench` compares two versions of the suite; [Comparing two versions](#comparing-two-versions)
-covers it. `npm run bench:once` runs the suite once and prints one JSON report covering every
-benchmark:
+Three commands run the suite:
+
+- `npm run bench` compares two versions — see [Comparing two versions](#comparing-two-versions).
+- `npm run bench:measure` reports one version's numbers — see
+  [Measuring one version](#measuring-one-version).
+- `npm run bench:once` runs the suite once and prints one JSON report covering every benchmark.
+
+The first two need [gymrat setup](#gymrat-setup); `bench:once` needs nothing beyond this repository:
 
 ```bash
 npm run bench:once
@@ -64,16 +69,12 @@ Treat Bun numbers as indicative rather than exact for the Capacitor target. Bun 
 WKWebView's JSC differs in version, JIT tiering policy, and memory limits. The pairing is sound for
 tracking regressions on the JSC side; it is not a measurement of the shipping runtime.
 
-## Comparing two versions
+## gymrat setup
 
-`npm run bench` is [gymrat](https://github.com/jeffzi/gymrat)'s `compare`. Its mitata adapter reads
-the JSON report and emits `<group>.<benchmark>/time` and `<group>.<benchmark>/heap` metrics.
-
-### One-time setup
-
-gymrat is not published to npm, and the `file:` link that provides its binary is machine-local —
-deliberately kept out of version control. To run compares, clone and build
-[gymrat](https://github.com/jeffzi/gymrat), then link it into this repository:
+[gymrat](https://github.com/jeffzi/gymrat) provides both `npm run bench` and `npm run bench:measure`.
+It is not published to npm, and the `file:` link that provides its binary is machine-local —
+deliberately kept out of version control. To run either command, clone and build gymrat, then link
+it into this repository:
 
 ```bash
 npm --prefix <gymrat-checkout> ci
@@ -83,6 +84,43 @@ npm install --save-optional <gymrat-checkout>   # links node_modules/.bin/gymrat
 
 The install records the checkout's path in `package.json` and `package-lock.json`; leave those
 modifications uncommitted.
+
+## Measuring one version
+
+`npm run bench:measure` is gymrat's `measure` and needs the [gymrat setup](#gymrat-setup) above: one
+target, sampled the same way a compare samples
+each side, reported as a median ± spread per metric with no deltas and no verdicts. It answers
+"what are my numbers right now?" — and, run against an unchanged target, "how noisy is this
+machine?"
+
+```bash
+npm run bench:measure -- --prepare "npm run -s build"   # the working tree
+npm run bench:measure -- main                           # a git ref, in a temp worktree
+```
+
+With no target it measures the working tree in place, which makes the `--prepare` override
+mandatory for the same reason it is on an in-place compare: the configured prepare runs `npm ci`,
+which is right for a fresh worktree and wrong for your working tree. A git ref needs no override.
+
+### Reading the noise floor
+
+Sampling one unchanged target reports dispersion that no code change can explain, so the spread
+column is the machine's noise floor. Read it before trusting a small delta from a compare, and
+raise `--samples` when a verdict gates anything:
+
+```bash
+npm run bench:measure -- --prepare "npm run -s build" --samples 15
+```
+
+A benchmark whose spread here is wider than the delta a compare reports has not shown you a change.
+Some benchmarks are near-zero-variance — `many.despawn_all` self-compared within a ±0.9% band at
+`--samples 5` — and at low sample counts a gate can read that band as a real change.
+
+## Comparing two versions
+
+`npm run bench` is gymrat's `compare` and needs the [gymrat setup](#gymrat-setup) above. Its mitata
+adapter reads the JSON report and emits
+`<group>.<benchmark>/time` and `<group>.<benchmark>/heap` metrics.
 
 ### Two git refs
 
@@ -97,19 +135,9 @@ the commit that added `benchmarks/` cannot run the suite.
 
 ### Run-to-run noise
 
-Pointing both targets at the working tree measures noise instead of a change — useful for checking
-that a benchmark is stable enough to read a real signal from:
-
-```bash
-npm run bench -- a=. b=. --prepare "npm run -s build"
-```
-
-The `--prepare` override is mandatory for in-place targets. The default prepare reinstalls
-dependencies, which is right for a fresh worktree and wrong for your working tree.
-
-Raise `--samples` when a verdict gates anything. Some benchmarks are near-zero-variance —
-`many.despawn_all` self-compared within a ±0.9% band at `--samples 5` — and at low sample counts a
-gate can read that band as a real change.
+Use `npm run bench:measure` — see [Reading the noise floor](#reading-the-noise-floor). Pointing both
+compare targets at the working tree (`a=. b=.`) does the same job with twice the runs and a delta
+column that can only report zero.
 
 ### Under Bun
 
@@ -119,18 +147,18 @@ Override the bench command to add `--engine bun`:
 npm run bench -- a=main b=HEAD --bench "npx tsx --expose-gc benchmarks/main.ts --engine bun"
 ```
 
-### Known limitations
+## Known limitations
 
 gymrat is unpublished and pre-1.0; these rough edges are accepted until it matures.
 
-- **The link is machine-local.** Without it there is no `gymrat` binary, so `npm run bench` does
-  not work — CI and fresh clones are in that position until gymrat publishes. A compare worktree is
-  unaffected: its prepare runs plain `npm ci` against the committed manifest, which carries no
-  gymrat entry, and a worktree never invokes gymrat itself. Windows is untested; compares run
-  locally on macOS.
-- **An in-place compare without `--prepare` reinstalls your working tree.** It falls back to the
-  configured prepare command, which runs `npm ci` and drops the gymrat link. Run `npm install` to
-  recover.
+- **The link is machine-local.** Without it there is no `gymrat` binary, so neither `npm run bench`
+  nor `npm run bench:measure` works — CI and fresh clones are in that position until gymrat
+  publishes. A worktree is unaffected: its prepare runs plain `npm ci` against the committed
+  manifest, which carries no gymrat entry, and a worktree never invokes gymrat itself. Windows is
+  untested; both commands run locally on macOS.
+- **An in-place run without `--prepare` reinstalls your working tree.** Both an in-place compare and
+  a bare `npm run bench:measure` fall back to the configured prepare command, which runs `npm ci`
+  and drops the gymrat link. Run `npm install` to recover.
 - **Mixing a git ref with an in-place target is unsupported.** gymrat runs one prepare command
   against both targets, and no single command both installs a fresh worktree and leaves the working
   tree alone.
