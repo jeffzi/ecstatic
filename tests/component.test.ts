@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  component,
   components,
   type FieldDefault,
   f32,
@@ -54,12 +55,12 @@ describe("component", () => {
     expect(asMutableDescriptor(Stunned).__ecstatic_fields.length).toBe(0);
   });
 
-  it("errors on duplicate component names", () => {
+  it("throws on shape conflict for different fields", () => {
     components({ ComponentSpecDuplicateName: { x: 0 } });
 
     expect(() => {
       components({ ComponentSpecDuplicateName: { y: 0 } });
-    }).toThrow(/component name already registered/);
+    }).toThrow("component shape conflict: ComponentSpecDuplicateName");
   });
 
   it("sorts fields by byte order (uppercase before lowercase)", () => {
@@ -153,6 +154,62 @@ describe("component", () => {
       expect(asMutableDescriptor(MixedComp).__ecstatic_is_reference[0]).toBe(false); // cooldown
       expect(asMutableDescriptor(MixedComp).__ecstatic_is_reference[1]).toBe(false); // health
       expect(asMutableDescriptor(MixedComp).__ecstatic_is_reference[2]).toBe(true); // target
+    });
+  });
+
+  describe("idempotent registration", () => {
+    it.each([
+      { label: "a tag", name: "IdempotentSpec_Tag", shape: {} },
+      { label: "fields", name: "IdempotentSpec_Fields", shape: { x: 0, y: 0 } },
+      { label: "ref fields", name: "IdempotentSpec_Ref", shape: { r: ref() } },
+      { label: "width-marked fields", name: "IdempotentSpec_F32", shape: { x: f32(1) } },
+    ])(
+      "returns the identical descriptor for $label re-declared with equal shape",
+      ({ name, shape }) => {
+        const first = component(name, shape);
+        const second = component(name, shape);
+        expect(second).toBe(first);
+      },
+    );
+
+    it.each([
+      {
+        label: "default values differ",
+        name: "IdempotentSpec_DefaultConflict",
+        first: { x: 0 },
+        second: { x: 1 },
+      },
+      {
+        label: "ref-ness differs",
+        name: "IdempotentSpec_RefMismatch",
+        first: { x: ref() },
+        second: { x: 0 },
+      },
+      {
+        label: "width markers differ",
+        name: "IdempotentSpec_WidthMismatch",
+        first: { x: f32(1) },
+        second: { x: f64(1) },
+      },
+    ])("throws on shape conflict when $label", ({ name, first, second }) => {
+      component(name, first);
+      expect(() => {
+        component(name, second);
+      }).toThrow(`component shape conflict: ${name}`);
+    });
+
+    it("shape-conflict throw does not alter the existing descriptor", () => {
+      const original = component("IdempotentSpec_Preserved", { x: 0 });
+      const desc = asMutableDescriptor(original);
+      const fieldsBefore = [...desc.__ecstatic_fields];
+      const defaultsBefore = { ...desc.__ecstatic_defaults };
+
+      expect(() => {
+        component("IdempotentSpec_Preserved", { y: 0 });
+      }).toThrow("component shape conflict: IdempotentSpec_Preserved");
+
+      expect(desc.__ecstatic_fields).toStrictEqual(fieldsBefore);
+      expect(desc.__ecstatic_defaults).toStrictEqual(defaultsBefore);
     });
   });
 });

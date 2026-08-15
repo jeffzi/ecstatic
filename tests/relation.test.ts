@@ -126,25 +126,25 @@ describe("relation", () => {
     }).toThrow("relation field name 'target' is reserved: DataOnlyRelSpec_ReservedTarget");
   });
 
-  it("errors on duplicate relation names (shares component namespace)", () => {
+  it("throws on shape conflict when re-declared with different fields", () => {
     relation("RelSpec_DupName");
     expect(() => {
-      relation("RelSpec_DupName");
-    }).toThrow(/component name already registered/);
+      relation("RelSpec_DupName", { weight: 0 });
+    }).toThrow("component shape conflict: RelSpec_DupName");
   });
 
   it("errors when relation name collides with existing component name", () => {
     components({ RelSpec_SharedNs: { val: 0 } });
     expect(() => {
       relation("RelSpec_SharedNs");
-    }).toThrow(/component name already registered/);
+    }).toThrow("component shape conflict: RelSpec_SharedNs");
   });
 
   it("errors when component name collides with existing relation name", () => {
     relation("RelSpec_SharedNsReverse");
     expect(() => {
       component("RelSpec_SharedNsReverse");
-    }).toThrow(/component name already registered/);
+    }).toThrow("component shape conflict: RelSpec_SharedNsReverse");
   });
 
   it("does not register the name when the target-reserved error throws", () => {
@@ -154,6 +154,50 @@ describe("relation", () => {
     }).toThrow(/reserved/);
     // The failed call must not have claimed the name
     relation("RelSpec_TargetNoRegister");
+  });
+});
+
+describe("idempotent relation registration", () => {
+  it("returns the identical descriptor when tag relation re-declared", () => {
+    const first = relation("IdempotentRelSpec_Tag");
+    const second = relation("IdempotentRelSpec_Tag");
+    expect(second).toBe(first);
+  });
+
+  it("returns the identical descriptor when data relation re-declared with equal shape", () => {
+    const first = relation("IdempotentRelSpec_Data", { weight: 0 });
+    const second = relation("IdempotentRelSpec_Data", { weight: 0 });
+    expect(second).toBe(first);
+  });
+
+  it("returns the identical descriptor when constrained relation re-declared", () => {
+    const first = relation("IdempotentRelSpec_Constrained", [RelSpec_Comp]);
+    const second = relation("IdempotentRelSpec_Constrained", [RelSpec_Comp]);
+    expect(second).toBe(first);
+  });
+
+  it("returns the identical descriptor when constrained data relation re-declared", () => {
+    const first = relation("IdempotentRelSpec_Full", [RelSpec_Comp], { weight: 0 });
+    const second = relation("IdempotentRelSpec_Full", [RelSpec_Comp], { weight: 0 });
+    expect(second).toBe(first);
+  });
+
+  it("throws on shape conflict when constraint lists differ", () => {
+    const { IdempotentRelSpec_C1, IdempotentRelSpec_C2 } = components({
+      IdempotentRelSpec_C1: { a: 0 },
+      IdempotentRelSpec_C2: { b: 0 },
+    });
+    relation("IdempotentRelSpec_ConstraintConflict", [IdempotentRelSpec_C1]);
+    expect(() => {
+      relation("IdempotentRelSpec_ConstraintConflict", [IdempotentRelSpec_C2]);
+    }).toThrow("component shape conflict: IdempotentRelSpec_ConstraintConflict");
+  });
+
+  it("throws on shape conflict when relation fields differ", () => {
+    relation("IdempotentRelSpec_FieldConflict", { weight: 0 });
+    expect(() => {
+      relation("IdempotentRelSpec_FieldConflict", { speed: 0 });
+    }).toThrow("component shape conflict: IdempotentRelSpec_FieldConflict");
   });
 });
 

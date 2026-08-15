@@ -112,6 +112,19 @@ describe("register", () => {
       expect(second).toBe(first);
     });
 
+    it("resolves two classes over the same components to the same storage", () => {
+      const world = createWorld();
+      class A extends Archetype([Position]) {}
+      class B extends Archetype([Position]) {}
+      const storageA = register(world, A);
+      spawn(storageA, { ArchClass_Position: { x: 1, y: 2 } });
+
+      const storageB = register(world, B);
+
+      expect(storageB).toBe(storageA);
+      expect(storageB.n).toBe(1);
+    });
+
     it("returns the storage of the equivalent descriptor form", () => {
       const world = createWorld();
       const fromClass = register(world, Ship);
