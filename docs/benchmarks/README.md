@@ -6,15 +6,18 @@ setup, measured operation, and the code path it targets for regression detection
 rationale and omission justifications, see [rationale](rationale.md). Constants and the component
 palette shared by every group are in [parameters](specifications/parameters.md).
 
-Run the suite with `npm run bench:once`; pass a pattern to run a subset, for example
-`npm run bench:once -- '^iteration\.'`. The runner requires an exposed garbage collector and can
-measure under a second engine; [`benchmarks/README.md`](../../benchmarks/README.md) covers both,
-along with the comparison workflow for checking one revision against another.
+Run the suite with `npx tsx --expose-gc benchmarks/main.ts` after a build; pass a pattern to run a
+subset, for example `npx tsx --expose-gc benchmarks/main.ts '^iteration\.'`. The runner requires an
+exposed garbage collector and can measure under a second engine;
+[`benchmarks/README.md`](../../benchmarks/README.md) covers both, along with the measurement and
+optimization workflows.
 
 ## Benchmark groups
 
 Benchmark names are `<prefix><benchmark>`, so the prefix column doubles as the filter to run just
-that group.
+that group. The runner prefixes every reported name with the engine (`node/`, `bun/`), so the full
+metric name gymrat sees is `<engine>/<prefix><benchmark>/time`. The filter matches the plain name
+(without the engine prefix).
 
 | Group     | Prefix       | Specification                               | Source                                                                 |
 | --------- | ------------ | ------------------------------------------- | ---------------------------------------------------------------------- |

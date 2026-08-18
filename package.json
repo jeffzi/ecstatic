@@ -27,11 +27,11 @@
     }
   },
   "scripts": {
-    "bench:measure": "gymrat measure",
-    "bench:once": "npm run -s build && tsx --expose-gc benchmarks/main.ts",
-    "bench": "gymrat compare",
+    "bench:autoresearch": "gymrat supervise --max-minutes 480",
+    "bench:measure": "gymrat measure --prepare \"npm run -s build\"",
     "build": "tsc -p tsconfig.build.json",
     "check:actions": "actionlint && zizmor .github/workflows",
+    "check:alloc": "npm run -s build && tsx --expose-gc benchmarks/alloc/gate.ts",
     "check:fmt": "oxfmt --check",
     "check:lint": "oxlint",
     "check:md": "markdownlint-cli2 \"**/*.md\"",
@@ -43,7 +43,7 @@
     "check:version": "tsx scripts/sync-version.ts --check",
     "check:type": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.build.json --noEmit && tsc -p examples/tsconfig.json --noEmit && tsc -p benchmarks/tsconfig.json --noEmit",
     "check:typelint": "oxlint --type-aware",
-    "check": "run-s -c check:static check:quality",
+    "check": "run-s -c check:static check:quality check:alloc",
     "examples": "npm run build && tsx examples/basics.ts && tsx examples/iteration.ts && tsx examples/component-sets.ts && tsx examples/relationships.ts && tsx examples/resources.ts && tsx examples/game-loop.ts && tsx examples/optionals.ts",
     "fix:fmt": "oxfmt",
     "fix:lint": "oxlint --fix",

@@ -168,3 +168,6 @@ CLAUDE.local.md
 # Claude Code personal overrides
 .agents/settings.local.json
 .claude/settings.local.json
+
+# Profiling scratch scripts (see benchmarks/gymrat-runbook.md)
+benchmarks/tmp/

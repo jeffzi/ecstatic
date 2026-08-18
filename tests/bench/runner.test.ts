@@ -9,14 +9,16 @@ import {
   type ChildSpawnSpec,
   childSpawnSpec,
   type Engine,
+  isDefaultEngines,
   mergeReports,
+  namespaceReport,
   type ParsedArgs,
   parseArgs,
   parseChildReport,
   registerBench,
   selectBenchmarks,
   UsageError,
-} from "../benchmarks/runner.js";
+} from "../../benchmarks/runner.js";
 
 const FILTER = "^access\\.";
 const BENCH = "access.get_1field";
@@ -26,39 +28,49 @@ describe("parseArgs", () => {
     it("defaults to the node engine with no filter when argv is empty", () => {
       const parsed = parseArgs([]);
 
-      expect(parsed).toStrictEqual({ mode: "parent", engine: "node" });
+      expect(parsed).toStrictEqual({ mode: "parent", engines: ["node"] });
     });
 
     it("reads a lone positional argument as the filter", () => {
       const parsed = parseArgs([FILTER]);
 
-      expect(parsed).toStrictEqual({ mode: "parent", filter: FILTER, engine: "node" });
+      expect(parsed).toStrictEqual({ mode: "parent", filter: FILTER, engines: ["node"] });
     });
 
     const engineCases: { label: string; argv: string[]; expected: ParsedArgs }[] = [
       {
-        label: "on its own",
+        label: "a single engine on its own",
         argv: ["--engine", "bun"],
-        expected: { mode: "parent", engine: "bun" },
+        expected: { mode: "parent", engines: ["bun"] },
       },
       {
-        label: "after the filter",
+        label: "a single engine after the filter",
         argv: [FILTER, "--engine", "bun"],
-        expected: { mode: "parent", filter: FILTER, engine: "bun" },
+        expected: { mode: "parent", filter: FILTER, engines: ["bun"] },
       },
       {
-        label: "before the filter",
+        label: "a single engine before the filter",
         argv: ["--engine", "bun", FILTER],
-        expected: { mode: "parent", filter: FILTER, engine: "bun" },
+        expected: { mode: "parent", filter: FILTER, engines: ["bun"] },
       },
       {
-        label: "naming the default engine",
+        label: "the default engine by name",
         argv: ["--engine", "node"],
-        expected: { mode: "parent", engine: "node" },
+        expected: { mode: "parent", engines: ["node"] },
+      },
+      {
+        label: "two engines comma-separated",
+        argv: ["--engine", "node,bun"],
+        expected: { mode: "parent", engines: ["node", "bun"] },
+      },
+      {
+        label: "two engines comma-separated with a filter",
+        argv: [FILTER, "--engine", "node,bun"],
+        expected: { mode: "parent", filter: FILTER, engines: ["node", "bun"] },
       },
     ];
 
-    it.each(engineCases)("reads --engine $label", ({ argv, expected }) => {
+    it.each(engineCases)("parses --engine with $label", ({ argv, expected }) => {
       const parsed = parseArgs(argv);
 
       expect(parsed).toStrictEqual(expected);
@@ -77,6 +89,11 @@ describe("parseArgs", () => {
     const usageCases: { label: string; argv: string[] }[] = [
       { label: "--engine without a value", argv: ["--engine"] },
       { label: "an unknown engine", argv: ["--engine", "deno"] },
+      { label: "an unknown engine in a comma list", argv: ["--engine", "node,deno"] },
+      { label: "an empty item with trailing comma", argv: ["--engine", "node,"] },
+      { label: "an empty item with leading comma", argv: ["--engine", ",bun"] },
+      { label: "a duplicate engine", argv: ["--engine", "node,node"] },
+      { label: "a repeated --engine flag", argv: ["--engine", "node", "--engine", "bun"] },
       { label: "an unknown flag", argv: ["--verbose"] },
       { label: "two positional arguments", argv: [FILTER, "^entity\\."] },
       { label: "--child without a value", argv: ["--child"] },
@@ -87,6 +104,18 @@ describe("parseArgs", () => {
     it.each(usageCases)("throws UsageError for $label", ({ argv }) => {
       expect(() => parseArgs(argv)).toThrow(UsageError);
     });
+  });
+});
+
+describe("isDefaultEngines", () => {
+  const cases: { engines: Engine[]; expected: boolean }[] = [
+    { engines: ["node"], expected: true },
+    { engines: ["bun"], expected: false },
+    { engines: ["node", "bun"], expected: false },
+  ];
+
+  it.each(cases)("returns $expected for $engines", ({ engines, expected }) => {
+    expect(isDefaultEngines(engines)).toBe(expected);
   });
 });
 
@@ -285,6 +314,47 @@ describe("parseChildReport", () => {
   });
 });
 
+describe("namespaceReport", () => {
+  it("prefixes every benchmark alias with engine/", () => {
+    const input = report({
+      benchmarks: [benchEntry("access.get_1field"), benchEntry("entity.spawn")],
+    });
+
+    const namespaced = namespaceReport(input, "bun");
+
+    expect(namespaced.benchmarks.map((e) => e.alias)).toStrictEqual([
+      "bun/access.get_1field",
+      "bun/entity.spawn",
+    ]);
+  });
+
+  it("preserves runs, layout, and context unchanged", () => {
+    const customRuns = [
+      { stats: { p50: 9999, heap: { avg: 128 } }, args: { size: 500 }, error: null },
+    ];
+    const input = report({
+      benchmarks: [benchEntry("access.get_1field", { runs: customRuns })],
+    });
+
+    const namespaced = namespaceReport(input, "node");
+
+    const entry = namespaced.benchmarks[0];
+    expect(entry?.runs).toStrictEqual(customRuns);
+    expect(entry?.kind).toBe("iter");
+    expect(namespaced.layout).toStrictEqual(LAYOUT);
+    expect(namespaced.context).toStrictEqual(CONTEXT);
+  });
+
+  it("does not mutate the input report", () => {
+    const input = report({ benchmarks: [benchEntry("access.get_1field")] });
+    const originalAlias = input.benchmarks[0]?.alias;
+
+    namespaceReport(input, "bun");
+
+    expect(input.benchmarks[0]?.alias).toBe(originalAlias);
+  });
+});
+
 describe("mergeReports", () => {
   describe("when given several reports", () => {
     const first = report({ benchmarks: [benchEntry("access.get_1field")] });
@@ -295,16 +365,6 @@ describe("mergeReports", () => {
     });
     const third = report({ benchmarks: [benchEntry("iteration.each_soa")] });
 
-    it("concatenates the benchmark entries in input order", () => {
-      const merged = mergeReports([first, second, third]);
-
-      expect(merged.benchmarks.map((entry) => entry.alias)).toStrictEqual([
-        "access.get_1field",
-        "entity.spawn",
-        "iteration.each_soa",
-      ]);
-    });
-
     it("takes layout and context from the first report", () => {
       const merged = mergeReports([first, second, third]);
 
@@ -314,13 +374,27 @@ describe("mergeReports", () => {
       });
     });
 
-    it("carries each entry's nested run stats through unchanged", () => {
+    it("concatenates entries in input order and carries each entry's nested run stats through unchanged", () => {
       const merged = mergeReports([first, second, third]);
 
       expect(merged.benchmarks).toStrictEqual([
         benchEntry("access.get_1field"),
         benchEntry("entity.spawn"),
         benchEntry("iteration.each_soa"),
+      ]);
+    });
+  });
+
+  describe("when merging namespaced reports from different engines", () => {
+    it("merges cleanly because the aliases differ", () => {
+      const nodeReport = report({ benchmarks: [benchEntry("node/access.get_1field")] });
+      const bunReport = report({ benchmarks: [benchEntry("bun/access.get_1field")] });
+
+      const merged = mergeReports([nodeReport, bunReport]);
+
+      expect(merged.benchmarks.map((e) => e.alias)).toStrictEqual([
+        "node/access.get_1field",
+        "bun/access.get_1field",
       ]);
     });
   });

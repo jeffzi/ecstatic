@@ -9,7 +9,7 @@
 import { destroyWorld, get, set } from "ecstatic";
 
 import { Position, Velocity } from "./archetypes.js";
-import { benchCreateWorld } from "./helpers.js";
+import { benchCreateWorld, timedBench } from "./helpers.js";
 import { registerBench } from "./runner.js";
 
 let sink = 0;
@@ -22,12 +22,12 @@ export function sinkValue(): number {
 registerBench("access.get_1field", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
-  yield () => {
+  yield timedBench(() => {
     for (let i = 0; i < n; i++) {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       sink += get(storage, tracked[i]!, Position.x);
     }
-  };
+  });
 
   destroyWorld(world);
 });
@@ -35,7 +35,7 @@ registerBench("access.get_1field", function* () {
 registerBench("access.get_2field", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
-  yield () => {
+  yield timedBench(() => {
     for (let i = 0; i < n; i++) {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       const id = tracked[i]!;
@@ -43,7 +43,7 @@ registerBench("access.get_2field", function* () {
       const y = get(storage, id, Position.y);
       sink += x + y;
     }
-  };
+  });
 
   destroyWorld(world);
 });
@@ -51,7 +51,7 @@ registerBench("access.get_2field", function* () {
 registerBench("access.get_4field", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
-  yield () => {
+  yield timedBench(() => {
     for (let i = 0; i < n; i++) {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       const id = tracked[i]!;
@@ -61,7 +61,7 @@ registerBench("access.get_4field", function* () {
       const dy = get(storage, id, Velocity.dy);
       sink += x + y + dx + dy;
     }
-  };
+  });
 
   destroyWorld(world);
 });
@@ -69,12 +69,12 @@ registerBench("access.get_4field", function* () {
 registerBench("access.set_1field", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
-  yield () => {
+  yield timedBench(() => {
     for (let i = 0; i < n; i++) {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       set(storage, tracked[i]!, Position.x, i + 1);
     }
-  };
+  });
 
   destroyWorld(world);
 });
@@ -82,13 +82,13 @@ registerBench("access.set_1field", function* () {
 registerBench("access.set_record", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
-  yield () => {
+  yield timedBench(() => {
     for (let i = 0; i < n; i++) {
       const value = i + 1;
       // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       set(storage, tracked[i]!, Position, { x: value, y: value * 2 });
     }
-  };
+  });
 
   destroyWorld(world);
 });

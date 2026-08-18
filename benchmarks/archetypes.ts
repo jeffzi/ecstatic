@@ -7,7 +7,7 @@
  * numbers incomparable.
  */
 
-import { archetype, components } from "ecstatic";
+import { archetype, components, relation, resource } from "ecstatic";
 
 // ---------------------------------------------------------------------------
 // Shared component descriptors
@@ -68,3 +68,25 @@ export const soa1Arch = archetype([F1]);
 export const soa2Arch = archetype([F2]);
 export const soa5Arch = archetype([F5]);
 export const soa10Arch = archetype([F10]);
+
+// ---------------------------------------------------------------------------
+// allocation-gate resources and relations
+// ---------------------------------------------------------------------------
+
+/** Data-carrying optional used by the allocation gate's `enable_data`. */
+export const { Shield } = components({ Shield: { hp: 0 } });
+/** Position plus two optionals: `Alive` as a bare tag and `Shield` carrying data. */
+export const tagArch = archetype([Position], [Alive, Shield]);
+
+/** The resource the allocation gate reads, sets and resets. */
+export const Score = resource("Score", { value: 0, combo: 0 });
+
+/** Pure link, optional on `linkArch` so a source can be linked and unlinked in place. */
+export const Owner = relation("Owner");
+/** Data-carrying link, required on `ownedArch` so spawn takes the target. */
+export const Follows = relation("Follows", { offset: 0 });
+
+/** Position with both relations optional, so `link`/`unlink` toggle in place. */
+export const linkArch = archetype([Position], [Owner, Follows]);
+/** Position with `Follows` required, so spawn must supply a target. */
+export const ownedArch = archetype([Position, Follows]);
