@@ -2,9 +2,12 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    globals: true,
+    restoreMocks: true,
+    unstubEnvs: true,
+    unstubGlobals: true,
     coverage: {
-      include: ["src/**"],
+      provider: "istanbul",
+      include: ["src/**/*.ts"],
       thresholds: {
         lines: 95,
         functions: 95,
