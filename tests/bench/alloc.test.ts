@@ -165,16 +165,23 @@ describe("formatAllocReport", () => {
     expect(tokensFor(report, "each_all")).toStrictEqual(["each_all", "24", "32", "slack"]);
   });
 
-  it("renders a dash for a missing measurement and for a missing budget", () => {
-    const report = formatAllocReport([
-      allocResult({ name: "has", measured: undefined, budget: 16, verdict: "unmeasured" }),
-      allocResult({ name: "alive", measured: 8, budget: undefined, verdict: "unbudgeted" }),
-    ]);
+  const dashCases: { label: string; result: AllocResult; expectedTokens: string[] }[] = [
+    {
+      label: "a missing measurement",
+      result: allocResult({ name: "has", measured: undefined, budget: 16, verdict: "unmeasured" }),
+      expectedTokens: ["has", "-", "16", "unmeasured"],
+    },
+    {
+      label: "a missing budget",
+      result: allocResult({ name: "alive", measured: 8, budget: undefined, verdict: "unbudgeted" }),
+      expectedTokens: ["alive", "8", "-", "unbudgeted"],
+    },
+  ];
 
-    expect([tokensFor(report, "has"), tokensFor(report, "alive")]).toStrictEqual([
-      ["has", "-", "16", "unmeasured"],
-      ["alive", "8", "-", "unbudgeted"],
-    ]);
+  it.each(dashCases)("renders a dash for $label", ({ result, expectedTokens }) => {
+    const report = formatAllocReport([result]);
+
+    expect(tokensFor(report, result.name)).toStrictEqual(expectedTokens);
   });
 
   it("renders one line per op, in result order, above the closing line", () => {

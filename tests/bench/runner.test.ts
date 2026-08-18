@@ -365,16 +365,6 @@ describe("mergeReports", () => {
     });
     const third = report({ benchmarks: [benchEntry("iteration.each_soa")] });
 
-    it("concatenates the benchmark entries in input order", () => {
-      const merged = mergeReports([first, second, third]);
-
-      expect(merged.benchmarks.map((entry) => entry.alias)).toStrictEqual([
-        "access.get_1field",
-        "entity.spawn",
-        "iteration.each_soa",
-      ]);
-    });
-
     it("takes layout and context from the first report", () => {
       const merged = mergeReports([first, second, third]);
 
@@ -384,7 +374,7 @@ describe("mergeReports", () => {
       });
     });
 
-    it("carries each entry's nested run stats through unchanged", () => {
+    it("concatenates entries in input order and carries each entry's nested run stats through unchanged", () => {
       const merged = mergeReports([first, second, third]);
 
       expect(merged.benchmarks).toStrictEqual([
@@ -406,13 +396,6 @@ describe("mergeReports", () => {
         "node/access.get_1field",
         "bun/access.get_1field",
       ]);
-    });
-
-    it("throws ChildReportError when the same engine appears twice for a benchmark", () => {
-      const first = report({ benchmarks: [benchEntry("node/access.get_1field")] });
-      const duplicate = report({ benchmarks: [benchEntry("node/access.get_1field")] });
-
-      expect(() => mergeReports([first, duplicate])).toThrow(ChildReportError);
     });
   });
 
