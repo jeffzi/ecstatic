@@ -8,7 +8,10 @@ says what to optimize, what to leave alone, and what must happen before an edit.
 ## Objective
 
 Reduce nanoseconds per operation across the timing suite — the geometric mean of every
-`<group>.<name>/time` metric — while preserving correctness, the public API, and the test suite.
+`<engine>/<group>.<name>/time` metric on both V8 (node) and JSC (bun) — subject to no per-metric
+regression on either engine. A V8 win that regresses any JSC metric is refused by `keep`, and the
+agent must not chase the geomean alone. Correctness, the public API, and the test suite are
+preserved.
 
 ## How the loop runs
 
@@ -26,18 +29,21 @@ whether the change is a single-function micro-optimization (profiling gate appli
 cross-cutting refactor (full `iterate` decides), and which measurement justifies it. An iteration
 without that line is a guess.
 
-**Waiting is the whole job while `iterate` runs.** One pass over the suite takes about two minutes
-on a laptop. `iterate` builds both worktrees and runs `samples` (5) passes over each — ten passes —
-and a regression verdict adds a confirmation rerun of the whole suite, so expect an `iterate` to
-take twenty to forty minutes. Launch it, then wait for the completion notification and nothing else:
-no polling the process, no tailing its output, no other commands. Every poll spends context for zero
-information. Launch a benchmark command only when none is running.
+**Waiting is the whole job while `iterate` runs.** One pass over the suite takes about four minutes
+on a laptop (both engines). `iterate` builds both worktrees and runs `samples` (5) passes over each
+— ten passes — and a regression verdict adds a confirmation rerun of the whole suite, so expect an
+`iterate` to take forty to eighty minutes. Launch it, then wait for the completion notification and
+nothing else: no polling the process, no tailing its output, no other commands. Every poll spends
+context for zero information. Launch a benchmark command only when none is running. A bun install is
+required for the session; a missing bun aborts `iterate`.
 
 ## Benchmark suite
 
-27 benchmarks in 4 groups: `access` (5), `entity` (6), `iteration` (9), `many` (7). The suite emits
-`/time` metrics only; memory is the allocation gate's job. No `filter` is configured, so all 27 gate
-a `keep`; the primary metric is the geomean of all of them (gymrat's default).
+27 benchmarks in 4 groups: `access` (5), `entity` (6), `iteration` (9), `many` (7), each measured
+under both engines — 27 × 2 = 54 gating `/time` metrics. Aliases carry an `<engine>/` prefix
+(`node/access.get_1field`, `bun/access.get_1field`), and all benchmarks run under node before bun.
+Memory is the allocation gate's job (node only). No `filter` is configured, so all 54 gate a `keep`;
+the primary metric is the geomean of all of them (gymrat's default).
 
 `benchmarks/main.ts` measures nothing itself. It spawns one child process per benchmark, one at a
 time, so heap shape, JIT state, and GC pressure from one benchmark never reach the next. Measured in
@@ -98,6 +104,8 @@ refactors that change data layout or control flow across many functions are eval
 
 Use only these tools — mitata already does calibration, GC control, and comparison output:
 
+**V8 (node):**
+
 - `node --cpu-prof script.js` writes a `.cpuprofile`; open it in Chrome DevTools (Performance panel,
   "Load profile") or [speedscope](https://www.speedscope.app) for line-level self time.
 - `node --prof script.js && node --prof-process isolate-*.log` prints a tick summary by function —
@@ -108,9 +116,19 @@ Use only these tools — mitata already does calibration, GC control, and compar
   hidden class and element kind — the check for "do all entities/records share one shape?". Node's
   V8 no longer ships `--trace-ic`; use `--trace-deopt` (megamorphic sites surface as deopt reasons)
   and `%DebugPrint` instead.
+
+**JSC (bun):**
+
+- `bun --cpu-prof script.js` writes a `.cpuprofile` for Chrome DevTools or speedscope;
+  `bun --cpu-prof-md script.js` prints a grep-friendly summary to stdout.
+- There is no `--trace-deopt` equivalent. JSC micro-optimizations are justified by `--cpu-prof`
+  self-time plus a mitata A/B under `bun`.
+
+**Both engines:**
+
 - mitata for A/B comparison of candidate implementations in one script, the same way
   `benchmarks/*-bench.ts` use it.
-- Optional, not dependencies: `0x` or `clinic flame` for flame graphs. Neither goes into
+- Optional, not dependencies: `0x` or `clinic flame` for flame graphs (node only). Neither goes into
   `package.json`.
 
 Workflow:
@@ -128,8 +146,9 @@ Workflow:
 ## At floor — do not optimize
 
 None recorded yet. When an operation reaches the point where profiling shows only memory latency or
-architectural overhead, add it here with the measurement that proves the floor (the profile or the
-mitata comparison and its numbers), so later sessions do not re-mine it.
+architectural overhead, add it here with the engine the floor was proven on and the measurement that
+proves it (the profile or the mitata comparison and its numbers), so later sessions do not re-mine
+it.
 
 ## Off limits
 
@@ -157,7 +176,12 @@ Every optimization is an edit under `src/`. These stay untouched for the whole s
 - The profiling gate is honored before a single-function micro-optimization.
 - The allocation gate is honored: no over-budget op, no unclaimed slack.
 
-## V8 constraints
+## Engine constraints
+
+A change must hold on both V8 and JSC. Bun is the JSC proxy: WKWebView's JSC differs in version and
+JIT tiering policy, so relative deltas transfer but absolute numbers do not.
+
+**V8 (node):**
 
 - **Keep call sites monomorphic.** Every entity record, storage object, and archetype descriptor
   that flows through a hot function should have one hidden class. Build objects with the same
@@ -170,6 +194,16 @@ Every optimization is an edit under `src/`. These stay untouched for the whole s
 - **Match the suite's storage kinds.** Where the suite already uses typed arrays, keep typed arrays;
   where it uses plain arrays, keep them packed (no holes, no mixed element kinds — writing a double
   into an integer-only array transitions the whole array).
+
+**JSC (bun):**
+
+- JSC's DFG and FTL JIT tiers optimize monomorphic shapes similarly to V8, so the V8 monomorphic
+  call-site rules apply here too.
+- JSC's inlining budget is smaller than V8's TurboFan. Functions that are borderline-inlined under
+  V8 may not inline under JSC; splitting large hot functions helps both engines.
+
+**Both engines:**
+
 - **`--expose-gc` is required by the harness.** Both the timing suite and the allocation gate refuse
   to run without it, so every profiling script that reuses them needs the flag too.
 - **Read the noise floor first.** `npm run bench:measure` on an unchanged tree reports the median ±
@@ -188,6 +222,7 @@ Every optimization is an edit under `src/`. These stay untouched for the whole s
 | "The test is wrong now that the internals moved"  | Then the behavior moved. Discard the change; add a test instead of editing one.  |
 | "One helper in `benchmarks/` won't skew anything" | The harness is off limits; the helper belongs in `src/` or `benchmarks/tmp/`.    |
 | "The delta is 2%, that's a win"                   | Read `bench:measure` spread first. Under the spread it is noise, not a keep.     |
+| "It only regressed on bun"                        | Bun gates. Discard or fix the JSC regression before keeping.                     |
 | "Iterations are slow, I'll stop early"            | Iterate until `iterate` names the stop condition. Stopping early wastes the run. |
 
 ## Red flags — stop and re-read the gate you are about to skip

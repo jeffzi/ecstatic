@@ -27,7 +27,7 @@
     }
   },
   "scripts": {
-    "bench:autoresearch": "gymrat supervise --max-minutes 240",
+    "bench:autoresearch": "gymrat supervise --max-minutes 480",
     "bench:measure": "gymrat measure --prepare \"npm run -s build\"",
     "build": "tsc -p tsconfig.build.json",
     "check:actions": "actionlint && zizmor .github/workflows",

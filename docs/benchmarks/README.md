@@ -15,7 +15,9 @@ optimization workflows.
 ## Benchmark groups
 
 Benchmark names are `<prefix><benchmark>`, so the prefix column doubles as the filter to run just
-that group.
+that group. The runner prefixes every reported name with the engine (`node/`, `bun/`), so the full
+metric name gymrat sees is `<engine>/<prefix><benchmark>/time`. The filter matches the plain name
+(without the engine prefix).
 
 | Group     | Prefix       | Specification                               | Source                                                                 |
 | --------- | ------------ | ------------------------------------------- | ---------------------------------------------------------------------- |

@@ -1,5 +1,5 @@
 {
-  "bench": "npx tsx --expose-gc benchmarks/main.ts",
+  "bench": "npx tsx --expose-gc benchmarks/main.ts --engine node,bun",
   "prepare": "npm ci && npm run -s build",
   "adapter": "mitata",
   "samples": 5,

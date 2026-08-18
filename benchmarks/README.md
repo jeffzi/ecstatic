@@ -14,7 +14,7 @@ Two npm scripts drive the suite, and a third runs the allocation gate. Both benc
 - `npm run bench:autoresearch` runs a supervised gymrat optimization session: gymrat launches the
   agent with [`gymrat-runbook.md`](gymrat-runbook.md), builds, samples, verdicts, and logs; the
   session ends at the runbook's stop condition or the wall-clock cap. The script sets
-  `--max-minutes 240`; a trailing flag overrides it
+  `--max-minutes 480` (doubled for the two-engine suite); a trailing flag overrides it
   (`npm run bench:autoresearch -- --max-minutes 30`, the last occurrence wins).
 - `npm run bench:measure` measures the working tree in place with gymrat's `measure`, using a
   build-only prepare step so the configured `npm ci` never touches your checkout. It reports a
@@ -29,15 +29,22 @@ Bare `"ecstatic"` imports resolve through the package's own `exports` map to `di
 suite and the gate measure the last compiled output; every gymrat path builds first.
 
 The underlying runner is `npx tsx --expose-gc benchmarks/main.ts` — the command `gymrat.json`
-drives. Run it by hand to measure a subset or a second engine; it prints one JSON report covering
-every selected benchmark:
+drives. `gymrat.json` runs both engines (`--engine node,bun`), so `gymrat iterate` measures and
+gates 54 `/time` metrics; a `keep` gates on both engines. Run the runner by hand to measure a subset
+or a single engine; it prints one JSON report covering every selected benchmark:
 
 ```bash
 npm run -s build
-npx tsx --expose-gc benchmarks/main.ts '^iteration\.'   # one group
-npx tsx --expose-gc benchmarks/main.ts 'soa'            # anywhere in the name
-npx tsx --expose-gc benchmarks/main.ts --engine bun     # under Bun's JavaScriptCore
+npx tsx --expose-gc benchmarks/main.ts '^iteration\.'              # one group, node only
+npx tsx --expose-gc benchmarks/main.ts --engine node,bun 'soa'     # both engines
+npx tsx --expose-gc benchmarks/main.ts --engine bun                # bun only
 ```
+
+`--engine` accepts a comma-separated list of engines; the default is `node`. Aliases in the report
+are always prefixed with the engine (`node/access.get_1field`, `bun/access.get_1field`), and gymrat
+metric names carry the same prefix (`node/access.get_1field/time`). The filter matches the plain
+benchmark name (without the engine prefix), so `'^iteration\.'` selects the iteration group under
+every requested engine.
 
 The pattern is an unanchored regular expression matched against benchmark names. A pattern that
 matches nothing is an error, not an empty report. A pattern cannot begin with `-`, which would parse
@@ -65,8 +72,9 @@ success; the first child failure aborts the run with the child's diagnostics on 
 ### Choosing an engine
 
 ecstatic targets browsers (V8) and Capacitor, which runs on JavaScriptCore (JSC), so the runner
-takes `--engine node|bun`, defaulting to `node`. Bun is the JSC proxy: it needs a separate install
-([bun.sh](https://bun.sh)), and `--engine bun` reports `bun not found` if it is missing.
+takes `--engine node|bun` (or `--engine node,bun` for both), defaulting to `node`. Bun is the JSC
+proxy: it needs a separate install ([bun.sh](https://bun.sh)), and a missing `bun` aborts the run
+with `bun not found`.
 
 Treat Bun numbers as indicative rather than exact for the Capacitor target. Bun embeds JSC, but
 WKWebView's JSC differs in version, JIT tiering policy, and memory limits. The pairing is sound for
@@ -91,16 +99,18 @@ modifications uncommitted.
 ### Reading the noise floor
 
 `npm run bench:measure` samples one unchanged target, so the spread column reports dispersion that
-no code change can explain: the machine's noise floor. Read it before trusting a small delta from a
-gymrat iteration, and raise `--samples` when a verdict gates anything:
+no code change can explain: the machine's noise floor. With both engines configured, the run reports
+54 metrics (27 benchmarks × 2 engines) and takes about twice as long as a single-engine run. A noise
+floor is per engine — read the `node/` and `bun/` rows separately. Raise `--samples` when a verdict
+gates anything:
 
 ```bash
 npm run bench:measure -- --samples 15
 ```
 
 A benchmark whose spread here is wider than the delta an iteration reports has not shown you a
-change. Some benchmarks are near-zero-variance — `many.despawn_all` self-compared within a ±0.9%
-band at `--samples 5` — and at low sample counts a gate can read that band as a real change.
+change. Some benchmarks are near-zero-variance — `node/many.despawn_all` self-compared within a
+±0.9% band at `--samples 5` — and at low sample counts a gate can read that band as a real change.
 
 ## Allocation gate
 
