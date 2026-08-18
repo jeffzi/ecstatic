@@ -3,5 +3,6 @@
   "ignorePatterns": [".agents", ".claude", ".planning", ".research", "coverage", "dist"],
   "printWidth": 100,
   "sortImports": true,
-  "sortPackageJson": true
+  "sortPackageJson": true,
+  "proseWrap": "always"
 }

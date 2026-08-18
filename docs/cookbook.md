@@ -1,7 +1,7 @@
 # Cookbook
 
-Reusable userland patterns for ecstatic. These are not part of the core API — they're
-lightweight utilities you copy into your project and adapt.
+Reusable userland patterns for ecstatic. These are not part of the core API — they're lightweight
+utilities you copy into your project and adapt.
 
 For communication patterns, see [events.md](events.md).
 
@@ -48,12 +48,12 @@ import {
 
 ## Recommended project layout
 
-ecstatic has no system concept — a system is a plain function that calls `each()` or
-`query()`. This is intentional: plain functions are easy to test, easy to reorder, and
-need no registration or base class.
+ecstatic has no system concept — a system is a plain function that calls `each()` or `query()`. This
+is intentional: plain functions are easy to test, easy to reorder, and need no registration or base
+class.
 
-The recommended convention is one `schema.ts` for shared definitions (components, tags,
-archetypes) and one system per file, all called in order from a single `update()`:
+The recommended convention is one `schema.ts` for shared definitions (components, tags, archetypes)
+and one system per file, all called in order from a single `update()`:
 
 ```text
 src/
@@ -82,9 +82,9 @@ export function movementSystem(world: World): void {
 }
 ```
 
-`schema.ts` is the shared vocabulary between systems. Components and archetypes live here
-so that every system imports from one place, avoiding circular dependencies. For a small
-game, a single file is enough. If it grows past ~100 lines, split by domain:
+`schema.ts` is the shared vocabulary between systems. Components and archetypes live here so that
+every system imports from one place, avoiding circular dependencies. For a small game, a single file
+is enough. If it grows past ~100 lines, split by domain:
 
 ```text
 src/
@@ -97,14 +97,14 @@ src/
 
 Systems still import from `"./schema"` (the index re-export), so nothing else changes.
 
-The `update()` function in `main.ts` is the single source of truth for execution order.
-Reading it top-to-bottom shows the entire frame. When the order is wrong, there's exactly
-one place to fix it. See [Game loop structure](#game-loop-structure) for the full pattern.
+The `update()` function in `main.ts` is the single source of truth for execution order. Reading it
+top-to-bottom shows the entire frame. When the order is wrong, there's exactly one place to fix it.
+See [Game loop structure](#game-loop-structure) for the full pattern.
 
 ## Named archetypes and composition
 
-Declare an archetype as a class when its name should surface in types, editor tooltips, and
-error messages — `Storage`, `EntityId`, and `each` views all display the declared name:
+Declare an archetype as a class when its name should surface in types, editor tooltips, and error
+messages — `Storage`, `EntityId`, and `each` views all display the declared name:
 
 ```typescript
 class Ship extends Archetype([Position, Health], [Frozen]) {}
@@ -113,8 +113,8 @@ const ships = register(world, Ship); // Storage<Ship>
 const id = spawn(ships); // EntityId<Ship>
 ```
 
-The class is a declaration, not an object: `new Ship()` is a compile error and throws at
-runtime. `register` and `getStorage` accept the class and a plain `archetype(...)` descriptor
+The class is a declaration, not an object: `new Ship()` is a compile error and throws at runtime.
+`register` and `getStorage` accept the class and a plain `archetype(...)` descriptor
 interchangeably.
 
 Reuse component lists by spreading — from a shared `as const` set, or from another declared
@@ -132,15 +132,15 @@ Do not subclass a declared archetype: a class body cannot add components, so
 `class Tank extends Vehicle {}` could only alias the same archetype under a second name, and
 registration rejects it. Spreads are the composition mechanism.
 
-Archetypes are canonicalized by their component lists: two classes declaring identical lists
-are the same archetype and share one storage pool, whatever their names. When two nouns need
-separate pools, give each a distinguishing component — a tag is enough.
+Archetypes are canonicalized by their component lists: two classes declaring identical lists are the
+same archetype and share one storage pool, whatever their names. When two nouns need separate pools,
+give each a distinguishing component — a tag is enough.
 
 ## Allocation-free event queue
 
-The transient queue pattern for inter-system communication uses dense arrays with a count,
-the same strategy as archetype storage: reset `count = 0` and overwrite slots on push. No
-allocation after the first frame — the arrays grow once and stay.
+The transient queue pattern for inter-system communication uses dense arrays with a count, the same
+strategy as archetype storage: reset `count = 0` and overwrite slots on push. No allocation after
+the first frame — the arrays grow once and stay.
 
 ```typescript
 interface Queue<T> {
@@ -211,8 +211,8 @@ clearQueue(damageQueue);
 ```
 
 `drainQueue()` iterates in reverse and resets `count = 0` — the same despawn-safe pattern as
-`each()`. For multiple consumers that need the same events, use a plain loop per consumer
-and `clearQueue` at end of frame. No allocation occurs after initialization.
+`each()`. For multiple consumers that need the same events, use a plain loop per consumer and
+`clearQueue` at end of frame. No allocation occurs after initialization.
 
 ## Frame-scoped counter
 
@@ -237,8 +237,8 @@ updateKillCounter(killsThisFrame);
 killsThisFrame = 0;
 ```
 
-Don't put this in a component — it's not entity-scoped. For a more structured approach,
-use a resource:
+Don't put this in a component — it's not entity-scoped. For a more structured approach, use a
+resource:
 
 ```typescript
 const Stats = resource("Stats", { kills: 0 });
@@ -262,8 +262,8 @@ resetResource(world, Stats);
 
 ## Deferred despawn list
 
-Sometimes you need to mark entities for removal in one system and despawn them in another
-(e.g., after all systems have had a chance to read the dying entity's data).
+Sometimes you need to mark entities for removal in one system and despawn them in another (e.g.,
+after all systems have had a chance to read the dying entity's data).
 
 ```typescript
 const despawnList: number[] = [];
@@ -290,13 +290,12 @@ for (let i = 0; i < despawnCount; i++) {
 despawnCount = 0;
 ```
 
-The `alive()` check guards against double-despawn (entity killed by two systems in the same
-frame).
+The `alive()` check guards against double-despawn (entity killed by two systems in the same frame).
 
 ## Cooldown timer
 
-A data-carrying optional component for abilities with cooldowns. Enable to start the timer,
-disable when it expires.
+A data-carrying optional component for abilities with cooldowns. Enable to start the timer, disable
+when it expires.
 
 ```typescript
 const Cooldown = component("Cooldown", { remaining: 0 });
@@ -329,8 +328,8 @@ Cooldown" = ready to fire. No separate timer system needed.
 
 ## Game loop structure
 
-Organize a frame as ordered function calls. Call order determines causality — if system A
-writes data that system B reads, A must run before B.
+Organize a frame as ordered function calls. Call order determines causality — if system A writes
+data that system B reads, A must run before B.
 
 ```typescript
 const Time = resource("Time", { dt: 0, elapsed: 0 });
@@ -369,13 +368,13 @@ function update(world: World, dt: number): void {
 }
 ```
 
-No scheduler, no dependency graph. The developer controls execution order. For a runnable
-version, see the examples.
+No scheduler, no dependency graph. The developer controls execution order. For a runnable version,
+see the examples.
 
 ## State machines with archetypes
 
-Use optional tags as exclusive states. One system transitions between states; other systems
-filter on the active state.
+Use optional tags as exclusive states. One system transitions between states; other systems filter
+on the active state.
 
 ```typescript
 const { Idle, Moving, Attacking } = components({
@@ -427,8 +426,8 @@ enabling the new one. The `setState` helper keeps transitions consistent.
 
 ## Parent-child without relationships
 
-Store a parent's EntityId in a child component. Cascade operations (despawn, movement) by
-checking `alive()` on the stored reference.
+Store a parent's EntityId in a child component. Cascade operations (despawn, movement) by checking
+`alive()` on the stored reference.
 
 ```typescript
 const { Parent, Offset } = components({
@@ -464,9 +463,9 @@ each(attachments, (e) => {
 });
 ```
 
-The `alive()` check catches stale references when the parent is despawned. This example assumes
-all parents are enemies; for parents spread across multiple archetypes, use the world-scoped
-form (`get(world, parentId, Position.x)`).
+The `alive()` check catches stale references when the parent is despawned. This example assumes all
+parents are enemies; for parents spread across multiple archetypes, use the world-scoped form
+(`get(world, parentId, Position.x)`).
 
 ## Collision pair handling
 
@@ -511,10 +510,10 @@ The `i < j` guard avoids duplicate pairs. Each consumer iterates the same queue 
 
 ## Hoisting query filters
 
-`query()` caches which storages match a filter, keyed by the filter object's **identity**. A
-filter written inline is a fresh object on every call, so it misses the cache and re-resolves
-the whole archetype set every frame. Hoist it to module scope and the resolution is computed
-once, then reused until `register` or `destroyWorld` invalidates it.
+`query()` caches which storages match a filter, keyed by the filter object's **identity**. A filter
+written inline is a fresh object on every call, so it misses the cache and re-resolves the whole
+archetype set every frame. Hoist it to module scope and the resolution is computed once, then reused
+until `register` or `destroyWorld` invalidates it.
 
 ```typescript
 // Slower: a new array literal each frame, so each frame re-resolves
@@ -534,29 +533,27 @@ function movementSystem(world: World, dt: number) {
 }
 ```
 
-Both filter forms `query()` accepts — the bare component array and the `{all, any, none}`
-object — go through the same identity-keyed cache. Matched-row flags live on the matchers and
-update as entities spawn, enable, and disable, so a hoisted filter never goes stale between
-resolutions.
+Both filter forms `query()` accepts — the bare component array and the `{all, any, none}` object —
+go through the same identity-keyed cache. Matched-row flags live on the matchers and update as
+entities spawn, enable, and disable, so a hoisted filter never goes stale between resolutions.
 
-`each()` and `querySources()` need no hoisting: they resolve a filter to its bitmasks on every
-call and dedupe matchers by mask value, so an inline literal costs the literal plus one small
-tuple and a short scan of the storage's existing matchers, with no cached archetype set to
-miss.
+`each()` and `querySources()` need no hoisting: they resolve a filter to its bitmasks on every call
+and dedupe matchers by mask value, so an inline literal costs the literal plus one small tuple and a
+short scan of the storage's existing matchers, with no cached archetype set to miss.
 
 ## Batch vs single-entity operations
 
-`spawnMany`, `despawnMany`, `enableMany`, and `disableMany` exist for specific cases where
-bulk processing is structurally cheaper than N individual calls. They are not universally
-faster — use the right form for each situation.
+`spawnMany`, `despawnMany`, `enableMany`, and `disableMany` exist for specific cases where bulk
+processing is structurally cheaper than N individual calls. They are not universally faster — use
+the right form for each situation.
 
 ### Use batch when
 
 **Enabling or disabling 2+ optional components on the same entities in one call.**
-`enableMany(storage, ids, { Active: true, Slowed: true })` resolves each entity once and
-applies a single combined matcher update. Two separate `enable()` calls pay twice the resolve
-cost and twice the matcher update. Record values use the same grammar as spawn overrides:
-`true` = enable (resume), `false` = skip, `{ field: v }` = enable + patch.
+`enableMany(storage, ids, { Active: true, Slowed: true })` resolves each entity once and applies a
+single combined matcher update. Two separate `enable()` calls pay twice the resolve cost and twice
+the matcher update. Record values use the same grammar as spawn overrides: `true` = enable (resume),
+`false` = skip, `{ field: v }` = enable + patch.
 
 ```typescript
 // Good: one resolve + one matcher update per entity
@@ -569,9 +566,9 @@ for (const id of ids) {
 }
 ```
 
-**Operating on all entities (no-ids form).**
-`enableMany(storage, overrides)` and `disableMany(storage, comps)` iterate the dense array
-directly without entity ID resolution. The single-entity loop must resolve each entity.
+**Operating on all entities (no-ids form).** `enableMany(storage, overrides)` and
+`disableMany(storage, comps)` iterate the dense array directly without entity ID resolution. The
+single-entity loop must resolve each entity.
 
 ```typescript
 // Good: iterates dense array directly, no entity resolution
@@ -583,10 +580,9 @@ for (const id of trackedIds) {
 }
 ```
 
-**Despawning all entities.**
-`despawnMany(storage)` (no-ids form) does a single forward pass to retire all generation
-slots and calls one bulk column clear. The per-entity loop runs a full swap-and-pop for
-every entity.
+**Despawning all entities.** `despawnMany(storage)` (no-ids form) does a single forward pass to
+retire all generation slots and calls one bulk column clear. The per-entity loop runs a full
+swap-and-pop for every entity.
 
 ```typescript
 despawnMany(projectiles); // bulk clear — an order of magnitude faster than:
@@ -596,21 +592,18 @@ for (const id of ids) {
 }
 ```
 
-**Spawning many entities at once.**
-`spawnMany(storage, count)` pre-allocates in bulk. Repeated `spawn()` calls pay per-call
-overhead individually.
+**Spawning many entities at once.** `spawnMany(storage, count)` pre-allocates in bulk. Repeated
+`spawn()` calls pay per-call overhead individually.
 
 ### Use the single-entity form when
 
-**Enabling or disabling a single tag with explicit IDs.**
-`enable()` and `disable()` are inlined into tight code with entity resolution and the
-matcher update already specialized. The batch form's dispatch overhead does not amortize for
-a single operation.
+**Enabling or disabling a single tag with explicit IDs.** `enable()` and `disable()` are inlined
+into tight code with entity resolution and the matcher update already specialized. The batch form's
+dispatch overhead does not amortize for a single operation.
 
-**Despawning specific entities by ID.**
-`despawn(storage, id)` is a single-pass swap-and-pop with no intermediate allocation.
-`despawnMany(ids)` must first sort the targeted dense indices, so a plain `despawn()` loop
-is faster for partial despawns by ID.
+**Despawning specific entities by ID.** `despawn(storage, id)` is a single-pass swap-and-pop with no
+intermediate allocation. `despawnMany(ids)` must first sort the targeted dense indices, so a plain
+`despawn()` loop is faster for partial despawns by ID.
 
 ```typescript
 // Good: single pass per entity
@@ -622,9 +615,8 @@ for (const id of toRemove) {
 despawnMany(enemies, toRemove);
 ```
 
-**Logic is conditional or interleaved with iteration.**
-Any `enable`, `disable`, or `despawn` that depends on per-entity data belongs inside
-`each()`:
+**Logic is conditional or interleaved with iteration.** Any `enable`, `disable`, or `despawn` that
+depends on per-entity data belongs inside `each()`:
 
 ```typescript
 each(enemies, (e) => {
@@ -636,8 +628,8 @@ each(enemies, (e) => {
 
 ## Pooling / recycling
 
-Pre-spawn entities and toggle an `Active` tag instead of spawning and despawning. No
-allocation in the hot path after initialization.
+Pre-spawn entities and toggle an `Active` tag instead of spawning and despawning. No allocation in
+the hot path after initialization.
 
 ```typescript
 const Active = component("Active");
@@ -680,19 +672,19 @@ each(bullets, { all: [Active] }, (e) => {
 });
 ```
 
-When the pool is exhausted, `poolAcquire` returns `undefined` — the caller decides whether
-to fall back to a real `spawn()` or skip. The freelist is a dense array with a count, same
-allocation-free pattern as the deferred despawn list.
+When the pool is exhausted, `poolAcquire` returns `undefined` — the caller decides whether to fall
+back to a real `spawn()` or skip. The freelist is a dense array with a count, same allocation-free
+pattern as the deferred despawn list.
 
 ## Entity links vs. relations
 
-A plain `EntityId` field + `alive()` check is the cheapest way to reference another entity.
-It covers every forward traversal — child → parent, missile → target, turret → vehicle.
+A plain `EntityId` field + `alive()` check is the cheapest way to reference another entity. It
+covers every forward traversal — child → parent, missile → target, turret → vehicle.
 
-Promote a link to a `relation()` only when you need the **reverse** query: "which entities
-point _at_ this one?" A relation maintains a reverse index on every mutation and despawn —
-strictly more per-operation work than a plain field. If you never call `querySources`,
-`getSources`, `hasSources`, or `countSources`, a plain entity-link is the right tool.
+Promote a link to a `relation()` only when you need the **reverse** query: "which entities point
+_at_ this one?" A relation maintains a reverse index on every mutation and despawn — strictly more
+per-operation work than a plain field. If you never call `querySources`, `getSources`, `hasSources`,
+or `countSources`, a plain entity-link is the right tool.
 
 ```typescript
 // Forward-only: a plain EntityId field is enough. `0 as EntityId` is the perf form
@@ -729,9 +721,9 @@ Four functions query the reverse map. Pick the cheapest one that answers your qu
 | "Give me the source IDs as a list" | `getSources(world, rel, target, out)`  | O(S) | Only without out |
 | "Run logic per source entity"      | `querySources(world, rel, target, fn)` | O(S) | Only with filter |
 
-S = total source count across all archetypes for the (relation, target) pair. A = source
-archetypes for the pair. `hasSources` short-circuits on the first source found — O(A) worst
-case, effectively O(1) when sources exist.
+S = total source count across all archetypes for the (relation, target) pair. A = source archetypes
+for the pair. `hasSources` short-circuits on the first source found — O(A) worst case, effectively
+O(1) when sources exist.
 
 ```typescript
 const Targets = relation("Targets", [Position]);
@@ -758,37 +750,37 @@ querySources(world, Targets, deadEnemy, (e) => {
 });
 ```
 
-**Prefer `hasSources` over `countSources(...) > 0`.** `hasSources` short-circuits on the
-first source found; `countSources` walks every source. For per-frame polling ("is anyone
-still targeting me?"), the difference matters.
+**Prefer `hasSources` over `countSources(...) > 0`.** `hasSources` short-circuits on the first
+source found; `countSources` walks every source. For per-frame polling ("is anyone still targeting
+me?"), the difference matters.
 
 ## Hot module replacement
 
 ecstatic's declaration functions are idempotent: calling `component()`, `components()`,
-`relation()`, or `resource()` a second time with the same name and equal shape returns the
-existing registration. A live world's storage stays valid because archetypes resolve to the same
-descriptors they used on first registration.
+`relation()`, or `resource()` a second time with the same name and equal shape returns the existing
+registration. A live world's storage stays valid because archetypes resolve to the same descriptors
+they used on first registration.
 
 **Systems swap freely.** Systems are plain functions — replace the function reference at module
 re-evaluation and the next frame runs the new code. No registration step is involved.
 
 **Schema modules survive re-evaluation when the shape is unchanged.** When Vite (or another
-HMR-capable bundler) re-evaluates a module that declares components and resources, each
-declaration returns the original descriptor or ID. The world, its archetypes, and all entity
-data are unaffected.
+HMR-capable bundler) re-evaluates a module that declares components and resources, each declaration
+returns the original descriptor or ID. The world, its archetypes, and all entity data are
+unaffected.
 
 **Changing a field's shape throws on re-evaluation.** Adding, removing, or renaming a field, or
-changing a default value, width marker, or ref-ness, produces a shape conflict error. The
-bundler falls back to a full page reload because existing SoA storage cannot be reinterpreted
-under the new layout. The original registrations remain intact after the throw.
+changing a default value, width marker, or ref-ness, produces a shape conflict error. The bundler
+falls back to a full page reload because existing SoA storage cannot be reinterpreted under the new
+layout. The original registrations remain intact after the throw.
 
 **Resource defaults that hold functions or class instances compare by identity.** A re-evaluated
-module mints new closures and instances, so the identity check fails and the bundler falls back
-to a full reload. Primitive and container defaults (records, arrays, `Date`, `Map`, `Set`)
-compare by content and survive re-evaluation.
+module mints new closures and instances, so the identity check fails and the bundler falls back to a
+full reload. Primitive and container defaults (records, arrays, `Date`, `Map`, `Set`) compare by
+content and survive re-evaluation.
 
-A minimal `import.meta.hot.accept()` in a systems module is enough to enable HMR for the
-common case — schema unchanged, logic updated:
+A minimal `import.meta.hot.accept()` in a systems module is enough to enable HMR for the common case
+— schema unchanged, logic updated:
 
 ```typescript
 // systems/movement.ts
@@ -809,6 +801,6 @@ if (import.meta.hot) {
 ```
 
 **Surviving a shape change** — keeping the live world across a field rename or a new column —
-requires snapshotting the world state before the swap and restoring it by name with defaults
-filled in for new fields. This is the snapshot-first serialization module described in the
+requires snapshotting the world state before the swap and restoring it by name with defaults filled
+in for new fields. This is the snapshot-first serialization module described in the
 [design pillars](pillars.md) (see "Consequence for serialization"), not yet implemented.

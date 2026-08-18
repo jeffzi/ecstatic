@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import {
   component,
@@ -76,7 +76,7 @@ describe("resource", () => {
     ])("rejects a field name $label", ({ field, label }) => {
       const name = `ResourceTestFieldValidation_${label.replaceAll(" ", "_")}`;
 
-      expect(() => resource(name, { [field]: 0 })).toThrow();
+      expect(() => resource(name, { [field]: 0 })).toThrow("must be a valid ASCII identifier");
     });
 
     it("names the resource and the offending field in the error", () => {
@@ -388,9 +388,11 @@ describe("getResource", () => {
     const w1 = createWorld();
     const w2 = createWorld();
 
-    getResource(w1, Bag).items[0]!.hp = 9;
+    const firstItem = getResource(w1, Bag).items[0];
+    assert(firstItem != null);
+    firstItem.hp = 9;
 
-    expect(getResource(w2, Bag).items[0]!.hp).toBe(1);
+    expect(getResource(w2, Bag).items[0]?.hp).toBe(1);
     expect(item.hp).toBe(1);
   });
 

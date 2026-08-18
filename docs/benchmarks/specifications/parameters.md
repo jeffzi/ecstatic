@@ -32,9 +32,9 @@ every run.
 
 All components and tags used across the suite, organized by category.
 
-Tracked and Background name the two archetypes of the
-[pre-populated world](#world-population). Generic and Field scaling belong to the archetypes the
-[iteration benchmarks](iteration.md) build, and appear nowhere else.
+Tracked and Background name the two archetypes of the [pre-populated world](#world-population).
+Generic and Field scaling belong to the archetypes the [iteration benchmarks](iteration.md) build,
+and appear nowhere else.
 
 | Category      | Components              | Fields                                   |
 | ------------- | ----------------------- | ---------------------------------------- |

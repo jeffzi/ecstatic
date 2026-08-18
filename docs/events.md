@@ -1,9 +1,9 @@
 # System Communication in ecstatic
 
-How do independent systems (movement, combat, AI, rendering) communicate in a static archetype
-ECS with immediate operations? This document describes the communication patterns, provides a
-decision framework for choosing between them, and explains why some common ECS patterns
-(lifecycle hooks, command buffers) don't apply.
+How do independent systems (movement, combat, AI, rendering) communicate in a static archetype ECS
+with immediate operations? This document describes the communication patterns, provides a decision
+framework for choosing between them, and explains why some common ECS patterns (lifecycle hooks,
+command buffers) don't apply.
 
 For design motivation, see [pillars.md](pillars.md). For internal data structures, see
 [design/archetype.md](design/archetype.md). For production-ready versions of the patterns, see
@@ -39,14 +39,13 @@ import {
 Two properties of ecstatic shape how systems communicate:
 
 1. **Static archetypes.** Entity shapes are fixed at definition. Components can't be added or
-   removed at runtime — only pre-declared optionals can be toggled. This means there's no
-   structural event to react to (no "component added" hook), only state changes within a fixed
-   layout.
+   removed at runtime — only pre-declared optionals can be toggled. This means there's no structural
+   event to react to (no "component added" hook), only state changes within a fixed layout.
 
 2. **Immediate operations.** `spawn()`, `despawn()`, `enable()`, `disable()` all take effect
    immediately. The caller knows exactly when a state change happens and can handle consequences
-   inline. There's no deferred submission, no batch processing, no "end of frame"
-   synchronization point.
+   inline. There's no deferred submission, no batch processing, no "end of frame" synchronization
+   point.
 
 Together, these properties favor **direct state mutation** over event-driven patterns. Systems
 communicate by writing to shared component columns, toggling optional flags, and checking entity
@@ -56,9 +55,8 @@ status — not by publishing events and subscribing to callbacks.
 
 ### A. Shared mutable state
 
-The most common pattern. Multiple systems read and write the same component columns.
-Communication happens implicitly through data: one system writes a value, another system reads
-it.
+The most common pattern. Multiple systems read and write the same component columns. Communication
+happens implicitly through data: one system writes a value, another system reads it.
 
 **When to use:** Continuous data flow where the producer and consumer operate on the same
 components. Movement, physics, rendering — any system that transforms component data.
@@ -103,8 +101,8 @@ The damage system writes `hp`. The death system reads `hp`. The communication is
 
 ### B. Optional component flags
 
-Use optional components as state machine signals. One system enables a flag; other systems react
-by filtering on it. This is the primary mechanism for inter-system signaling in ecstatic.
+Use optional components as state machine signals. One system enables a flag; other systems react by
+filtering on it. This is the primary mechanism for inter-system signaling in ecstatic.
 
 **When to use:** Binary or multi-state conditions that other systems need to react to. Status
 effects (stunned, on fire, shielded), lifecycle states (alive, dying), AI states (aggressive,
@@ -162,10 +160,10 @@ each(enemies, { all: [Shield] }, (e) => {
 - Composable — multiple flags can be combined in filters (`all: [OnFire], none: [Stunned]`)
 - Limited to 32 optionals and tags per archetype (one bit each in the presence mask)
 
-**When data optionals are a poor fit:** A filtered `each` still scans every row in the archetype
-and branches on its matched flag, so very low match rates waste cycles, and the optional's
-columns hold a slot for every entity whether enabled or not. If only a small fraction of
-entities will ever have the optional enabled at any given time, consider a separate archetype:
+**When data optionals are a poor fit:** A filtered `each` still scans every row in the archetype and
+branches on its matched flag, so very low match rates waste cycles, and the optional's columns hold
+a slot for every entity whether enabled or not. If only a small fraction of entities will ever have
+the optional enabled at any given time, consider a separate archetype:
 
 ```typescript
 // Poor fit: Shield enabled on <5% of 10,000 enemies — 95% of the scan is branch misses
@@ -180,8 +178,8 @@ The threshold is workload-dependent — measure before splitting an archetype ov
 
 ### C. Resources (singletons)
 
-Global state that isn't tied to any entity: frame time, input state, camera position, audio
-manager, global counters. Resources are per-world singletons.
+Global state that isn't tied to any entity: frame time, input state, camera position, audio manager,
+global counters. Resources are per-world singletons.
 
 **When to use:** Data that every system needs but no entity owns. Configuration, timing, input,
 global accumulators.
@@ -241,10 +239,10 @@ each(missiles, (e) => {
 });
 ```
 
-`ref<EntityId>()` is the documented default for entity-link fields: unset reads `undefined`
-(forcing the guard above), rather than a fake ID `0` that would pass typechecking straight into
-`alive()`. For a link that's always set at spawn time and never needs the guard,
-`0 as EntityId` is a documented perf alternative — a pure-scalar column (see
+`ref<EntityId>()` is the documented default for entity-link fields: unset reads `undefined` (forcing
+the guard above), rather than a fake ID `0` that would pass typechecking straight into `alive()`.
+For a link that's always set at spawn time and never needs the guard, `0 as EntityId` is a
+documented perf alternative — a pure-scalar column (see
 [cookbook: entity links vs. relations](cookbook.md#entity-links-vs-relations)).
 
 **Tradeoffs:**
@@ -257,12 +255,12 @@ each(missiles, (e) => {
 ### E. Transient event queues
 
 A userland pattern for one-shot events that need to cross system boundaries. A producer system
-populates a queue during its iteration; consumer systems read it; the queue is cleared at the
-end of the frame (or at the start of the next).
+populates a queue during its iteration; consumer systems read it; the queue is cleared at the end of
+the frame (or at the start of the next).
 
-**When to use:** Events that multiple unrelated systems need to react to. Collision pairs,
-damage events, audio triggers, achievement notifications. Any case where the producer shouldn't
-know about the consumers.
+**When to use:** Events that multiple unrelated systems need to react to. Collision pairs, damage
+events, audio triggers, achievement notifications. Any case where the producer shouldn't know about
+the consumers.
 
 **Example — damage events:**
 
@@ -300,12 +298,12 @@ damageEvents.clear();
 ```
 
 The example shows three independent systems reading the same event queue: a producer (combat
-system), a health consumer, and a VFX consumer. Each system runs independently of the others —
-they communicate only through the shared queue.
+system), a health consumer, and a VFX consumer. Each system runs independently of the others — they
+communicate only through the shared queue.
 
-**Allocation note:** A `Map` allocates an entry per event and an object per value — GC pressure
-that violates the allocation pillar ([pillars.md](pillars.md), "No GC-visible allocation on a
-warm world"). For production use, see the
+**Allocation note:** A `Map` allocates an entry per event and an object per value — GC pressure that
+violates the allocation pillar ([pillars.md](pillars.md), "No GC-visible allocation on a warm
+world"). For production use, see the
 [allocation-free event queue](cookbook.md#allocation-free-event-queue): same pattern, zero GC
 pressure after the first frame. The `Map` version here is for clarity.
 
@@ -322,12 +320,12 @@ pressure after the first frame. The `Map` version here is for clarity.
 ### F. Archetype-as-state-machine
 
 For heavy entity type transitions where the source and target have fundamentally different
-components, use despawn + respawn. This is the static archetype equivalent of archetype
-migration in dynamic ECS systems.
+components, use despawn + respawn. This is the static archetype equivalent of archetype migration in
+dynamic ECS systems.
 
 **When to use:** An entity changes its fundamental nature — enemy → corpse, egg → chicken,
-building-under-construction → completed-building. The new state has different components than
-the old.
+building-under-construction → completed-building. The new state has different components than the
+old.
 
 **Example — enemy death → corpse:**
 
@@ -355,15 +353,15 @@ each(enemies, (e) => {
 
 ### G. Death-flagging and deferred cleanup
 
-When an entity holds a **foreign resource** — a scene-graph node, a DOM element, a physics body,
-a WebGL buffer, a playing sound — that resource must be released when the entity dies. The
-handle lives in a component field, and `despawn()`'s swap-and-pop erases that field immediately,
-so the release has to happen _before_ the entity is erased.
+When an entity holds a **foreign resource** — a scene-graph node, a DOM element, a physics body, a
+WebGL buffer, a playing sound — that resource must be released when the entity dies. The handle
+lives in a component field, and `despawn()`'s swap-and-pop erases that field immediately, so the
+release has to happen _before_ the entity is erased.
 
-Unlike deferred-submission ECS systems, ecstatic is immediate: `despawn()` takes effect at the
-call site. This pattern defers _cleanup_ via a flag, not despawn execution. The shape: mark the
-entity dead with a flag, exclude it from gameplay queries, then release the handle and despawn
-in a controlled end-of-frame sweep.
+Unlike deferred-submission ECS systems, ecstatic is immediate: `despawn()` takes effect at the call
+site. This pattern defers _cleanup_ via a flag, not despawn execution. The shape: mark the entity
+dead with a flag, exclude it from gameplay queries, then release the handle and despawn in a
+controlled end-of-frame sweep.
 
 **When to use:** Death needs cleanup that reads the dying entity's data — releasing a foreign
 handle, removing it from a spatial index, dropping loot at its position. Also whenever you want
@@ -409,8 +407,8 @@ each(enemies, { all: [Dead] }, (e) => {
 - Costs one bit of the 32-bit optional budget per dieable archetype.
 - Dead-but-not-despawned entities occupy their slots until the sweep — higher peak occupancy for
   spawn-and-die-same-frame workloads (bullet hell, particles-as-entities).
-- Reaches every despawn, because you initiate them all. ecstatic triggers no despawn on your
-  behalf — even a relationship cascade is an explicit
+- Reaches every despawn, because you initiate them all. ecstatic triggers no despawn on your behalf
+  — even a relationship cascade is an explicit
   [cascade recipe](design/relationships.md#cascade-is-a-recipe-not-a-feature) you write, so
   cascade-despawned entities pass through a kill site where you set `Dead` like any other. See
   [Why ecstatic has no public observers](#why-ecstatic-has-no-public-observers).
@@ -461,25 +459,24 @@ function update(dt: number): void {
 ```
 
 If `deathSystem` runs before `damageSystem`, entities die a frame late. If `renderSystem` runs
-before `moveSystem`, entities render at their old position. **Order is the user's
-responsibility.**
+before `moveSystem`, entities render at their old position. **Order is the user's responsibility.**
 
-This is simpler than automatic dependency resolution (no dependency graph, no scheduling
-overhead) but requires the developer to understand the data flow. For most games, the ordering
-is obvious and rarely changes.
+This is simpler than automatic dependency resolution (no dependency graph, no scheduling overhead)
+but requires the developer to understand the data flow. For most games, the ordering is obvious and
+rarely changes.
 
 **Rule of thumb:** If system A writes data that system B reads, A must run before B in the same
-frame. If the order doesn't matter (e.g., two systems that read the same data without writing),
-they can run in any order.
+frame. If the order doesn't matter (e.g., two systems that read the same data without writing), they
+can run in any order.
 
 ## Views are ephemeral
 
 The view `e` parameter in `each()` callbacks is valid only for the current callback invocation.
 After the callback returns, despawns can reorder the storage via swap-and-pop, invalidating any
-stored view. This is a gap in ecstatic's safety model: the type system catches structural
-mistakes (wrong component on wrong archetype), and generational IDs catch temporal mistakes
-(using a despawned entity), but views are reused per-archetype objects with no branding or
-staleness detection.
+stored view. This is a gap in ecstatic's safety model: the type system catches structural mistakes
+(wrong component on wrong archetype), and generational IDs catch temporal mistakes (using a
+despawned entity), but views are reused per-archetype objects with no branding or staleness
+detection.
 
 ```typescript
 // DANGEROUS: storing view across iterations
@@ -493,19 +490,18 @@ savedE.Health.hp -= 10; // silent corruption
 ```
 
 **Rule: never store `e` outside its callback.** If you need to reference an entity later, store
-`e.id` (an EntityId) — its generational check detects stale references. Views are the fast path
-for _immediate_ field access within a single callback; EntityIds are the safe path for
-_deferred_ references.
+`e.id` (an EntityId) — its generational check detects stale references. Views are the fast path for
+_immediate_ field access within a single callback; EntityIds are the safe path for _deferred_
+references.
 
 ### Never `await` inside a callback
 
-The same rule forbids suspending mid-iteration. Every `await` inside an `each()`/`query()`
-callback is a suspension point: between suspension and resumption, other code can spawn or
-despawn entities, reordering the dense rows via swap-and-pop — the view `e` silently rebinds to
-a different entity.
+The same rule forbids suspending mid-iteration. Every `await` inside an `each()`/`query()` callback
+is a suspension point: between suspension and resumption, other code can spawn or despawn entities,
+reordering the dense rows via swap-and-pop — the view `e` silently rebinds to a different entity.
 
-TypeScript will not catch this: `async (e) => …` is assignable to a `(e) => void` parameter, so
-an accidentally-async callback typechecks and the returned promises are silently dropped.
+TypeScript will not catch this: `async (e) => …` is assignable to a `(e) => void` parameter, so an
+accidentally-async callback typechecks and the returned promises are silently dropped.
 
 ```typescript
 // DANGEROUS: typechecks, but every await may rebind e
@@ -527,21 +523,21 @@ for (const id of pending) {
 }
 ```
 
-Complete all `each()` callbacks synchronously — `await` _between_ `each()` calls, not inside
-them, and re-validate collected IDs with `alive()` after every suspension point.
+Complete all `each()` callbacks synchronously — `await` _between_ `each()` calls, not inside them,
+and re-validate collected IDs with `alive()` after every suspension point.
 
 ## Why ecstatic has no public observers
 
-Many ECS libraries expose lifecycle observers — callbacks that fire when an entity spawns,
-despawns, or changes components. ecstatic deliberately ships none as public API. The reasons are
-specific to this design:
+Many ECS libraries expose lifecycle observers — callbacks that fire when an entity spawns, despawns,
+or changes components. ecstatic deliberately ships none as public API. The reasons are specific to
+this design:
 
-- **Immediate operations remove the seam observers fill.** In a deferred ECS, removals are
-  queued and flushed at one point per frame, and lifecycle callbacks fire there — batched,
-  ordered, easy to trace. ecstatic is immediate: `despawn()` takes effect at the call site, so a
-  mutation-time observer would fire mid-frame at whatever arbitrary point invoked the operation.
-  Even libraries with deferred removal warn against reacting at mutation time and recommend a
-  queue drained at a controlled point — which is the flag + system pattern.
+- **Immediate operations remove the seam observers fill.** In a deferred ECS, removals are queued
+  and flushed at one point per frame, and lifecycle callbacks fire there — batched, ordered, easy to
+  trace. ecstatic is immediate: `despawn()` takes effect at the call site, so a mutation-time
+  observer would fire mid-frame at whatever arbitrary point invoked the operation. Even libraries
+  with deferred removal warn against reacting at mutation time and recommend a queue drained at a
+  controlled point — which is the flag + system pattern.
 - **Static archetypes remove most of what observers observe.** Component sets are fixed at
   definition; there is no "component added" event. The only runtime structural events are
   spawn/despawn and optional enable/disable, all of which the caller initiates and can react to
@@ -549,25 +545,24 @@ specific to this design:
 - **Deferred despawn covers foreign-resource cleanup.** The one case that genuinely needs
   mutation-time data — releasing a handle before swap-and-pop erases it — is handled by
   [deferred despawn](#g-death-flagging-and-deferred-cleanup) above: mark `Dead`, exclude with
-  `none: [Dead]`, release and despawn in a sweep. For despawns you initiate, this is often
-  _better_ than an observer — ordered, batched, and aligned with how rendering engines batch
-  their own destruction.
+  `none: [Dead]`, release and despawn in a sweep. For despawns you initiate, this is often _better_
+  than an observer — ordered, batched, and aligned with how rendering engines batch their own
+  destruction.
 
-For **gameplay reactions** — VFX, sound, UI, analytics, AI transitions — the flag + system
-pattern is faster and more explicit: set an optional flag at the mutation, iterate
-`{ all: [Flag] }` at a controlled point, react there. Zero per-operation cost, explicit
-ordering, natural batching. A `despawn()` that silently triggered N callbacks would be harder to
-trace than an explicit sweep.
+For **gameplay reactions** — VFX, sound, UI, analytics, AI transitions — the flag + system pattern
+is faster and more explicit: set an optional flag at the mutation, iterate `{ all: [Flag] }` at a
+controlled point, react there. Zero per-operation cost, explicit ordering, natural batching. A
+`despawn()` that silently triggered N callbacks would be harder to trace than an explicit sweep.
 
 ### No despawns happen behind your back
 
-Deferred despawn is a _convention_ — it works because you set `Dead` at every kill site, so it
-only reaches despawns you initiate. ecstatic initiates none on your behalf. The one feature that
-could have — an automatic relationship cascade — is instead specified as
-[cascade-as-recipe](design/relationships.md#cascade-is-a-recipe-not-a-feature): despawning a
-target does not auto-despawn its sources, so you query the sources and despawn them yourself.
-Every despawn, cascades included, passes through a kill site where the flag + system and
-deferred-despawn patterns already apply.
+Deferred despawn is a _convention_ — it works because you set `Dead` at every kill site, so it only
+reaches despawns you initiate. ecstatic initiates none on your behalf. The one feature that could
+have — an automatic relationship cascade — is instead specified as
+[cascade-as-recipe](design/relationships.md#cascade-is-a-recipe-not-a-feature): despawning a target
+does not auto-despawn its sources, so you query the sources and despawn them yourself. Every
+despawn, cascades included, passes through a kill site where the flag + system and deferred-despawn
+patterns already apply.
 
 So no scenario remains that a mutation-time `onDespawn` would uniquely serve. The relationship
 system reacts to a target's death through explicit reverse queries, not a callback slot, and no

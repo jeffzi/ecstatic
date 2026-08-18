@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import { MAX_INDEX } from "../src/entity-id.js";
 import { archetype, components, ref, spawn } from "../src/index.js";
@@ -30,12 +30,15 @@ describe("spawn", () => {
     const id = spawn(storage);
     const row = rowOf(storage, id);
 
-    const pos = storage.columns.get(Position)!;
-    const health = storage.columns.get(Health)!;
-    expect(pos.x![row]).toBe(0);
-    expect(pos.y![row]).toBe(0);
-    expect(health.hp![row]).toBe(100);
-    expect(health.maxHp![row]).toBe(100);
+    const pos = storage.columns.get(Position);
+
+    assert(pos != null);
+    const health = storage.columns.get(Health);
+    assert(health != null);
+    expect(pos.x?.[row]).toBe(0);
+    expect(pos.y?.[row]).toBe(0);
+    expect(health.hp?.[row]).toBe(100);
+    expect(health.maxHp?.[row]).toBe(100);
   });
 
   it("applies overrides to default values", () => {
@@ -49,12 +52,15 @@ describe("spawn", () => {
     });
     const row = rowOf(storage, id);
 
-    const pos = storage.columns.get(Position)!;
-    const health = storage.columns.get(Health)!;
-    expect(pos.x![row]).toBe(42);
-    expect(pos.y![row]).toBe(0);
-    expect(health.hp![row]).toBe(50);
-    expect(health.maxHp![row]).toBe(100);
+    const pos = storage.columns.get(Position);
+
+    assert(pos != null);
+    const health = storage.columns.get(Health);
+    assert(health != null);
+    expect(pos.x?.[row]).toBe(42);
+    expect(pos.y?.[row]).toBe(0);
+    expect(health.hp?.[row]).toBe(50);
+    expect(health.maxHp?.[row]).toBe(100);
   });
 
   it("supports partial plain-object overrides without reading missing components as a map", () => {
@@ -68,12 +74,15 @@ describe("spawn", () => {
     }).not.toThrow();
     const row = rowOf(storage, id);
 
-    const pos = storage.columns.get(Position)!;
-    const health = storage.columns.get(Health)!;
-    expect(pos.x![row]).toBe(42);
-    expect(pos.y![row]).toBe(0);
-    expect(health.hp![row]).toBe(100);
-    expect(health.maxHp![row]).toBe(100);
+    const pos = storage.columns.get(Position);
+
+    assert(pos != null);
+    const health = storage.columns.get(Health);
+    assert(health != null);
+    expect(pos.x?.[row]).toBe(42);
+    expect(pos.y?.[row]).toBe(0);
+    expect(health.hp?.[row]).toBe(100);
+    expect(health.maxHp?.[row]).toBe(100);
   });
 
   it("errors when a required component is overridden with false", () => {
@@ -94,7 +103,7 @@ describe("spawn", () => {
 
     const id = spawn(storage, { SpawnTestPosition: true });
     const row = rowOf(storage, id);
-    expect(storage.columns.get(Position)!.x![row]).toBe(0);
+    expect(storage.columns.get(Position)?.x?.[row]).toBe(0);
   });
 
   it("returns unique IDs for multiple spawns", () => {
@@ -135,12 +144,14 @@ describe("spawn", () => {
     const obj = { hp: 100 };
     spawn(storage, { [Stats.__ecstatic_name]: { data: obj } });
 
-    const col = storage.columns.get(Stats)!;
-    expect(col.data![0]).toBe(obj);
+    const col = storage.columns.get(Stats);
+
+    assert(col != null);
+    expect(col.data?.[0]).toBe(obj);
 
     // Spawn without override reads undefined for ref field
     spawn(storage);
-    expect(col.data![1]).toBeUndefined();
+    expect(col.data?.[1]).toBeUndefined();
   });
 
   describe("growth", () => {
@@ -157,9 +168,9 @@ describe("spawn", () => {
 
       expect(storage.n).toBe(10);
 
-      // Verify earlier entities' column data survived
-      const posCol = storage.columns.get(Position)!;
-      expect(posCol.x!.length).toBeGreaterThanOrEqual(10);
+      const posCol = storage.columns.get(Position);
+      assert(posCol != null);
+      expect(posCol.x?.length).toBeGreaterThanOrEqual(10);
     });
 
     it("spawning past world capacity grows world arrays and refreshes aliases", () => {
@@ -175,7 +186,6 @@ describe("spawn", () => {
 
       expect(storage.n).toBe(300);
 
-      // Verify generation, sparse, and entityArch aliases were refreshed
       expect(storage.generation.length).toBeGreaterThanOrEqual(300);
       expect(storage.sparse.length).toBeGreaterThanOrEqual(300);
     });

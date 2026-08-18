@@ -132,6 +132,36 @@ export function resolveFilter(
 }
 
 /**
+ * Resolve the `any` axis: returns the bitmask for optional-component membership,
+ * or `false` when the axis is impossible (all components absent from the archetype).
+ * When a required component satisfies the axis, the returned mask is 0 (trivially
+ * satisfied — no per-row bitmask check needed).
+ */
+function resolveAnyMask(
+  anyIds: readonly ComponentDescriptor[],
+  optionalBitLookup: ReadonlyMap<ComponentDescriptor, number>,
+  componentLookup: ReadonlySet<ComponentDescriptor>,
+): number | false {
+  let mask = 0;
+  let hasPresentComponent = false;
+  for (const cid of anyIds) {
+    const bit = optionalBitLookup.get(cid);
+    if (bit !== undefined) {
+      mask |= bit;
+    } else if (componentLookup.has(cid)) {
+      hasPresentComponent = true;
+    }
+  }
+  if (anyIds.length > 0 && mask === 0 && !hasPresentComponent) {
+    return false;
+  }
+  if (hasPresentComponent) {
+    return 0;
+  }
+  return mask;
+}
+
+/**
  * Resolve the three filter axes against a storage's component sets:
  *
  * - `all`: a required component is trivially satisfied; an optional
@@ -143,9 +173,6 @@ export function resolveFilter(
  * - `none`: optionals contribute bits; a required component makes the
  *   storage unmatchable; absent components are trivially satisfied.
  */
-// The three-axis short-circuit ladder is deliberately one function: the
-// early exits and their ordering encode the resolution semantics, and
-// splitting per axis would separate decisions that read each other's state.
 // fallow-ignore-next-line complexity
 export function resolveFilterMasks(
   storage: Storage,
@@ -166,27 +193,9 @@ export function resolveFilterMasks(
     }
   }
 
-  let anyMask = 0;
-  let anyHasPresentComponent = false;
-  for (const cid of anyIds) {
-    const bit = optionalBitLookup.get(cid);
-    if (bit !== undefined) {
-      anyMask |= bit;
-    } else if (componentLookup.has(cid)) {
-      // Component is required on this archetype — always present
-      anyHasPresentComponent = true;
-    }
-    // else: component not on archetype — can't contribute, skip
-  }
-
-  // If all anyIds are absent components (no bits, no present comps), impossible
-  if (anyIds.length > 0 && anyMask === 0 && !anyHasPresentComponent) {
+  const anyMask = resolveAnyMask(anyIds, optionalBitLookup, componentLookup);
+  if (anyMask === false) {
     return false;
-  }
-
-  // If at least one present component in any, the any leg is trivially satisfied
-  if (anyHasPresentComponent) {
-    anyMask = 0; // clear — always passes, no bitmask check needed
   }
 
   let noneMask = 0;
@@ -195,10 +204,8 @@ export function resolveFilterMasks(
     if (bit !== undefined) {
       noneMask |= bit;
     } else if (componentLookup.has(cid)) {
-      // Required component in none → impossible
       return false;
     }
-    // else: component not on archetype — trivially satisfied, skip
   }
 
   if (allMask === 0 && anyMask === 0 && noneMask === 0) {

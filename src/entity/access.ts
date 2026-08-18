@@ -76,7 +76,8 @@ function resolveFieldColumn(
   // in DEBUG only.
   if (DEBUG) {
     const bit = storage.optionalBitLookup.get(comp);
-    if (bit !== undefined && (storage.mask[di]! & bit) === 0) {
+    const maskVal = storage.mask[di];
+    if (bit !== undefined && maskVal !== undefined && (maskVal & bit) === 0) {
       throw new Error(errorNotEnabled(name));
     }
   }
@@ -91,22 +92,26 @@ function resolveFieldColumn(
   return col;
 }
 
+interface RowCtx {
+  storage: Storage;
+  di: number;
+}
+
 /**
  * Write one field value, encoding booleans as their 0/1 column representation
  * (boolean fields are stored in Uint8Array columns).
  */
 function writeField(
-  storage: Storage,
-  di: number,
+  row: RowCtx,
   comp: ComponentDescriptor,
   fieldName: string,
   value: unknown,
 ): void {
-  const col = resolveFieldColumn(storage, di, comp, fieldName);
+  const col = resolveFieldColumn(row.storage, row.di, comp, fieldName);
   if (typeof comp.__ecstatic_defaults[fieldName] === "boolean") {
-    col[di] = value === true ? 1 : 0;
+    col[row.di] = value === true ? 1 : 0;
   } else {
-    col[di] = value;
+    col[row.di] = value;
   }
 }
 
@@ -128,7 +133,9 @@ export function get(
   field: FieldDescriptor,
 ): unknown {
   const storage = resolveEntityArch(storageOrWorld, id);
-  const di = storage.sparse[entityIndex(id)]!;
+  const di = storage.sparse[entityIndex(id)];
+  /* istanbul ignore next */
+  if (di === undefined) throw new Error("invariant: entity missing from sparse array");
   const comp = field.__ecstatic_component;
   const fieldName = field.__ecstatic_field;
   const value = resolveFieldColumn(storage, di, comp, fieldName)[di];
@@ -182,7 +189,10 @@ export function set(
   valuesOrValue?: unknown,
 ): void {
   const storage = resolveEntityArch(storageOrWorld, id);
-  const di = storage.sparse[entityIndex(id)]!;
+  const di = storage.sparse[entityIndex(id)];
+  /* istanbul ignore next */
+  if (di === undefined) throw new Error("invariant: entity missing from sparse array");
+  const row: RowCtx = { storage, di };
 
   if (isFieldDescriptor(componentOrField)) {
     guardRelationTargetWrite(
@@ -190,8 +200,7 @@ export function set(
       componentOrField.__ecstatic_field,
     );
     writeField(
-      storage,
-      di,
+      row,
       componentOrField.__ecstatic_component,
       componentOrField.__ecstatic_field,
       valuesOrValue,
@@ -203,7 +212,7 @@ export function set(
   const values = valuesOrValue as Record<string, unknown>;
   guardRelationTargetWrite(componentOrField, values);
   for (const [fieldName, value] of Object.entries(values)) {
-    writeField(storage, di, componentOrField, fieldName, value);
+    writeField(row, componentOrField, fieldName, value);
   }
 }
 
@@ -236,7 +245,9 @@ export function getTarget<R extends Relation>(
     return undefined;
   }
 
-  const di = storage.sparse[index]!;
+  const di = storage.sparse[index];
+  /* istanbul ignore next */
+  if (di === undefined) throw new Error("invariant: entity missing from sparse array");
   const soa = storage.columns.get(rel);
   const targetColumn = soa?.target;
   if (!(targetColumn instanceof Float64Array)) {
@@ -245,15 +256,16 @@ export function getTarget<R extends Relation>(
 
   // Correctness guard: an optional relation that is disabled has no valid target.
   const bit = storage.optionalBitLookup.get(rel);
-  if (bit !== undefined && (storage.mask[di]! & bit) === 0) {
+  const maskVal = storage.mask[di];
+  if (bit !== undefined && maskVal !== undefined && (maskVal & bit) === 0) {
     return undefined;
   }
 
   // Sentinel 0 = not linked. This must precede the generation compare: a
   // zero-filled generation slot at index 0 would otherwise report the
   // sentinel as alive.
-  const targetId = targetColumn[di]!;
-  if (targetId === 0) {
+  const targetId = targetColumn[di];
+  if (targetId === undefined || targetId === 0) {
     return undefined;
   }
   const targetIndex = entityIndex(targetId);
