@@ -6,10 +6,11 @@ setup, measured operation, and the code path it targets for regression detection
 rationale and omission justifications, see [rationale](rationale.md). Constants and the component
 palette shared by every group are in [parameters](specifications/parameters.md).
 
-Run the suite with `npm run bench:once`; pass a pattern to run a subset, for example
-`npm run bench:once -- '^iteration\.'`. The runner requires an exposed garbage collector and can
-measure under a second engine; [`benchmarks/README.md`](../../benchmarks/README.md) covers both,
-along with the comparison workflow for checking one revision against another.
+Run the suite with `npx tsx --expose-gc benchmarks/main.ts` after a build; pass a pattern to run a
+subset, for example `npx tsx --expose-gc benchmarks/main.ts '^iteration\.'`. The runner requires an
+exposed garbage collector and can measure under a second engine;
+[`benchmarks/README.md`](../../benchmarks/README.md) covers both, along with the measurement and
+optimization workflows.
 
 ## Benchmark groups
 

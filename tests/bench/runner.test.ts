@@ -16,7 +16,7 @@ import {
   registerBench,
   selectBenchmarks,
   UsageError,
-} from "../benchmarks/runner.js";
+} from "../../benchmarks/runner.js";
 
 const FILTER = "^access\\.";
 const BENCH = "access.get_1field";

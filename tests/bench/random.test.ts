@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mulberry32, shuffle } from "../benchmarks/random.js";
+import { mulberry32, shuffle } from "../../benchmarks/random.js";
 
 function take(rand: () => number, count: number): number[] {
   return Array.from({ length: count }, () => rand());

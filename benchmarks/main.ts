@@ -16,7 +16,7 @@
  *
  * Exit codes: 0 success, 1 runtime failure, 2 malformed command line. Only a
  * successful parent run writes to stdout, so a partial report never reaches a
- * consumer parsing it; progress and diagnostics go to stderr.
+ * consumer parsing it; diagnostics go to stderr.
  *
  * Importing a suite module registers its benchmarks as a side effect; the
  * `sinkValue` imports exist so the accumulated results stay reachable until
@@ -146,8 +146,7 @@ async function runParent(engine: Engine, filter?: string): Promise<void> {
   const mainPath = fileURLToPath(import.meta.url);
   const reports: BenchReport[] = [];
 
-  for (const [index, benchName] of selected.entries()) {
-    process.stderr.write(`[${index + 1}/${selected.length}] ${benchName}\n`);
+  for (const benchName of selected) {
     const spec = childSpawnSpec(engine, { execPath: process.execPath, mainPath, benchName });
     reports.push(parseChildReport(await collectChildReport(spec, engine)));
   }

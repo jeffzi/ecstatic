@@ -8,34 +8,40 @@ This file covers running the suite and how much of the original Lua suite it cur
 
 ## Running
 
-Three commands run the suite:
+Two npm scripts drive the suite, and a third runs the allocation gate. Both bench scripts need
+[gymrat setup](#gymrat-setup); the gate needs nothing beyond this repository.
 
-- `npm run bench` compares two versions — see [Comparing two versions](#comparing-two-versions).
-- `npm run bench:measure` reports one version's numbers — see
-  [Measuring one version](#measuring-one-version).
-- `npm run bench:once` runs the suite once and prints one JSON report covering every benchmark.
+- `npm run bench:autoresearch` runs a supervised gymrat optimization session: gymrat launches the
+  agent with [`gymrat-runbook.md`](gymrat-runbook.md), builds, samples, verdicts, and logs; the
+  session ends at the runbook's stop condition or the wall-clock cap. The script sets
+  `--max-minutes 240`; a trailing flag overrides it
+  (`npm run bench:autoresearch -- --max-minutes 30`, the last occurrence wins).
+- `npm run bench:measure` measures the working tree in place with gymrat's `measure`, using a
+  build-only prepare step so the configured `npm ci` never touches your checkout. It reports a
+  median ± spread per metric with no deltas and no verdicts — see
+  [Reading the noise floor](#reading-the-noise-floor). Extra flags pass through
+  (`npm run bench:measure -- --samples 15`).
+- `npm run check:alloc` runs the [allocation gate](#allocation-gate): builds, then measures bytes
+  per operation of the hot API against the budget table in `alloc/budgets.ts`. It is part of
+  `npm run check`, so a gymrat `keep` refuses an iteration that allocates over budget.
 
-The first two need [gymrat setup](#gymrat-setup); `bench:once` needs nothing beyond this repository:
+Bare `"ecstatic"` imports resolve through the package's own `exports` map to `dist/`, so both the
+suite and the gate measure the last compiled output; every gymrat path builds first.
+
+The underlying runner is `npx tsx --expose-gc benchmarks/main.ts` — the command `gymrat.json`
+drives. Run it by hand to measure a subset or a second engine; it prints one JSON report covering
+every selected benchmark:
 
 ```bash
-npm run bench:once
+npm run -s build
+npx tsx --expose-gc benchmarks/main.ts '^iteration\.'   # one group
+npx tsx --expose-gc benchmarks/main.ts 'soa'            # anywhere in the name
+npx tsx --expose-gc benchmarks/main.ts --engine bun     # under Bun's JavaScriptCore
 ```
 
-The script builds before it runs: bare `"ecstatic"` imports resolve through the package's own
-`exports` map to `dist/`, so the suite measures the last compiled output. The underlying runner is
-`npx tsx --expose-gc benchmarks/main.ts` — the command `gymrat.json` drives directly during a
-compare, where the prepare step has already built each target.
-
-Pass a pattern after `--` to run a subset; the pattern is an unanchored regular expression matched
-against benchmark names:
-
-```bash
-npm run bench:once -- '^iteration\.'   # one group
-npm run bench:once -- 'soa'            # anywhere in the name
-```
-
-A pattern that matches nothing is an error, not an empty report. A pattern cannot begin with `-`,
-which would parse as a flag.
+The pattern is an unanchored regular expression matched against benchmark names. A pattern that
+matches nothing is an error, not an empty report. A pattern cannot begin with `-`, which would parse
+as a flag.
 
 The suite requires an exposed garbage collector and exits non-zero without one, because mitata would
 otherwise substitute a fallback that allocates a 1 GiB buffer per benchmark to force collection —
@@ -53,14 +59,10 @@ state, and accumulated GC pressure all carry over. Measured in one process, `pos
 reads around 240 µs; measured first in its own process, around 9 µs. Isolation is what makes one
 benchmark's number comparable to another's.
 
-The cost is roughly 150–300 ms of startup per child. Progress goes to stderr, the report to stdout,
-and the first child failure aborts the run.
+The cost is roughly 150–300 ms of startup per child. The runner prints nothing but the report on
+success; the first child failure aborts the run with the child's diagnostics on stderr.
 
 ### Choosing an engine
-
-```bash
-npm run bench:once -- --engine bun
-```
 
 ecstatic targets browsers (V8) and Capacitor, which runs on JavaScriptCore (JSC), so the runner
 takes `--engine node|bun`, defaulting to `node`. Bun is the JSC proxy: it needs a separate install
@@ -72,7 +74,7 @@ tracking regressions on the JSC side; it is not a measurement of the shipping ru
 
 ## gymrat setup
 
-[gymrat](https://github.com/jeffzi/gymrat) provides both `npm run bench` and
+[gymrat](https://github.com/jeffzi/gymrat) provides both `npm run bench:autoresearch` and
 `npm run bench:measure`. It is not published to npm, and the `file:` link that provides its binary
 is machine-local — deliberately kept out of version control. To run either command, clone and build
 gymrat, then link it into this repository:
@@ -86,82 +88,56 @@ npm install --save-optional <gymrat-checkout>   # links node_modules/.bin/gymrat
 The install records the checkout's path in `package.json` and `package-lock.json`; leave those
 modifications uncommitted.
 
-## Measuring one version
-
-`npm run bench:measure` is gymrat's `measure` and needs the [gymrat setup](#gymrat-setup) above: one
-target, sampled the same way a compare samples each side, reported as a median ± spread per metric
-with no deltas and no verdicts. It answers "what are my numbers right now?" — and, run against an
-unchanged target, "how noisy is this machine?"
-
-```bash
-npm run bench:measure -- --prepare "npm run -s build"   # the working tree
-npm run bench:measure -- main                           # a git ref, in a temp worktree
-```
-
-With no target it measures the working tree in place, which makes the `--prepare` override mandatory
-for the same reason it is on an in-place compare: the configured prepare runs `npm ci`, which is
-right for a fresh worktree and wrong for your working tree. A git ref needs no override.
-
 ### Reading the noise floor
 
-Sampling one unchanged target reports dispersion that no code change can explain, so the spread
-column is the machine's noise floor. Read it before trusting a small delta from a compare, and raise
-`--samples` when a verdict gates anything:
+`npm run bench:measure` samples one unchanged target, so the spread column reports dispersion that
+no code change can explain: the machine's noise floor. Read it before trusting a small delta from a
+gymrat iteration, and raise `--samples` when a verdict gates anything:
 
 ```bash
-npm run bench:measure -- --prepare "npm run -s build" --samples 15
+npm run bench:measure -- --samples 15
 ```
 
-A benchmark whose spread here is wider than the delta a compare reports has not shown you a change.
-Some benchmarks are near-zero-variance — `many.despawn_all` self-compared within a ±0.9% band at
-`--samples 5` — and at low sample counts a gate can read that band as a real change.
+A benchmark whose spread here is wider than the delta an iteration reports has not shown you a
+change. Some benchmarks are near-zero-variance — `many.despawn_all` self-compared within a ±0.9%
+band at `--samples 5` — and at low sample counts a gate can read that band as a real change.
 
-## Comparing two versions
+## Allocation gate
 
-`npm run bench` is gymrat's `compare` and needs the [gymrat setup](#gymrat-setup) above. Its mitata
-adapter reads the JSON report and emits `<group>.<benchmark>/time` and `<group>.<benchmark>/heap`
-metrics.
-
-### Two git refs
+The timing suite reports time only. Memory is owned by `alloc/gate.ts`, a pass/fail script that
+`npm run check:alloc` runs (and `npm run check` includes):
 
 ```bash
-npm run bench -- a=main b=HEAD
+npm run check:alloc
 ```
 
-`gymrat.json` in the repository root supplies the bench command, the prepare command, the mitata
-adapter, and `--samples 5`; flags after `--` override it. Each ref is checked out into its own
-temporary worktree and prepared there, so both sides need the benchmark sources — a ref older than
-the commit that added `benchmarks/` cannot run the suite.
+For every gated operation the gate builds a warm world in its own child process — setup runs the
+operation 200 times so capacity growth, archetype-cache fills, and V8 tier-up allocations happen
+before measurement — then repeatedly forces a collection, reads `process.memoryUsage().heapUsed`,
+runs the operation over `DEFAULT_N` entities, reads again, and reports the median delta per entity
+as bytes/op. Every body is steady-state (spawn then despawn, enable then disable, link then unlink,
+set back to the same value), so rounds do not drift.
 
-### Run-to-run noise
-
-Use `npm run bench:measure` — see [Reading the noise floor](#reading-the-noise-floor). Pointing both
-compare targets at the working tree (`a=. b=.`) does the same job with twice the runs and a delta
-column that can only report zero.
-
-### Under Bun
-
-Override the bench command to add `--engine bun`:
-
-```bash
-npm run bench -- a=main b=HEAD --bench "npx tsx --expose-gc benchmarks/main.ts --engine bun"
-```
+`alloc/budgets.ts` holds the budget table (`ALLOC_BUDGETS`, bytes/op) and the tolerance
+(`EPSILON_BYTES`). The comparison is two-sided: an operation over its budget is a regression, and
+one measurably under its budget is slack — the gate fails on both, and the fix for slack is to lower
+the budget in the same commit. Budgets ratchet down only; never raise one to silence a failure
+without a comment stating which by-design allocation it pins. The gate needs `--expose-gc` and
+refuses to run without it.
 
 ## Known limitations
 
 gymrat is unpublished and pre-1.0; these rough edges are accepted until it matures.
 
-- **The link is machine-local.** Without it there is no `gymrat` binary, so neither `npm run bench`
-  nor `npm run bench:measure` works — CI and fresh clones are in that position until gymrat
-  publishes. A worktree is unaffected: its prepare runs plain `npm ci` against the committed
-  manifest, which carries no gymrat entry, and a worktree never invokes gymrat itself. Windows is
-  untested; both commands run locally on macOS.
-- **An in-place run without `--prepare` reinstalls your working tree.** Both an in-place compare and
-  a bare `npm run bench:measure` fall back to the configured prepare command, which runs `npm ci`
-  and drops the gymrat link. Run `npm install` to recover.
-- **Mixing a git ref with an in-place target is unsupported.** gymrat runs one prepare command
-  against both targets, and no single command both installs a fresh worktree and leaves the working
-  tree alone.
+- **The link is machine-local.** Without it there is no `gymrat` binary, so neither
+  `npm run bench:autoresearch` nor `npm run bench:measure` works — CI and fresh clones are in that
+  position until gymrat publishes. A worktree is unaffected: its prepare runs plain `npm ci` against
+  the committed manifest, which carries no gymrat entry, and a worktree never invokes gymrat itself.
+  Windows is untested; both commands run locally on macOS.
+- **A hand-run in-place `gymrat measure` or `gymrat compare` without `--prepare` reinstalls your
+  working tree.** Both fall back to the configured prepare command, which runs `npm ci` and drops
+  the gymrat link. `npm run bench:measure` bakes the override in; when calling gymrat directly, pass
+  `--prepare "npm run -s build"`, and run `npm install` to recover if you forgot.
 
 ## Methodology
 
@@ -174,8 +150,8 @@ the world is rebuilt before each iteration and destroyed after, both outside the
 from the Lua suite, which rebuilt the world every iteration everywhere; for net-neutral bodies the
 distinction is immaterial, since each sample sees the same population and field ranges.
 
-**Consuming benchmarks report no heap.** Their per-iteration world construction would dominate any
-heap delta, so `heap` is disabled for them and only `/time` metrics are emitted.
+**Time only.** Every benchmark emits a `/time` metric and nothing else; mitata's per-iteration heap
+delta is GC-timing noise, and memory is gated separately by the [allocation gate](#allocation-gate).
 
 **Benchmarks are comparable to each other.** Each one is the first thing its process does, so a
 figure carries no residue from whatever ran before it. Reading `many.spawn_empty` against
@@ -284,9 +260,9 @@ against phase 4, alongside the cross-archetype filter work.
 
 ### Outside the 95
 
-| Suite        | Count | Status  | Note                                                                                                                                                                                                   |
-| ------------ | ----- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `alloc_gate` | 30    | Skipped | A separate memory-comparison harness, not timed benchmarks. Nine of its 30 bodies fit the current API, but its shared setup needs `enable`, `query`, resources, and relations, so it is skipped whole. |
+| Suite        | Count | Status  | Note                                                                                                                                                                                                                                   |
+| ------------ | ----- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `alloc_gate` | 28    | Adapted | Not a timed benchmark: `alloc/gate.ts` is a pass/fail bytes-per-operation gate over the hot API (iteration, access, tags, spawn/despawn, resources, relations), run by `npm run check:alloc`. See [Allocation gate](#allocation-gate). |
 
 ## Layout
 
@@ -298,3 +274,4 @@ against phase 4, alongside the cross-archetype filter work.
 | `archetypes.ts` | Component and archetype definitions                                     |
 | `random.ts`     | Seeded generator and Fisher-Yates shuffle                               |
 | `*-bench.ts`    | One file per benchmark group                                            |
+| `alloc/`        | Allocation gate: `budgets.ts` (budgets, verdicts), `ops.ts`, `gate.ts`  |
