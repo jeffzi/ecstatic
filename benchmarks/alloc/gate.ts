@@ -30,7 +30,13 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { DEFAULT_N } from "../helpers.js";
-import { childSpawnSpec, parseArgs, UsageError } from "../runner.js";
+import {
+  childSpawnSpec,
+  describeAbnormalExit,
+  isDefaultEngines,
+  parseArgs,
+  UsageError,
+} from "../runner.js";
 import {
   ALLOC_BUDGETS,
   allocGatePasses,
@@ -118,8 +124,7 @@ function measureInChild(name: string, mainPath: string): number {
   });
   if (child.error !== undefined) throw child.error;
   if (child.status !== 0) {
-    const cause =
-      child.signal === null ? `exit code ${String(child.status)}` : `signal ${child.signal}`;
+    const cause = describeAbnormalExit(child.status, child.signal);
     throw new Error(`alloc op '${name}' failed with ${cause}`);
   }
   return parseChildValue(name, child.stdout);
@@ -141,8 +146,8 @@ function runParent(): number {
 function main(argv: readonly string[]): number {
   const args = parseArgs(argv);
   if (args.mode === "child") return runChild(args.benchName);
-  // The shared parser also accepts a filter and an engine; the gate has neither.
-  if (args.filter !== undefined || args.engine !== "node") {
+  // The shared parser also accepts a filter and engines; the gate has neither.
+  if (args.filter !== undefined || !isDefaultEngines(args.engines)) {
     console.error("usage: gate.ts [--child <op>]");
     return USAGE_EXIT;
   }

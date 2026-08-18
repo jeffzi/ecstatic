@@ -38,8 +38,10 @@ import {
   benchNames,
   type ChildSpawnSpec,
   childSpawnSpec,
+  describeAbnormalExit,
   type Engine,
   mergeReports,
+  namespaceReport,
   parseArgs,
   parseChildReport,
   selectBenchmarks,
@@ -123,7 +125,7 @@ function collectChildReport(spec: ChildSpawnSpec, engine: Engine): Promise<strin
         resolve(stdout);
         return;
       }
-      const cause = signal === null ? `exit code ${String(code)}` : `signal ${signal}`;
+      const cause = describeAbnormalExit(code, signal);
       reject(new Error(`${spec.command} ${spec.args.join(" ")} failed with ${cause}`));
     });
   });
@@ -137,7 +139,7 @@ function collectChildReport(spec: ChildSpawnSpec, engine: Engine): Promise<strin
  * minutes finishing the remaining children — a failing benchmark is
  * deterministic, and comparison tooling re-invokes this command once per sample.
  */
-async function runParent(engine: Engine, filter?: string): Promise<void> {
+async function runParent(engines: readonly Engine[], filter?: string): Promise<void> {
   const selected = selectBenchmarks(benchNames(), filter);
   if (selected.length === 0) {
     throw new Error(`filter '${String(filter)}' matched no benchmark`);
@@ -146,9 +148,12 @@ async function runParent(engine: Engine, filter?: string): Promise<void> {
   const mainPath = fileURLToPath(import.meta.url);
   const reports: BenchReport[] = [];
 
-  for (const benchName of selected) {
-    const spec = childSpawnSpec(engine, { execPath: process.execPath, mainPath, benchName });
-    reports.push(parseChildReport(await collectChildReport(spec, engine)));
+  for (const engine of engines) {
+    for (const benchName of selected) {
+      const spec = childSpawnSpec(engine, { execPath: process.execPath, mainPath, benchName });
+      const report = parseChildReport(await collectChildReport(spec, engine));
+      reports.push(namespaceReport(report, engine));
+    }
   }
 
   process.stdout.write(`${JSON.stringify(mergeReports(reports))}\n`);
@@ -170,7 +175,7 @@ try {
   if (args.mode === "child") {
     await runChild(args.benchName);
   } else {
-    await runParent(args.engine, args.filter);
+    await runParent(args.engines, args.filter);
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
