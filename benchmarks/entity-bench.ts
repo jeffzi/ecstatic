@@ -10,7 +10,7 @@ import { alive, despawn, destroyWorld, register, spawn } from "ecstatic";
 import type { EntityId } from "ecstatic";
 
 import { emptyArch, spawnArch } from "./archetypes.js";
-import { benchCreateWorld, benchRandom, manualBench } from "./helpers.js";
+import { benchCreateWorld, benchRandom, manualBench, timedBench } from "./helpers.js";
 import { shuffle } from "./random.js";
 import { registerBench } from "./runner.js";
 
@@ -85,7 +85,7 @@ registerBench("entity.despawn", function* () {
 registerBench("entity.spawn_recycle", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
-  yield () => {
+  yield timedBench(() => {
     for (let i = 0; i < n; i++) {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       despawn(storage, tracked[i]!);
@@ -95,7 +95,7 @@ registerBench("entity.spawn_recycle", function* () {
     }
     // oxlint-disable-next-line typescript/no-non-null-assertion -- n ≥ 1 and tracked has n elements after the refill
     sink += tracked[n - 1]!;
-  };
+  });
 
   destroyWorld(world);
 });
@@ -117,14 +117,14 @@ registerBench("entity.alive_check", function* () {
   const mixed = [...tracked, ...stale];
   shuffle(mixed, benchRandom());
 
-  yield () => {
+  yield timedBench(() => {
     for (let i = 0; i < mixed.length; i++) {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- i < mixed.length
       if (alive(storage, mixed[i]!)) {
         sink += 1;
       }
     }
-  };
+  });
 
   destroyWorld(world);
 });

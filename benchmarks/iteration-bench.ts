@@ -10,7 +10,7 @@ import { despawn, despawnMany, destroyWorld, each, spawn } from "ecstatic";
 import type { EntityId } from "ecstatic";
 
 import { chainArch, soa1Arch, soa2Arch, soa5Arch, soa10Arch } from "./archetypes.js";
-import { benchCreateWorld, DT, makeBareWorld, manualBench } from "./helpers.js";
+import { benchCreateWorld, DT, makeBareWorld, manualBench, timedBench } from "./helpers.js";
 import { registerBench } from "./runner.js";
 
 let sink = 0;
@@ -31,7 +31,7 @@ registerBench("iteration.throughput", function* () {
   };
   integrate();
 
-  yield integrate;
+  yield timedBench(integrate);
 
   destroyWorld(world);
 });
@@ -68,7 +68,7 @@ registerBench("iteration.post_churn_throughput", function* () {
   };
   integrate();
 
-  yield integrate;
+  yield timedBench(integrate);
 
   destroyWorld(world);
 });
@@ -82,7 +82,7 @@ registerBench("iteration.each_chained", function* () {
     e.B.v = e.A.v;
   });
 
-  yield () => {
+  yield timedBench(() => {
     each(storage, (e) => {
       e.B.v = e.A.v;
     });
@@ -95,7 +95,7 @@ registerBench("iteration.each_chained", function* () {
     each(storage, (e) => {
       e.E.v = e.D.v;
     });
-  };
+  });
 
   destroyWorld(world);
 });
@@ -134,7 +134,7 @@ registerBench("iteration.soa_1field", function* () {
   };
   pass();
 
-  yield pass;
+  yield timedBench(pass);
 
   destroyWorld(world);
 });
@@ -149,7 +149,7 @@ registerBench("iteration.soa_2field", function* () {
   };
   pass();
 
-  yield pass;
+  yield timedBench(pass);
 
   destroyWorld(world);
 });
@@ -164,7 +164,7 @@ registerBench("iteration.soa_5field", function* () {
   };
   pass();
 
-  yield pass;
+  yield timedBench(pass);
 
   destroyWorld(world);
 });
@@ -189,7 +189,7 @@ registerBench("iteration.soa_10field", function* () {
   };
   pass();
 
-  yield pass;
+  yield timedBench(pass);
 
   destroyWorld(world);
 });

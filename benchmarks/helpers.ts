@@ -125,8 +125,25 @@ export function makeBareWorld<A extends AnyArchetype>(arch: A): BareCtx<A> {
 }
 
 // ---------------------------------------------------------------------------
-// Manual timing
+// Timing shims
 // ---------------------------------------------------------------------------
+
+/** The generator yield shape that keeps mitata's batching but drops its heap statistic. */
+export interface TimedYield {
+  heap: false;
+  bench: () => void;
+}
+
+/**
+ * Time `body` under mitata's default batching, reporting time only.
+ *
+ * `heap: false` because the suite owns time and nothing else: memory is gated
+ * separately by the allocation gate, and mitata's per-iteration heap delta is
+ * GC-timing noise that would otherwise gate optimization verdicts.
+ */
+export function timedBench(body: () => void): TimedYield {
+  return { heap: false, bench: body };
+}
 
 /** The generator yield shape that puts mitata into manual-timing mode. */
 export interface ManualYield {
