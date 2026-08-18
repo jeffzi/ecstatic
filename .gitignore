@@ -164,3 +164,7 @@ Thumbs.db
 
 # Claude Code local instructions
 CLAUDE.local.md
+
+# Claude Code personal overrides
+.agents/settings.local.json
+.claude/settings.local.json
