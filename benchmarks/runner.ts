@@ -23,7 +23,9 @@ function isEngine(value: string): value is Engine {
 
 /** True when `engines` is exactly the default list (`["node"]`). */
 export function isDefaultEngines(engines: readonly Engine[]): boolean {
-  return engines.length === 1 && engines[0] === "node";
+  return (
+    engines.length === DEFAULT_ENGINES.length && DEFAULT_ENGINES.every((e, i) => e === engines[i])
+  );
 }
 
 /** Thrown for a malformed command line; the caller maps it to exit code 2. */
