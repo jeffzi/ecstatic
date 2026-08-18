@@ -39,7 +39,9 @@ export function mulberry32(seed: number): () => number {
 export function shuffle<T>(arr: T[], rand: () => number): T[] {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- i and j are within bounds by construction
     const tmp = arr[i]!;
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- j ∈ [0, i] by Math.floor(rand() * (i+1))
     arr[i] = arr[j]!;
     arr[j] = tmp;
   }

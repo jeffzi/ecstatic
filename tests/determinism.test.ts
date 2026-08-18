@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import { entityIndex } from "../src/entity-id.js";
 import {
@@ -38,9 +38,12 @@ function mulberry32(seed: number): () => number {
 }
 
 function declareEcs(suffix: string) {
-  const Position = components({ [`DetPos${suffix}`]: { x: 0, y: 0 } })[`DetPos${suffix}`]!;
-  const Velocity = components({ [`DetVel${suffix}`]: { vx: 0, vy: 0 } })[`DetVel${suffix}`]!;
-  const Tag = components({ [`DetTag${suffix}`]: {} })[`DetTag${suffix}`]!;
+  const Position = components({ [`DetPos${suffix}`]: { x: 0, y: 0 } })[`DetPos${suffix}`];
+  assert(Position != null);
+  const Velocity = components({ [`DetVel${suffix}`]: { vx: 0, vy: 0 } })[`DetVel${suffix}`];
+  assert(Velocity != null);
+  const Tag = components({ [`DetTag${suffix}`]: {} })[`DetTag${suffix}`];
+  assert(Tag != null);
   const Owns = relation(`DetOwns${suffix}`);
   const Score = resource(`DetScore${suffix}`, { value: 0 });
 
@@ -101,7 +104,8 @@ function runOpScript(suffix: string, seed: number): Trace {
   const despawnCount = 3;
   for (let i = 0; i < despawnCount; i++) {
     const idx = Math.floor(rng() * trace.spawnedIds.length);
-    const id = trace.spawnedIds[idx]!;
+    const id = trace.spawnedIds[idx];
+    assert(id != null);
     if (alive(pvStorage, id)) {
       despawn(pvStorage, id);
     }
@@ -244,10 +248,10 @@ describe("determinism", () => {
       // The formerly-last entity (id2) now occupies row 1 (the despawned row)
       expect(rowOf(storage, id2)).toBe(1);
 
-      // Verify data was swapped: row 1 should have id2's data (20, 20)
-      const pos = storage.columns.get(Position)!;
-      expect(pos.x![1]).toBe(20);
-      expect(pos.y![1]).toBe(20);
+      const pos = storage.columns.get(Position);
+      assert(pos != null);
+      expect(pos.x?.[1]).toBe(20);
+      expect(pos.y?.[1]).toBe(20);
 
       // each visits backward: id2 (row 1) then id0 (row 0)
       const visited: number[] = [];
@@ -278,7 +282,6 @@ describe("determinism", () => {
       // index as id1 but with incremented generation.
       const reused = spawn(storage);
 
-      // The reused entity shares id1's index
       expect(entityIndex(reused)).toBe(entityIndex(id1));
 
       // But it has a different (higher) generation, so it's a different ID

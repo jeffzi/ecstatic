@@ -41,6 +41,13 @@ interface ResolvedQuery {
   matchers: Matcher[];
 }
 
+/** Normalized filter axes for query resolution. */
+interface FilterAxes {
+  readonly allIds: readonly ComponentDescriptor[];
+  readonly anyIds: readonly ComponentDescriptor[];
+  readonly noneIds: readonly ComponentDescriptor[];
+}
+
 /** Filter-object identity → per-world cached resolutions. */
 const QUERY_CACHE = new WeakMap<object, WeakMap<WorldState, ResolvedQuery>>();
 
@@ -49,13 +56,7 @@ const QUERY_CACHE = new WeakMap<object, WeakMap<WorldState, ResolvedQuery>>();
  * against a world. Stale entries (epoch mismatch after `register`/
  * `destroyWorld`) are re-resolved and replace the cached entry.
  */
-function resolveQuery(
-  state: WorldState,
-  target: object,
-  allIds: readonly ComponentDescriptor[],
-  anyIds: readonly ComponentDescriptor[],
-  noneIds: readonly ComponentDescriptor[],
-): ResolvedQuery {
+function resolveQuery(state: WorldState, target: object, filter: FilterAxes): ResolvedQuery {
   let perWorld = QUERY_CACHE.get(target);
   if (perWorld === undefined) {
     perWorld = new WeakMap();
@@ -68,8 +69,8 @@ function resolveQuery(
 
   const storages: Storage[] = [];
   const matchers: Matcher[] = [];
-  for (const storage of findArchetypes(state, allIds)) {
-    const matcher = resolveFilterMasks(storage, allIds, anyIds, noneIds);
+  for (const storage of findArchetypes(state, filter.allIds)) {
+    const matcher = resolveFilterMasks(storage, filter.allIds, filter.anyIds, filter.noneIds);
     if (matcher === false) {
       continue;
     }
@@ -137,13 +138,18 @@ export function query(
     throw new Error(ERROR_QUERY_EMPTY);
   }
 
-  const resolved = resolveQuery(state, target, allIds, anyIds, noneIds);
+  const resolved = resolveQuery(state, target, { allIds, anyIds, noneIds });
   const storages = resolved.storages;
   const matchers = resolved.matchers;
   for (let i = 0; i < storages.length; i++) {
-    const storage = storages[i]!;
+    const storage = storages[i];
+    /* istanbul ignore next */
+    if (storage === undefined) throw new Error("invariant: storage index out of bounds");
     if (storage.n > 0) {
-      eachStorageMatched(storage, matchers[i]!, callback);
+      const matcher = matchers[i];
+      /* istanbul ignore next */
+      if (matcher === undefined) throw new Error("invariant: matcher index out of bounds");
+      eachStorageMatched(storage, matcher, callback);
     }
   }
 }

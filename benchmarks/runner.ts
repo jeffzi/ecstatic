@@ -51,6 +51,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   let benchName: string | undefined;
 
   for (let i = 0; i < argv.length; i += 1) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- i < argv.length
     const arg = argv[i]!;
 
     if (arg === "--engine") {

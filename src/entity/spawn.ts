@@ -8,23 +8,22 @@ import { DEBUG } from "../debug.js";
 import type { EntityId, With } from "../entity-id.js";
 import {
   assertEntityIndex,
-  entityIndex,
   initialEntityId,
   MAX_INDEX,
   NO_FREE_SLOT,
   OVERFLOW_MSG,
 } from "../entity-id.js";
-import {
-  errorOptionalRelationTarget,
-  errorRequiredRelationTarget,
-  errorStaleTarget,
-} from "../errors.js";
 import { growMatcherArrays, maskSatisfies, refreshMatchersMask } from "../matcher.js";
 import type { RelationFields } from "../relation.js";
 import { getRelationMeta } from "../relation.js";
 import { collectFlatColumns } from "../world.js";
 import type { SoAColumns, Storage, TypedArray, WorldState } from "../world.js";
-import { reverseInsert } from "./reverse-map.js";
+import type { SpawnRange } from "./spawn-link.js";
+import {
+  assertRelationTargets,
+  birthLinkOptional,
+  insertRequiredRelationEntries,
+} from "./spawn-link.js";
 
 /**
  * Per-component spawn overrides, keyed by component name.
@@ -198,66 +197,6 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
 }
 
 /**
- * Validate every relation birth-link target in `overrides` before a row exists
- * (DEBUG-gated at the call sites).
- *
- * Running ahead of allocation is what makes a rejected checked-mode spawn
- * atomic. The write path commits `storage.n`, `entityArch`, the presence mask,
- * the target column, the matcher flags, and reverse-map entries with no unwind,
- * so a throw from inside it leaves a half-spawned row that `each` still visits
- * and that a matcher can match on a recycled row's stale presence bit. Every
- * value-dependent relation check belongs here, never in the write path.
- *
- * `relationDescriptors` lists required relations before optionals, so errors
- * surface in archetype declaration order.
- */
-function assertRelationTargets(storage: Storage, overrides: SpawnOverrides | undefined): void {
-  const relN = storage.relationN;
-  for (let ri = 0; ri < relN; ri++) {
-    const name = storage.relationDescriptors[ri]!.__ecstatic_name;
-    const optional = storage.relationOptionalBits[ri] !== 0;
-    assertRelationTarget(storage.world, name, optional, overrides?.[name]);
-  }
-}
-
-/**
- * Validate one relation's spawn override value against the birth-link grammar:
- * a required relation must name a live target, an optional one may omit the
- * birth link entirely but cannot name a dead or sentinel target.
- */
-function assertRelationTarget(
-  state: WorldState,
-  name: string,
-  optional: boolean,
-  raw: Record<string, unknown> | boolean | undefined,
-): void {
-  // `false` on an optional relation means "stay unlinked"; on a required one
-  // resolveRequiredOverride owns the "cannot be disabled" error.
-  if (raw === false) {
-    return;
-  }
-
-  const rawTarget = raw === undefined || raw === true ? undefined : raw.target;
-  if (rawTarget === undefined) {
-    if (optional) {
-      return;
-    }
-    throw new Error(errorRequiredRelationTarget(name));
-  }
-
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- override targets are EntityIds (branded numbers)
-  const target = rawTarget as number;
-  if (target === 0) {
-    throw new Error(
-      optional ? errorOptionalRelationTarget(name) : errorRequiredRelationTarget(name),
-    );
-  }
-  if (state.generation[entityIndex(target)] !== target) {
-    throw new Error(errorStaleTarget(name));
-  }
-}
-
-/**
  * Allocate a single entity index: pop from the freelist if one is available,
  * otherwise allocate fresh (growing world arrays and initializing the slot's
  * generation value as needed).
@@ -266,6 +205,7 @@ function allocateOneIndex(state: WorldState): number {
   if (state.freeHead !== NO_FREE_SLOT) {
     // Pop from freelist: the dead sparse slot holds the next pointer
     const index = state.freeHead;
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- freelist index is a valid sparse slot
     state.freeHead = state.sparse[index]!;
     return index;
   }
@@ -332,6 +272,7 @@ function growStorageArrays(storage: Storage): void {
   // references (parallel to the flatColumns rebuild).
   const relN = storage.relationN;
   for (let ri = 0; ri < relN; ri++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- ri < relN ≤ relationDescriptors.length
     const targetCol = storage.columns.get(storage.relationDescriptors[ri]!)?.target;
     if (targetCol instanceof Float64Array) {
       storage.relationTargetColumns[ri] = targetCol;
@@ -339,6 +280,17 @@ function growStorageArrays(storage: Storage): void {
   }
 
   growMatcherArrays(storage, capacity);
+}
+
+function fillRange(
+  col: { [i: number]: unknown },
+  start: number,
+  count: number,
+  value: unknown,
+): void {
+  for (let i = 0; i < count; i++) {
+    col[start + i] = value;
+  }
 }
 
 /**
@@ -356,22 +308,23 @@ function initComponentFields(
   for (const comp of storage.archetype.components) {
     const fieldOverrides = resolveRequiredOverride(comp.__ecstatic_name, overrides);
 
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- comp is on the archetype, so columns has it
     const soa = storage.columns.get(comp)!;
     const fields = comp.__ecstatic_fields;
     const defaultValues = comp.__ecstatic_default_values;
     const isRef = comp.__ecstatic_is_reference;
 
     for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
-      const col = soa[fields[fieldIdx]!]!;
-      const override = fieldOverrides?.[fields[fieldIdx]!];
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- fieldIdx < fields.length
+      const fieldName = fields[fieldIdx]!;
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- SoA column exists for every declared field
+      const col = soa[fieldName]!;
+      const override = fieldOverrides?.[fieldName];
 
-      for (let i = 0; i < count; i++) {
-        const di = denseStart + i;
-        if (override !== undefined) {
-          col[di] = override;
-        } else if (isRef[fieldIdx] !== true) {
-          col[di] = defaultValues[fieldIdx];
-        }
+      if (override !== undefined) {
+        fillRange(col, denseStart, count, override);
+      } else if (isRef[fieldIdx] !== true) {
+        fillRange(col, denseStart, count, defaultValues[fieldIdx]);
       }
     }
 
@@ -432,7 +385,10 @@ function writeOptionalDefaults(storage: Storage, denseStart: number, count: numb
       if (isRef[fieldIdx] === true) {
         continue;
       }
-      const col = soa[fields[fieldIdx]!]!;
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- fieldIdx < fields.length
+      const fieldName = fields[fieldIdx]!;
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- SoA column exists for every declared field
+      const col = soa[fieldName]!;
       const defaultValue = defaultValues[fieldIdx];
       for (let i = 0; i < count; i++) {
         col[denseStart + i] = defaultValue;
@@ -465,12 +421,14 @@ function applyOptionalOverrides(
     return 0;
   }
 
+  const range: SpawnRange = { storage, denseStart, count };
   let bits = 0;
   for (const comp of storage.archetype.optionals) {
     const raw = overrides[comp.__ecstatic_name];
     if (raw === undefined || raw === false) {
       continue;
     }
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- comp is an optional on the archetype, so bit is registered
     bits |= storage.optionalBitLookup.get(comp)!;
     if (raw === true) {
       continue;
@@ -482,11 +440,14 @@ function applyOptionalOverrides(
     }
     const fields = comp.__ecstatic_fields;
     for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
-      const override = raw[fields[fieldIdx]!];
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- fieldIdx < fields.length
+      const fieldName = fields[fieldIdx]!;
+      const override = raw[fieldName];
       if (override === undefined) {
         continue;
       }
-      const col = soa[fields[fieldIdx]!]!;
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- SoA column exists for every declared field
+      const col = soa[fieldName]!;
       for (let i = 0; i < count; i++) {
         col[denseStart + i] = override;
       }
@@ -496,89 +457,10 @@ function applyOptionalOverrides(
     // data fields patched (the synthetic target column is not in
     // __ecstatic_fields); write the target and record the reverse entries.
     if (getRelationMeta(comp) !== undefined && raw.target !== undefined) {
-      birthLinkOptional(storage, denseStart, count, comp, soa, raw.target);
+      birthLinkOptional(range, comp, soa, raw.target);
     }
   }
   return bits;
-}
-
-/**
- * Birth-link an optional relation for `count` rows starting at `denseStart`:
- * write the target column and record each source in the target's reverse
- * bucket. Targets are pre-validated by `assertRelationTargets`, so this write
- * path never throws — see that function before adding a check here.
- */
-function birthLinkOptional(
-  storage: Storage,
-  denseStart: number,
-  count: number,
-  comp: ComponentDescriptor,
-  soa: SoAColumns,
-  rawTarget: unknown,
-): void {
-  const state = storage.world;
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- override targets are EntityIds (branded numbers)
-  const target = rawTarget as number;
-  // Only reachable under NDEBUG, where the 0 sentinel is unvalidated: leave the
-  // sentinel in place so the row spawns unlinked with no reverse entry.
-  if (target === 0) {
-    return;
-  }
-  const targetCol = soa.target!;
-  const targetIdx = entityIndex(target);
-  for (let i = 0; i < count; i++) {
-    const di = denseStart + i;
-    targetCol[di] = target;
-    reverseInsert(state, comp, targetIdx, storage, entityIndex(storage.entities[di]!));
-  }
-}
-
-/**
- * Record reverse-map entries for the required relations of `count` freshly
- * spawned rows, reading targets from the already-initialized target columns.
- *
- * Target presence (0 = not provided) and liveness are validated by
- * `assertRelationTargets` before the row exists — a stale target would seed a
- * reverse entry that aliases onto a reused slot. Under NDEBUG both checks are
- * absent: the entity spawns unlinked on a 0 target, and no reverse entry is
- * recorded.
- */
-function insertRequiredRelationEntries(storage: Storage, denseStart: number, count: number): void {
-  const state = storage.world;
-  const relCols = storage.relationTargetColumns;
-  const relDescriptors = storage.relationDescriptors;
-  const relBits = storage.relationOptionalBits;
-  const relN = storage.relationN;
-
-  for (let ri = 0; ri < relN; ri++) {
-    if (relBits[ri] !== 0) {
-      continue;
-    }
-    const col = relCols[ri]!;
-    const relDesc = relDescriptors[ri]!;
-    for (let i = 0; i < count; i++) {
-      const di = denseStart + i;
-      insertRequiredEntry(state, storage, relDesc, col[di]!, di);
-    }
-  }
-}
-
-/**
- * Record one required-relation birth entry. A 0 target means "not provided",
- * only reachable under NDEBUG, where the entity is left unlinked with no
- * reverse entry.
- */
-function insertRequiredEntry(
-  state: WorldState,
-  storage: Storage,
-  relDesc: ComponentDescriptor,
-  target: number,
-  di: number,
-): void {
-  if (target === 0) {
-    return;
-  }
-  reverseInsert(state, relDesc, entityIndex(target), storage, entityIndex(storage.entities[di]!));
 }
 
 /**
@@ -639,6 +521,7 @@ function fillBatch(
   if (matcherN !== 0) {
     const matchers = storage.matchers;
     for (let mi = 0; mi < matcherN; mi++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < matcherN ≤ matchers.length
       const m = matchers[mi]!;
       const matchedValue = maskSatisfies(optionalBits, m.allMask, m.anyMask, m.noneMask) ? 1 : 0;
       const matched = m.matched;
@@ -748,6 +631,7 @@ function assertBatchCapacity(state: WorldState, count: number): void {
   let freeWalk = state.freeHead;
   while (freeWalk !== NO_FREE_SLOT && freeCount < count) {
     freeCount++;
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- freeWalk is a valid freelist index
     freeWalk = state.sparse[freeWalk]!;
   }
   if (state.nextIndex + (count - freeCount) > MAX_INDEX) {

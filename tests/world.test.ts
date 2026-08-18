@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import { archetype, components, i32, ref } from "../src/index.js";
 import { createWorld, getStorage, register } from "../src/world.js";
@@ -20,14 +20,18 @@ describe("register", () => {
     const Arch = archetype([Position, Velocity]);
     const storage = register(world, Arch);
 
-    const posCol = storage.columns.get(Position)!;
+    const posCol = storage.columns.get(Position);
+
+    assert(posCol != null);
     expect(posCol).toBeDefined();
     expect(posCol.x).toBeDefined();
     expect(posCol.y).toBeDefined();
     expect(posCol.x).toBeInstanceOf(Float64Array);
     expect(posCol.y).toBeInstanceOf(Float64Array);
 
-    const velCol = storage.columns.get(Velocity)!;
+    const velCol = storage.columns.get(Velocity);
+
+    assert(velCol != null);
     expect(velCol).toBeDefined();
     expect(velCol.vx).toBeDefined();
     expect(velCol.vy).toBeDefined();
@@ -113,7 +117,9 @@ describe("column construction", () => {
     const Arch = archetype([Comp]);
     const storage = register(world, Arch);
 
-    const col = storage.columns.get(Comp)!.x;
+    const soa = storage.columns.get(Comp);
+    assert(soa != null);
+    const col = soa.x;
     expect(col).toBeInstanceOf(Float64Array);
   });
 
@@ -125,7 +131,9 @@ describe("column construction", () => {
     const Arch = archetype([Comp]);
     const storage = register(world, Arch);
 
-    const col = storage.columns.get(Comp)!.active;
+    const soa = storage.columns.get(Comp);
+    assert(soa != null);
+    const col = soa.active;
     expect(col).toBeInstanceOf(Uint8Array);
   });
 
@@ -137,7 +145,9 @@ describe("column construction", () => {
     const Arch = archetype([Comp]);
     const storage = register(world, Arch);
 
-    const col = storage.columns.get(Comp)!.target;
+    const soa = storage.columns.get(Comp);
+    assert(soa != null);
+    const col = soa.target;
     expect(Array.isArray(col)).toBe(true);
   });
 
@@ -149,7 +159,9 @@ describe("column construction", () => {
     const Arch = archetype([Comp]);
     const storage = register(world, Arch);
 
-    const col = storage.columns.get(Comp)!.count;
+    const soa = storage.columns.get(Comp);
+    assert(soa != null);
+    const col = soa.count;
     expect(col).toBeInstanceOf(Int32Array);
   });
 });

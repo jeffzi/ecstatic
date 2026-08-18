@@ -72,6 +72,7 @@ registerBench("entity.despawn", function* () {
     () => benchCreateWorld(),
     ({ n, trackedStorage, tracked }) => {
       for (let i = 0; i < n; i++) {
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
         despawn(trackedStorage, tracked[i]!);
       }
     },
@@ -86,11 +87,13 @@ registerBench("entity.spawn_recycle", function* () {
 
   yield () => {
     for (let i = 0; i < n; i++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       despawn(storage, tracked[i]!);
     }
     for (let i = 0; i < n; i++) {
       tracked[i] = spawn(storage);
     }
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- n ≥ 1 and tracked has n elements after the refill
     sink += tracked[n - 1]!;
   };
 
@@ -107,6 +110,7 @@ registerBench("entity.alive_check", function* () {
     stale.push(spawn(storage));
   }
   for (let i = 0; i < n; i++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = stale.length
     despawn(storage, stale[i]!);
   }
 
@@ -115,6 +119,7 @@ registerBench("entity.alive_check", function* () {
 
   yield () => {
     for (let i = 0; i < mixed.length; i++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- i < mixed.length
       if (alive(storage, mixed[i]!)) {
         sink += 1;
       }

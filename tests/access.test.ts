@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import {
   archetype,
@@ -48,7 +48,7 @@ describe("get", () => {
 
     expect(() => {
       get(storage, id, Health.hp);
-    }).toThrow();
+    }).toThrow("stale entity ID");
   });
 
   it("errors if component is not on this archetype", () => {
@@ -59,7 +59,7 @@ describe("get", () => {
 
     expect(() => {
       get(storage, id, Velocity.vx);
-    }).toThrow();
+    }).toThrow("not on this archetype");
   });
 
   it("errors when the ID belongs to a different storage in the same world", () => {
@@ -70,7 +70,7 @@ describe("get", () => {
 
     expect(() => {
       get(storage2, id, Velocity.vx);
-    }).toThrow();
+    }).toThrow("entity ID does not belong to this storage");
   });
 
   describe("when field descriptor is invalid", () => {
@@ -134,7 +134,7 @@ describe("set", () => {
 
     expect(() => {
       set(storage, id, Health, { hp: 50 });
-    }).toThrow();
+    }).toThrow("stale entity ID");
   });
 
   it("errors if component is not on this archetype", () => {
@@ -145,7 +145,7 @@ describe("set", () => {
 
     expect(() => {
       set(storage, id, Velocity, { vx: 1 });
-    }).toThrow();
+    }).toThrow("not on this archetype");
   });
 });
 
@@ -261,7 +261,7 @@ describe("get/set world form", () => {
 
     expect(() => {
       get(world, id, Health.hp);
-    }).toThrow();
+    }).toThrow("stale entity ID");
   });
 
   it("set errors on a stale entity ID", () => {
@@ -272,7 +272,7 @@ describe("get/set world form", () => {
 
     expect(() => {
       set(world, id, Health.hp, 42);
-    }).toThrow();
+    }).toThrow("stale entity ID");
   });
 });
 
@@ -296,7 +296,8 @@ describe("boolean fields", () => {
     "boolean set via field descriptor round-trips $value",
     ({ value }) => {
       const name = `BoolRoundtrip${value}`;
-      const Comp = components({ [name]: { flag: false } })[name]!;
+      const Comp = components({ [name]: { flag: false } })[name];
+      assert(Comp != null);
 
       const world = createWorld();
       const Arch = archetype([Comp]);

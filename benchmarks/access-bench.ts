@@ -24,6 +24,7 @@ registerBench("access.get_1field", function* () {
 
   yield () => {
     for (let i = 0; i < n; i++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       sink += get(storage, tracked[i]!, Position.x);
     }
   };
@@ -36,6 +37,7 @@ registerBench("access.get_2field", function* () {
 
   yield () => {
     for (let i = 0; i < n; i++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       const id = tracked[i]!;
       const x = get(storage, id, Position.x);
       const y = get(storage, id, Position.y);
@@ -51,6 +53,7 @@ registerBench("access.get_4field", function* () {
 
   yield () => {
     for (let i = 0; i < n; i++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       const id = tracked[i]!;
       const x = get(storage, id, Position.x);
       const y = get(storage, id, Position.y);
@@ -68,6 +71,7 @@ registerBench("access.set_1field", function* () {
 
   yield () => {
     for (let i = 0; i < n; i++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       set(storage, tracked[i]!, Position.x, i + 1);
     }
   };
@@ -81,6 +85,7 @@ registerBench("access.set_record", function* () {
   yield () => {
     for (let i = 0; i < n; i++) {
       const value = i + 1;
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       set(storage, tracked[i]!, Position, { x: value, y: value * 2 });
     }
   };

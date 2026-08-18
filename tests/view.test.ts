@@ -134,8 +134,8 @@ describe("view — field access", () => {
     expect(readData).toBe(arr);
     const after = get(storage, id, RefComp.data);
     expect(after).toBeDefined();
-    expect(after![0]).toBe(4);
-    expect(after![1]).toBe(5);
+    expect(after?.[0]).toBe(4);
+    expect(after?.[1]).toBe(5);
   });
 });
 
@@ -192,16 +192,14 @@ describe("view — nested each", () => {
       });
     });
 
-    // Backward: entity 2 then entity 1
-    // Entity 2 (x=2): y = 1 (from entity 1)
-    // Entity 1 (x=1): y = 2 (from entity 2)
+    // Backward iteration: entity 2 (x=2) accumulates y from entity 1,
+    // entity 1 (x=1) accumulates y from entity 2.
     const ys: number[] = [];
     each(storage, (e) => {
       ys.push(e.ViewTestPosition.y);
     });
-    // Reverse order: entity 2 then entity 1
-    expect(ys[0]).toBe(1); // entity 2: y = 1
-    expect(ys[1]).toBe(2); // entity 1: y = 2
+    expect(ys[0]).toBe(1);
+    expect(ys[1]).toBe(2);
   });
 
   it("outer view fields readable inside inner callback", () => {
@@ -244,7 +242,6 @@ describe("view — nested each", () => {
       });
     });
 
-    // Both outer entities visited
     expect(outerVisits).toBe(2);
     // Inner storage fully drained (first outer pass despawns all 3)
     expect(inner.n).toBe(0);
@@ -270,7 +267,7 @@ describe("view — optional accessors", () => {
     const hpSeen: (number | undefined)[] = [];
     each(storage, (e) => {
       hpSeen.push(e.ViewOptShield?.hp);
-      e.ViewOptShield!.hp = 33;
+      if (e.ViewOptShield != null) e.ViewOptShield.hp = 33;
     });
 
     expect(hpSeen).toStrictEqual([75]);

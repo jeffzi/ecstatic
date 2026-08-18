@@ -365,9 +365,11 @@ function collectRelationColumns(
 /**
  * Create a storage object for a single archetype in a world.
  */
-function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
+function buildColumns(arch: ArchetypeDescriptor): {
+  columns: Map<ComponentDescriptor, SoAColumns>;
+  despawnClear: Array<unknown>[];
+} {
   const columns = new Map<ComponentDescriptor, SoAColumns>();
-
   const despawnClear: Array<unknown>[] = [];
 
   // Relations always need columns (for the target field); data-carrying
@@ -387,12 +389,20 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
     const fields = comp.__ecstatic_fields;
 
     for (let i = 0; i < fields.length; i++) {
-      if (isRef[i] === true) {
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- ref column is always plain array
-        despawnClear.push(soa[fields[i]!] as Array<unknown>);
-      }
+      if (isRef[i] !== true) continue;
+      const fieldName = fields[i];
+      /* istanbul ignore next */
+      if (fieldName === undefined) throw new Error("invariant: field index out of bounds");
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- ref column is always plain array
+      despawnClear.push(soa[fieldName] as Array<unknown>);
     }
   }
+
+  return { columns, despawnClear };
+}
+
+function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
+  const { columns, despawnClear } = buildColumns(arch);
 
   const flatColumns = collectFlatColumns(columns);
 
@@ -452,7 +462,9 @@ function createSoA(comp: ComponentDescriptor, capacity: number): SoAColumns {
   const soa: SoAColumns = {};
 
   for (let i = 0; i < fields.length; i++) {
-    const fieldName = fields[i]!;
+    const fieldName = fields[i];
+    /* istanbul ignore next */
+    if (fieldName === undefined) throw new Error("invariant: field index out of bounds");
     const ctor = columnCtors[i];
 
     if (ctor) {

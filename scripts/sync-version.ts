@@ -19,7 +19,7 @@ function readPackageVersion(projectRoot: string): string {
 }
 
 function generateContent(version: string): string {
-  return `${HEADER}export const VERSION: string = "${version}";\n`;
+  return `${HEADER}/** The package's semver, synced from package.json at build time. */\nexport const VERSION: string = "${version}";\n`;
 }
 
 /** Write `src/version.ts` from the version in `package.json`. Idempotent. */

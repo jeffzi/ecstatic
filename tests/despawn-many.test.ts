@@ -58,7 +58,6 @@ describe("despawnMany storage form", () => {
       expect(storage.n).toBe(2);
       expect(alive(storage, newId1)).toBe(true);
       expect(alive(storage, newId2)).toBe(true);
-      // Old IDs must be stale
       expect(alive(storage, id1)).toBe(false);
       expect(alive(storage, id2)).toBe(false);
     });
@@ -127,7 +126,6 @@ describe("despawnMany storage form", () => {
         despawnMany(storage, [id1, id2, id1]);
       }).toThrow("duplicate entity ID in despawnMany");
 
-      // World must be intact
       expect(alive(storage, id1)).toBe(true);
       expect(alive(storage, id2)).toBe(true);
       expect(alive(storage, id3)).toBe(true);
@@ -145,7 +143,7 @@ describe("despawnMany storage form", () => {
 
       expect(() => {
         despawnMany(storage, [id1, id2, id1]);
-      }).toThrow();
+      }).toThrow("duplicate entity ID in despawnMany");
 
       expect(alive(storage, id1)).toBe(true);
       expect(alive(storage, id2)).toBe(true);
@@ -290,12 +288,10 @@ describe("despawnMany error recovery", () => {
     const id1 = spawn(storage);
     const id2 = spawn(storage);
 
-    // Act 1: despawnMany errors on duplicate
     expect(() => {
       despawnMany(storage, [id1, id1]);
-    }).toThrow();
+    }).toThrow("duplicate entity ID in despawnMany");
 
-    // Act 2: world-form despawn works despite the prior error
     expect(() => {
       despawn(world, id1);
     }).not.toThrow();

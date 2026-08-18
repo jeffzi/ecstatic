@@ -89,9 +89,7 @@ export function assertEntityIndex(index: number): void {
   }
 }
 
-/**
- * Extract the entity index from a packed ID.
- */
+/** Hot-path extraction used throughout storage indexing. */
 export function entityIndex(id: number): number {
   return id % MAX_INDEX;
 }

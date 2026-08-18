@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import {
   archetype,
@@ -268,13 +268,17 @@ describe("filtered each — mutation during iteration", () => {
     const { storage } = createOnFireStorage();
 
     const ids = Array.from({ length: 5 }, () => spawn(storage));
-    enable(storage, ids[4]!, OnFire);
+    const id0 = ids[0];
+    assert(id0 != null);
+    const id4 = ids[4];
+    assert(id4 != null);
+    enable(storage, id4, OnFire);
 
     const visited: number[] = [];
     each(storage, { all: [OnFire] }, (e) => {
       visited.push(e.id);
-      if (e.id === ids[4]) {
-        enable(storage, ids[0]!, OnFire);
+      if (e.id === id4) {
+        enable(storage, id0, OnFire);
       }
     });
 
@@ -288,12 +292,14 @@ describe("filtered each — mutation during iteration", () => {
     for (const id of ids) {
       enable(storage, id, OnFire);
     }
+    const disableId = ids[0];
+    assert(disableId != null);
 
     const visited: number[] = [];
     each(storage, { all: [OnFire] }, (e) => {
       visited.push(e.id);
       if (e.id === ids[4]) {
-        disable(storage, ids[0]!, OnFire);
+        disable(storage, disableId, OnFire);
       }
     });
 
@@ -310,16 +316,26 @@ describe("filtered each — mutation during iteration", () => {
     const { storage } = createStunnedOnFireStorage();
 
     const ids = Array.from({ length: 5 }, () => spawn(storage));
-    enable(storage, ids[2]!, Stunned);
-    enable(storage, ids[3]!, Stunned);
-    enable(storage, ids[4]!, Stunned);
+    const mixId0 = ids[0];
+    assert(mixId0 != null);
+    const mixId1 = ids[1];
+    assert(mixId1 != null);
+    const mixId2 = ids[2];
+    assert(mixId2 != null);
+    const mixId3 = ids[3];
+    assert(mixId3 != null);
+    const mixId4 = ids[4];
+    assert(mixId4 != null);
+    enable(storage, mixId2, Stunned);
+    enable(storage, mixId3, Stunned);
+    enable(storage, mixId4, Stunned);
 
     const visited: number[] = [];
     each(storage, { all: [Stunned] }, (e) => {
       visited.push(e.id);
-      if (e.id === ids[4]) {
-        enable(storage, ids[0]!, Stunned);
-        enable(storage, ids[1]!, OnFire);
+      if (e.id === mixId4) {
+        enable(storage, mixId0, Stunned);
+        enable(storage, mixId1, OnFire);
       }
     });
 
@@ -506,14 +522,18 @@ describe("filtered each — growth during iteration", () => {
     // Fill to the initial capacity of 8 so one more spawn forces growth,
     // which replaces the matcher's matched array mid-pass.
     const ids = Array.from({ length: 8 }, () => spawn(storage));
-    enable(storage, ids[7]!, OnFire);
+    const growId0 = ids[0];
+    assert(growId0 != null);
+    const growId7 = ids[7];
+    assert(growId7 != null);
+    enable(storage, growId7, OnFire);
 
     const visited: number[] = [];
     each(storage, { all: [OnFire] }, (e) => {
       visited.push(e.id);
-      if (e.id === ids[7]) {
+      if (e.id === growId7) {
         spawn(storage);
-        enable(storage, ids[0]!, OnFire);
+        enable(storage, growId0, OnFire);
       }
     });
 

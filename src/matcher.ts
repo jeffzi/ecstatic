@@ -64,6 +64,7 @@ export function matcherFor(
 ): Matcher {
   const matchers = storage.matchers;
   for (let mi = 0; mi < matchers.length; mi++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < matchers.length
     const m = matchers[mi]!;
     if (m.allMask === allMask && m.anyMask === anyMask && m.noneMask === noneMask) {
       return m;
@@ -76,6 +77,7 @@ export function matcherFor(
   const n = storage.n;
   const maskArr = storage.mask;
   for (let i = 0; i < n; i++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n ≤ maskArr.length
     matched[i] = maskSatisfies(maskArr[i]!, allMask, anyMask, noneMask) ? 1 : 0;
   }
 
@@ -97,13 +99,15 @@ export function refreshMatchersBit(
   di: number,
   newMask: number,
   changedBit: number,
-  count: number,
 ): void {
   const matched = storage.matcherMatched;
   const matchers = storage.matchers;
+  const count = matchers.length;
   for (let mi = 0; mi < count; mi++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < count ≤ matchers.length
     const m = matchers[mi]!;
     if ((changedBit & m.filterMask) !== 0) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < count; matched parallel to matchers
       matched[mi]![di] = maskSatisfies(newMask, m.allMask, m.anyMask, m.noneMask) ? 1 : 0;
     }
   }
@@ -121,7 +125,9 @@ export function refreshMatchersMask(storage: Storage, di: number, mask: number):
     const matched = storage.matcherMatched;
     const matchers = storage.matchers;
     for (let mi = 0; mi < matcherN; mi++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < matcherN ≤ matchers.length
       const m = matchers[mi]!;
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < matcherN; matched parallel to matchers
       matched[mi]![di] = maskSatisfies(mask, m.allMask, m.anyMask, m.noneMask) ? 1 : 0;
     }
   }
@@ -135,11 +141,11 @@ export function refreshMatchersMask(storage: Storage, di: number, mask: number):
  */
 export function applyMaskOr(storage: Storage, di: number, mask: number): void {
   const entityMask = storage.mask;
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- di is a valid dense index
   const newMask = entityMask[di]! | mask;
   entityMask[di] = newMask;
-  const matcherN = storage.matchers.length;
-  if (matcherN !== 0) {
-    refreshMatchersBit(storage, di, newMask, mask, matcherN);
+  if (storage.matchers.length !== 0) {
+    refreshMatchersBit(storage, di, newMask, mask);
   }
 }
 
@@ -151,11 +157,11 @@ export function applyMaskOr(storage: Storage, di: number, mask: number): void {
  */
 export function applyMaskAnd(storage: Storage, di: number, mask: number, notMask: number): void {
   const entityMask = storage.mask;
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- di is a valid dense index
   const newMask = entityMask[di]! & notMask;
   entityMask[di] = newMask;
-  const matcherN = storage.matchers.length;
-  if (matcherN !== 0) {
-    refreshMatchersBit(storage, di, newMask, mask, matcherN);
+  if (storage.matchers.length !== 0) {
+    refreshMatchersBit(storage, di, newMask, mask);
   }
 }
 
@@ -177,8 +183,10 @@ export function refreshMatchersAll(storage: Storage, changedBits: number): void 
   const matchers = storage.matchers;
   const matched = storage.matcherMatched;
   for (let mi = 0; mi < matcherN; mi++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < matcherN ≤ matchers.length
     const matcher = matchers[mi]!;
     if ((changedBits & matcher.filterMask) !== 0) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < matcherN; matched parallel to matchers
       refreshOneMatcherDense(entityMask, matcher, matched[mi]!, n);
     }
   }
@@ -195,6 +203,7 @@ function refreshOneMatcherDense(
   const anyMask = matcher.anyMask;
   const noneMask = matcher.noneMask;
   for (let i = 0; i < n; i++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n ≤ entityMask.length
     matched[i] = maskSatisfies(entityMask[i]!, allMask, anyMask, noneMask) ? 1 : 0;
   }
 }
@@ -217,27 +226,33 @@ export function refreshMatchersRows(
   const entityMask = storage.mask;
   const matchers = storage.matchers;
   const matched = storage.matcherMatched;
+  const rowCtx: RowRefreshCtx = { entityMask, rows, rowCount };
   for (let mi = 0; mi < matcherN; mi++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < matcherN ≤ matchers.length
     const matcher = matchers[mi]!;
     if ((changedBits & matcher.filterMask) !== 0) {
-      refreshOneMatcherRows(entityMask, matcher, matched[mi]!, rows, rowCount);
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < matcherN; matched parallel to matchers
+      refreshOneMatcherRows(rowCtx, matcher, matched[mi]!);
     }
   }
 }
 
+interface RowRefreshCtx {
+  entityMask: Uint32Array;
+  rows: readonly number[];
+  rowCount: number;
+}
+
 /** One matcher's flags over pre-resolved dense rows, with the masks hoisted. */
-function refreshOneMatcherRows(
-  entityMask: Uint32Array,
-  matcher: Matcher,
-  matched: Uint8Array,
-  rows: readonly number[],
-  rowCount: number,
-): void {
+function refreshOneMatcherRows(ctx: RowRefreshCtx, matcher: Matcher, matched: Uint8Array): void {
+  const { entityMask, rows, rowCount } = ctx;
   const allMask = matcher.allMask;
   const anyMask = matcher.anyMask;
   const noneMask = matcher.noneMask;
   for (let k = 0; k < rowCount; k++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- k < rowCount ≤ rows.length
     const di = rows[k]!;
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- di is a valid dense index
     matched[di] = maskSatisfies(entityMask[di]!, allMask, anyMask, noneMask) ? 1 : 0;
   }
 }
@@ -251,6 +266,7 @@ export function growMatcherArrays(storage: Storage, capacity: number): void {
   const matchers = storage.matchers;
   const matcherMatched = storage.matcherMatched;
   for (let mi = 0; mi < matchers.length; mi++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < matchers.length
     const m = matchers[mi]!;
     const next = new Uint8Array(capacity);
     next.set(m.matched);

@@ -318,7 +318,9 @@ function buildArchetypeDescriptor(
   const optionalNotBitLookup = new Map<ComponentDescriptor, number>();
 
   for (let i = 0; i < optionals.length; i++) {
-    const comp = optionals[i]!;
+    const comp = optionals[i];
+    /* istanbul ignore next */
+    if (comp === undefined) throw new Error("invariant: optional index out of bounds");
     const bit = 1 << i;
     const notBit = ~bit >>> 0; // 32-bit bitwise complement
 
