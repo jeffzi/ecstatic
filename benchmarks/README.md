@@ -131,9 +131,8 @@ set back to the same value), so rounds do not drift.
 `alloc/budgets.ts` holds the budget table (`ALLOC_BUDGETS`, bytes/op) and the tolerance
 (`EPSILON_BYTES`). The comparison is two-sided: an operation over its budget is a regression, and
 one measurably under its budget is slack — the gate fails on both, and the fix for slack is to lower
-the budget in the same commit. Budgets ratchet down only; never raise one to silence a failure
-without a comment stating which by-design allocation it pins. The gate needs `--expose-gc` and
-refuses to run without it.
+the budget in the same commit. Budgets ratchet down only; never raise one to silence a failure. The
+gate needs `--expose-gc` and refuses to run without it.
 
 ## Known limitations
 

@@ -63,8 +63,9 @@ export interface AllocOp {
 export type OpBuilder = () => AllocOp;
 
 /**
- * Accumulator for every read. A module-level binding is observable to any
- * later importer, so V8 cannot elide the loads that feed it.
+ * Accumulator for every read. Module-scope binding captured by closures
+ * below; V8 cannot elide the writes because the variable escapes into
+ * closures that outlive the initializer.
  */
 let sink = 0;
 

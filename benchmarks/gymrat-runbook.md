@@ -8,10 +8,10 @@ says what to optimize, what to leave alone, and what must happen before an edit.
 ## Objective
 
 Reduce nanoseconds per operation across the timing suite — the geometric mean of every
-`<engine>/<group>.<name>/time` metric on both V8 (node) and JSC (bun) — subject to no per-metric
-regression on either engine. A V8 win that regresses any JSC metric is refused by `keep`, and the
-agent must not chase the geomean alone. Correctness, the public API, and the test suite are
-preserved.
+`<engine>/<group>.<name>/time` metric on both V8 (node) and JavaScriptCore (JSC, bun) — subject to
+no per-metric regression on either engine. A V8 win that regresses any JSC metric is refused by
+`keep`, and the agent must not chase the geomean alone. Correctness, the public API, and the test
+suite are preserved.
 
 ## How the loop runs
 
@@ -197,8 +197,8 @@ JIT tiering policy, so relative deltas transfer but absolute numbers do not.
 
 **JSC (bun):**
 
-- JSC's DFG and FTL JIT tiers optimize monomorphic shapes similarly to V8, so the V8 monomorphic
-  call-site rules apply here too.
+- JSC's DFG (Data Flow Graph) and FTL (Faster Than Light) just-in-time (JIT) tiers optimize
+  monomorphic shapes similarly to V8, so the V8 monomorphic call-site rules apply here too.
 - JSC's inlining budget is smaller than V8's TurboFan. Functions that are borderline-inlined under
   V8 may not inline under JSC; splitting large hot functions helps both engines.
 
