@@ -7,10 +7,9 @@ rationale and omission justifications, see [rationale](rationale.md). Constants 
 palette shared by every group are in [parameters](specifications/parameters.md).
 
 Run the suite with `npm run bench:once`; pass a pattern to run a subset, for example
-`npm run bench:once -- '^iteration\.'`. The runner requires an
-exposed garbage collector and can measure under a second engine;
-[`benchmarks/README.md`](../../benchmarks/README.md) covers both, along with the comparison workflow
-for checking one revision against another.
+`npm run bench:once -- '^iteration\.'`. The runner requires an exposed garbage collector and can
+measure under a second engine; [`benchmarks/README.md`](../../benchmarks/README.md) covers both,
+along with the comparison workflow for checking one revision against another.
 
 ## Benchmark groups
 
