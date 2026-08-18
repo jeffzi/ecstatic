@@ -32,6 +32,10 @@ import type { QueryView } from "./query.js";
 import type { Relation } from "./relation.js";
 import type { Storage, World } from "./world.js";
 
+function releaseIfAcquired(storage: Storage | undefined): void {
+  if (storage !== undefined) releaseView(storage);
+}
+
 /**
  * The live source bucket for a (relation, target) pair, or `undefined` when
  * the target is stale, the relation is unregistered, or no source was ever
@@ -70,6 +74,7 @@ function resolveBucket(
  * skipped without touching its sources, and per-source enabled-bit semantics
  * match `each` filters.
  */
+/* oxlint-disable max-params -- public API: querySources overloads */
 export function querySources<R extends Relation>(
   world: World,
   rel: R,
@@ -124,6 +129,7 @@ export function querySources(
   filterOrFn: unknown,
   maybeFn?: unknown,
 ): void {
+  /* oxlint-enable max-params */
   const bucket = resolveBucket(world, rel, target);
   if (bucket === undefined) {
     return;
@@ -145,7 +151,10 @@ export function querySources(
   const filter = filterOrFn as readonly ComponentDescriptor[] | EachFilter;
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the overloads type fn as a view callback; runtime views are EachView objects
   const callback = maybeFn as (view: EachView) => void;
-  const sole = soleStorage(world.reverseMap.get(rel)!);
+  const relMap = world.reverseMap.get(rel);
+  /* istanbul ignore next */
+  if (relMap === undefined) throw new Error("invariant: relation not in reverse map");
+  const sole = soleStorage(relMap);
   querySourcesFiltered(bucket, sole, filter, callback);
 }
 
@@ -158,19 +167,20 @@ function querySourcesUnfiltered(bucket: SourceBucket, callback: (view: EachView)
   try {
     for (const [sourceIndex, storage] of bucket) {
       if (storage !== acquired) {
-        if (acquired !== undefined) {
-          releaseView(acquired);
-        }
+        releaseIfAcquired(acquired);
         acquired = storage;
         bound = acquireView(storage);
       }
-      bound!.bind(storage.sparse[sourceIndex]!);
-      callback(bound!.view);
+      /* istanbul ignore next */
+      if (bound === undefined) throw new Error("invariant: bound view unset after acquire");
+      const di = storage.sparse[sourceIndex];
+      /* istanbul ignore next */
+      if (di === undefined) throw new Error("invariant: source missing from sparse array");
+      bound.bind(di);
+      callback(bound.view);
     }
   } finally {
-    if (acquired !== undefined) {
-      releaseView(acquired);
-    }
+    releaseIfAcquired(acquired);
   }
 }
 
@@ -231,7 +241,9 @@ function querySourcesFilteredSole(
       }
       // Read sparse and matched through their owners each row: growth inside
       // the callback replaces both arrays (the each() invariant).
-      const di = sole.sparse[sourceIndex]!;
+      const di = sole.sparse[sourceIndex];
+      /* istanbul ignore next */
+      if (di === undefined) throw new Error("invariant: source missing from sparse array");
       if (skipMatchCheck || matcher.matched[di] !== 0) {
         bound.bind(di);
         callback(bound.view);
@@ -263,6 +275,20 @@ interface MultiStorageState {
   bound: BoundView | undefined;
 }
 
+interface ReadyState {
+  matcher: Matcher;
+  bound: BoundView;
+}
+
+function assertStorageReady(
+  state: MultiStorageState,
+): asserts state is MultiStorageState & ReadyState {
+  /* istanbul ignore next */
+  if (state.matcher === undefined || state.bound === undefined) {
+    throw new Error("invariant: enterStorage must set matcher and bound before row access");
+  }
+}
+
 /** Re-resolve the matcher and swap the checked-out view for a new storage. */
 function enterStorage(
   state: MultiStorageState,
@@ -282,6 +308,11 @@ function enterStorage(
   }
   state.acquired = storage;
   state.bound = acquireView(storage);
+}
+
+function pullNext<T>(iter: IterableIterator<T>): T | undefined {
+  const next = iter.next();
+  return next.done === true ? undefined : next.value;
 }
 
 /**
@@ -310,17 +341,9 @@ function querySourcesFilteredMulti(
   };
   try {
     for (;;) {
-      let entry: [number, Storage];
-      if (pendingEntry !== undefined) {
-        entry = pendingEntry;
-        pendingEntry = undefined;
-      } else {
-        const next = entries.next();
-        if (next.done === true) {
-          break;
-        }
-        entry = next.value;
-      }
+      const entry = pendingEntry ?? pullNext(entries);
+      pendingEntry = undefined;
+      if (entry === undefined) break;
       const [sourceIndex, storage] = entry;
       if (storage !== lastStorage) {
         lastStorage = storage;
@@ -329,16 +352,17 @@ function querySourcesFilteredMulti(
       if (state.skipStorage) {
         continue;
       }
-      const di = storage.sparse[sourceIndex]!;
-      if (state.skipMatchCheck || state.matcher!.matched[di] !== 0) {
-        state.bound!.bind(di);
-        callback(state.bound!.view);
+      const di = storage.sparse[sourceIndex];
+      /* istanbul ignore next */
+      if (di === undefined) throw new Error("invariant: source missing from sparse array");
+      assertStorageReady(state);
+      if (state.skipMatchCheck || state.matcher.matched[di] !== 0) {
+        state.bound.bind(di);
+        callback(state.bound.view);
       }
     }
   } finally {
-    if (state.acquired !== undefined) {
-      releaseView(state.acquired);
-    }
+    releaseIfAcquired(state.acquired);
   }
 }
 
@@ -362,8 +386,13 @@ export function getSources(
   const bucket = resolveBucket(world, rel, target);
   if (bucket !== undefined) {
     for (const [sourceIndex, storage] of bucket) {
-      const di = storage.sparse[sourceIndex]!;
-      result[count] = storage.entities[di]!;
+      const di = storage.sparse[sourceIndex];
+      /* istanbul ignore next */
+      if (di === undefined) throw new Error("invariant: source missing from sparse array");
+      const entityId = storage.entities[di];
+      /* istanbul ignore next */
+      if (entityId === undefined) throw new Error("invariant: entity missing from dense array");
+      result[count] = entityId;
       count++;
     }
   }

@@ -2,7 +2,9 @@ import { entityIndex } from "../src/entity-id.js";
 
 /** Dense row of a live entity: sparse lookup by entity index. */
 export function rowOf(storage: { sparse: Int32Array }, id: number): number {
-  return storage.sparse[entityIndex(id)]!;
+  const row = storage.sparse[entityIndex(id)];
+  if (row == null) throw new Error("entity index out of bounds");
+  return row;
 }
 
 /**

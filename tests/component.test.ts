@@ -78,25 +78,25 @@ describe("component", () => {
     it("rejects field names starting with a digit", () => {
       expect(() => {
         components({ ComponentSpecValidation_digit: { "1field": 0 } });
-      }).toThrow();
+      }).toThrow("must be a valid ASCII identifier");
     });
 
     it("rejects field names containing a hyphen", () => {
       expect(() => {
         components({ ComponentSpecValidation_hyphen: { "field-name": 0 } });
-      }).toThrow();
+      }).toThrow("must be a valid ASCII identifier");
     });
 
     it("rejects field names containing a space", () => {
       expect(() => {
         components({ ComponentSpecValidation_space: { "field name": 0 } });
-      }).toThrow();
+      }).toThrow("must be a valid ASCII identifier");
     });
 
     it("rejects field names with non-ASCII characters", () => {
       expect(() => {
         components({ ComponentSpecValidation_nonascii: { café: 0 } });
-      }).toThrow();
+      }).toThrow("must be a valid ASCII identifier");
     });
 
     it("accepts valid field names (letter/underscore start, alphanumeric and underscores)", () => {

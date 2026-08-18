@@ -187,6 +187,7 @@ function buildView(storage: Storage): BoundView {
     for (const fieldName of comp.__ecstatic_fields) {
       // Boolean fields live in Uint8Array columns: encode 1/0, decode !== 0
       const isBoolean = typeof comp.__ecstatic_defaults[fieldName] === "boolean";
+      /* oxlint-disable typescript/no-non-null-assertion -- soa[fieldName] is guaranteed present: the loop iterates comp.__ecstatic_fields, and createStorage builds a column for each. Reads through soa (not a captured ref) so accessors survive column growth. */
       Object.defineProperty(fieldAccessors, fieldName, {
         get: isBoolean ? () => soa[fieldName]![row] !== 0 : () => soa[fieldName]![row],
         set: isBoolean
@@ -197,6 +198,7 @@ function buildView(storage: Storage): BoundView {
               soa[fieldName]![row] = value;
             },
       });
+      /* oxlint-enable typescript/no-non-null-assertion */
     }
     return fieldAccessors;
   };
@@ -208,18 +210,27 @@ function buildView(storage: Storage): BoundView {
       continue;
     }
     // Every required data component has a columns entry (createStorage invariant)
-    view[comp.__ecstatic_name] = fieldAccessorsFor(comp, storage.columns.get(comp)!);
+    const soa = storage.columns.get(comp);
+    /* istanbul ignore next */
+    if (soa === undefined) throw new Error("invariant: missing columns for required component");
+    view[comp.__ecstatic_name] = fieldAccessorsFor(comp, soa);
   }
 
   // Optional slots test the row's mask bit on every read, so enable/disable
   // inside an iteration changes what later-bound rows read in the same pass.
   for (const comp of storage.archetype.optionals) {
-    const bit = storage.optionalBitLookup.get(comp)!;
-    const enabledValue =
-      comp.__ecstatic_fields.length === 0
-        ? true
-        : fieldAccessorsFor(comp, storage.columns.get(comp)!);
+    const bit = storage.optionalBitLookup.get(comp);
+    /* istanbul ignore next */
+    if (bit === undefined) throw new Error("invariant: optional missing from bitLookup");
+    const optSoa = storage.columns.get(comp);
+    let enabledValue: Record<string, unknown> | true;
+    if (comp.__ecstatic_fields.length === 0 || optSoa === undefined) {
+      enabledValue = true;
+    } else {
+      enabledValue = fieldAccessorsFor(comp, optSoa);
+    }
     Object.defineProperty(view, comp.__ecstatic_name, {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- mask[row] is guaranteed present: row is always a valid dense index maintained by acquireView/bind
       get: () => ((storage.mask[row]! & bit) !== 0 ? enabledValue : undefined),
     });
   }
@@ -259,7 +270,10 @@ export function acquireView(storage: Storage): BoundView {
 
 /** Return a view checked out by {@link acquireView} to the storage's pool. */
 export function releaseView(storage: Storage): void {
-  viewPools.get(storage)!.depth--;
+  const pool = viewPools.get(storage);
+  /* istanbul ignore next */
+  if (pool === undefined) throw new Error("invariant: releaseView without prior acquireView");
+  pool.depth--;
 }
 
 /**
@@ -380,15 +394,15 @@ export function eachStorageMatched(
         bound.bind(i);
         fn(bound.view);
       }
-    } else {
-      // Read matched through the matcher each row: growth replaces the
-      // array, and a callback that spawns past capacity must not detach the
-      // in-flight pass from later same-pass enable/disable updates.
-      for (let i = storage.n - 1; i >= 0; i--) {
-        if (activeMatcher.matched[i] !== 0) {
-          bound.bind(i);
-          fn(bound.view);
-        }
+      return;
+    }
+    // Read matched through the matcher each row: growth replaces the
+    // array, and a callback that spawns past capacity must not detach the
+    // in-flight pass from later same-pass enable/disable updates.
+    for (let i = storage.n - 1; i >= 0; i--) {
+      if (activeMatcher.matched[i] !== 0) {
+        bound.bind(i);
+        fn(bound.view);
       }
     }
   } finally {

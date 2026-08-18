@@ -51,6 +51,11 @@ export function soleStorage(relMap: RelationReverseMap): Storage | false | undef
   return flag instanceof Map ? undefined : flag;
 }
 
+export interface ReverseCtx {
+  state: WorldState;
+  rel: ComponentDescriptor;
+}
+
 /**
  * Insert a source entity index into the reverse map for a relation.
  * The per-target bucket is lazily created; the top-level `rel` entry is
@@ -72,13 +77,15 @@ export function soleStorage(relMap: RelationReverseMap): Storage | false | undef
  * reverse-map reset drops it with the map.
  */
 export function reverseInsert(
-  state: WorldState,
-  rel: ComponentDescriptor,
+  ctx: ReverseCtx,
   targetIndex: number,
   storage: Storage,
   sourceIndex: number,
 ): void {
-  const relMap = state.reverseMap.get(rel)!;
+  const { state, rel } = ctx;
+  const relMap = state.reverseMap.get(rel);
+  /* istanbul ignore next */
+  if (relMap === undefined) throw new Error("invariant: relation not registered");
 
   const sole = relMap.get(SINGLE_STORAGE_KEY);
   if (sole !== storage) {
@@ -112,7 +119,10 @@ export function reverseRemove(
   targetIndex: number,
   sourceIndex: number,
 ): void {
-  const targetMap = sourceBucket(reverseMap.get(rel)!, targetIndex);
+  const relMap = reverseMap.get(rel);
+  /* istanbul ignore next */
+  if (relMap === undefined) throw new Error("invariant: relation not registered");
+  const targetMap = sourceBucket(relMap, targetIndex);
   if (targetMap !== undefined) {
     targetMap.delete(sourceIndex);
   }

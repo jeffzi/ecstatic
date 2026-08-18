@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import {
   alive,
@@ -51,7 +51,9 @@ describe("enable", () => {
 
     enable(storage, id, Stunned);
 
-    const bit = storage.archetype.optionalBits.get("EnDisStunned")!;
+    const bit = storage.archetype.optionalBits.get("EnDisStunned");
+
+    assert(bit != null);
     expect(storage.mask[rowOf(storage, id)]).toBe(bit);
   });
 
@@ -62,11 +64,13 @@ describe("enable", () => {
     enable(storage, id, Shield);
 
     const row = rowOf(storage, id);
-    const bit = storage.archetype.optionalBits.get("EnDisShield")!;
+    const bit = storage.archetype.optionalBits.get("EnDisShield");
+    assert(bit != null);
     expect(storage.mask[row]).toBe(bit);
-    const soa = storage.columns.get(Shield)!;
-    expect(soa.hp![row]).toBe(50);
-    expect(soa.defense![row]).toBe(10);
+    const soa = storage.columns.get(Shield);
+    assert(soa != null);
+    expect(soa.hp?.[row]).toBe(50);
+    expect(soa.defense?.[row]).toBe(10);
   });
 
   it("writes only the listed fields on enable with values", () => {
@@ -76,9 +80,10 @@ describe("enable", () => {
     enable(storage, id, Shield, { hp: 75 });
 
     const row = rowOf(storage, id);
-    const soa = storage.columns.get(Shield)!;
-    expect(soa.hp![row]).toBe(75);
-    expect(soa.defense![row]).toBe(10);
+    const soa = storage.columns.get(Shield);
+    assert(soa != null);
+    expect(soa.hp?.[row]).toBe(75);
+    expect(soa.defense?.[row]).toBe(10);
   });
 
   it("accepts record-form input for a component named __ecstatic_default_values", () => {
@@ -92,10 +97,12 @@ describe("enable", () => {
     enable(storage, id, { __ecstatic_default_values: { hp: 75 } });
 
     const row = rowOf(storage, id);
-    const bit = storage.archetype.optionalBits.get("__ecstatic_default_values")!;
+    const bit = storage.archetype.optionalBits.get("__ecstatic_default_values");
+    assert(bit != null);
     expect(storage.mask[row]).toBe(bit);
-    const soa = storage.columns.get(DefaultValues)!;
-    expect(soa.hp![row]).toBe(75);
+    const soa = storage.columns.get(DefaultValues);
+    assert(soa != null);
+    expect(soa.hp?.[row]).toBe(75);
   });
 
   it("stores ref-field override values by reference (no clone)", () => {
@@ -109,8 +116,10 @@ describe("enable", () => {
 
     enable(storage, id, Aura, { effect: obj });
 
-    const soa = storage.columns.get(Aura)!;
-    expect(soa.effect![rowOf(storage, id)]).toBe(obj);
+    const soa = storage.columns.get(Aura);
+
+    assert(soa != null);
+    expect(soa.effect?.[rowOf(storage, id)]).toBe(obj);
   });
 
   it("is idempotent", () => {
@@ -120,7 +129,9 @@ describe("enable", () => {
     enable(storage, id, Stunned);
     enable(storage, id, Stunned);
 
-    const bit = storage.archetype.optionalBits.get("EnDisStunned")!;
+    const bit = storage.archetype.optionalBits.get("EnDisStunned");
+
+    assert(bit != null);
     expect(storage.mask[rowOf(storage, id)]).toBe(bit);
   });
 
@@ -155,9 +166,10 @@ describe("disable", () => {
 
     const row = rowOf(storage, id);
     expect(storage.mask[row]).toBe(0);
-    const soa = storage.columns.get(Shield)!;
-    expect(soa.hp![row]).toBe(75);
-    expect(soa.defense![row]).toBe(10);
+    const soa = storage.columns.get(Shield);
+    assert(soa != null);
+    expect(soa.hp?.[row]).toBe(75);
+    expect(soa.defense?.[row]).toBe(10);
   });
 
   it("resumes the disabled value on re-enable with no values", () => {
@@ -169,9 +181,10 @@ describe("disable", () => {
     enable(storage, id, Shield);
 
     const row = rowOf(storage, id);
-    const soa = storage.columns.get(Shield)!;
-    expect(soa.hp![row]).toBe(75);
-    expect(soa.defense![row]).toBe(10);
+    const soa = storage.columns.get(Shield);
+    assert(soa != null);
+    expect(soa.hp?.[row]).toBe(75);
+    expect(soa.defense?.[row]).toBe(10);
   });
 
   it("merges overrides with retained values on re-enable with partial values", () => {
@@ -183,9 +196,10 @@ describe("disable", () => {
     enable(storage, id, Shield, { hp: 99 });
 
     const row = rowOf(storage, id);
-    const soa = storage.columns.get(Shield)!;
-    expect(soa.hp![row]).toBe(99);
-    expect(soa.defense![row]).toBe(5);
+    const soa = storage.columns.get(Shield);
+    assert(soa != null);
+    expect(soa.hp?.[row]).toBe(99);
+    expect(soa.defense?.[row]).toBe(5);
   });
 
   it("is idempotent", () => {
@@ -230,7 +244,9 @@ describe("disable array form", () => {
 
     disable(storage, id, [OnFire]);
 
-    const stunnedBit = storage.archetype.optionalBits.get("EnDisStunned")!;
+    const stunnedBit = storage.archetype.optionalBits.get("EnDisStunned");
+
+    assert(stunnedBit != null);
     expect(storage.mask[rowOf(storage, id)]).toBe(stunnedBit);
   });
 
@@ -244,7 +260,9 @@ describe("disable array form", () => {
       disable(storage, id, [Stunned, Position]);
     }).toThrow("component EnDisPosition is not optional on this archetype");
 
-    const stunnedBit = storage.archetype.optionalBits.get("EnDisStunned")!;
+    const stunnedBit = storage.archetype.optionalBits.get("EnDisStunned");
+
+    assert(stunnedBit != null);
     expect(storage.mask[rowOf(storage, id)]).toBe(stunnedBit);
   });
 
@@ -266,7 +284,9 @@ describe("enable record boolean values", () => {
 
     enable(storage, id, { EnDisStunned: true });
 
-    const bit = storage.archetype.optionalBits.get("EnDisStunned")!;
+    const bit = storage.archetype.optionalBits.get("EnDisStunned");
+
+    assert(bit != null);
     expect(storage.mask[rowOf(storage, id)]).toBe(bit);
   });
 
@@ -279,9 +299,10 @@ describe("enable record boolean values", () => {
     enable(storage, id, { EnDisShield: true });
 
     const row = rowOf(storage, id);
-    const bit = storage.archetype.optionalBits.get("EnDisShield")!;
+    const bit = storage.archetype.optionalBits.get("EnDisShield");
+    assert(bit != null);
     expect(storage.mask[row]).toBe(bit);
-    expect(storage.columns.get(Shield)!.hp![row]).toBe(75);
+    expect(storage.columns.get(Shield)?.hp?.[row]).toBe(75);
   });
 
   it("mixed record: true enables, false skips, object patches", () => {
@@ -292,10 +313,12 @@ describe("enable record boolean values", () => {
     enable(storage, id, { EnDisShield: { hp: 75 }, EnDisStunned: true, EnDisOnFire: false });
 
     const row = rowOf(storage, id);
-    const shieldBit = storage.archetype.optionalBits.get("EnDisShield")!;
-    const stunnedBit = storage.archetype.optionalBits.get("EnDisStunned")!;
+    const shieldBit = storage.archetype.optionalBits.get("EnDisShield");
+    assert(shieldBit != null);
+    const stunnedBit = storage.archetype.optionalBits.get("EnDisStunned");
+    assert(stunnedBit != null);
     expect(storage.mask[row]).toBe(shieldBit | stunnedBit);
-    expect(storage.columns.get(Shield)!.hp![row]).toBe(75);
+    expect(storage.columns.get(Shield)?.hp?.[row]).toBe(75);
   });
 
   it("all-false record is a no-op", () => {
@@ -328,7 +351,7 @@ describe("enable record boolean values", () => {
 
     const row = rowOf(storage, id);
     expect(storage.mask[row]).toBe(0);
-    expect(storage.columns.get(Shield)!.hp![row]).toBe(50);
+    expect(storage.columns.get(Shield)?.hp?.[row]).toBe(50);
   });
 
   it("errors on a non-optional component with earlier entries unapplied", () => {
@@ -342,7 +365,7 @@ describe("enable record boolean values", () => {
 
     const row = rowOf(storage, id);
     expect(storage.mask[row]).toBe(0);
-    expect(storage.columns.get(Shield)!.hp![row]).toBe(50);
+    expect(storage.columns.get(Shield)?.hp?.[row]).toBe(50);
   });
 });
 
@@ -354,9 +377,10 @@ describe("world forms", () => {
     enable(world, id, Shield, { hp: 75 });
 
     const row = rowOf(storage, id);
-    const bit = storage.archetype.optionalBits.get("EnDisShield")!;
+    const bit = storage.archetype.optionalBits.get("EnDisShield");
+    assert(bit != null);
     expect(storage.mask[row]).toBe(bit);
-    expect(storage.columns.get(Shield)!.hp![row]).toBe(75);
+    expect(storage.columns.get(Shield)?.hp?.[row]).toBe(75);
   });
 
   it("disable dispatches by id to the owning storage", () => {

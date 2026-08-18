@@ -68,6 +68,7 @@ describe("EntityId<Arch>", () => {
     const movers = register(world, archetype([Position]));
     const ids = spawnMany(movers, 3);
 
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- type-level test: ids[0] is always present after spawnMany(3)
     expectTypeOf(ids[0]!).toExtend<With<typeof Position>>();
   });
 });

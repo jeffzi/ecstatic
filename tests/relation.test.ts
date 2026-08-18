@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import { archetype } from "../src/archetype.js";
 import { component, components, isComponentDescriptor, ref } from "../src/component.js";
@@ -60,8 +60,7 @@ describe("relation", () => {
   });
 
   it("stores constraints array of component descriptors", () => {
-    const Attached = relation("RelSpec_Attached", [RelSpec_Comp]);
-    const meta = rmd(Attached);
+    const meta = rmd(relation("RelSpec_Attached", [RelSpec_Comp]));
     expect(Array.isArray(meta.constraints)).toBe(true);
     expect(meta.constraints[0]).toBe(RelSpec_Comp);
   });
@@ -78,8 +77,7 @@ describe("relation", () => {
   });
 
   it("stores empty constraints for unconstrained relation", () => {
-    const Unconstrained = relation("RelSpec_Unconstrained");
-    const meta = rmd(Unconstrained);
+    const meta = rmd(relation("RelSpec_Unconstrained"));
     expect(Array.isArray(meta.constraints)).toBe(true);
     expect(meta.constraints.length).toBe(0);
   });
@@ -101,8 +99,7 @@ describe("relation", () => {
 
   it("is also a valid component descriptor", () => {
     const PureFields = relation("RelSpec_PureFields");
-    const d = asMutableDescriptor(PureFields);
-    expect(d.__ecstatic_name).toBe("RelSpec_PureFields");
+    expect(asMutableDescriptor(PureFields).__ecstatic_name).toBe("RelSpec_PureFields");
     expect(isComponentDescriptor(PureFields)).toBe(true);
   });
 
@@ -208,7 +205,9 @@ describe("registering relation archetypes", () => {
     const storage = register(world, archetype([RelSpec_Comp, Owner]));
 
     expect(world.relations).toContain(getRelationMeta(Owner));
-    expect(world.reverseMap.has(getRelationMeta(Owner)!)).toBe(true);
+    const ownerMeta = getRelationMeta(Owner);
+    assert(ownerMeta != null);
+    expect(world.reverseMap.has(ownerMeta)).toBe(true);
     expect(world.hasAnyRelations).toBe(true);
     expect(storage.hasRelations).toBe(true);
   });
@@ -231,9 +230,11 @@ describe("registering relation archetypes", () => {
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp], [PureOpt]));
 
-    const soa = storage.columns.get(getRelationMeta(PureOpt)!);
+    const pureOptMeta = getRelationMeta(PureOpt);
+    assert(pureOptMeta != null);
+    const soa = storage.columns.get(pureOptMeta);
     expect(soa).toBeDefined();
-    expect(soa!.target).toBeDefined();
+    expect(soa?.target).toBeDefined();
   });
 
   it("leaves relation state empty for relation-free archetypes", () => {
@@ -375,7 +376,9 @@ describe("optional relation birth-link at spawn", () => {
     expect(sourceIndices(world, OptionalUnlinked, targetId)).toStrictEqual([]);
     const row = rowOf(storage, entityId);
     expect(storage.mask[row]).toBe(0);
-    expect(storage.columns.get(getRelationMeta(OptionalUnlinked)!)!.target![row]).toBe(0);
+    const unlinkedMeta = getRelationMeta(OptionalUnlinked);
+    assert(unlinkedMeta != null);
+    expect(storage.columns.get(unlinkedMeta)?.target?.[row]).toBe(0);
   });
 
   it("spawn with optional relation and partial data fields", () => {
@@ -447,7 +450,9 @@ describe("optional relation birth-link at spawn", () => {
     const second = spawn(storage);
 
     const row = rowOf(storage, second);
-    expect(storage.columns.get(getRelationMeta(OptionalRecycle)!)!.target![row]).toBe(0);
+    const recycleMeta = getRelationMeta(OptionalRecycle);
+    assert(recycleMeta != null);
+    expect(storage.columns.get(recycleMeta)?.target?.[row]).toBe(0);
   });
 });
 
@@ -619,12 +624,14 @@ describe("reverse map maintenance", () => {
     const storageB = register(world, archetype([ReverseMapSpec_Other], [Rel]));
     const simpleStorage = register(world, archetype([RelSpec_Comp]));
 
-    const meta = getRelationMeta(Rel)!;
+    const meta = getRelationMeta(Rel);
+    assert(meta != null);
     const targetId = spawn(simpleStorage);
     const targetIndex = entityIndex(targetId);
 
     const sourceA = spawn(storageA, { ReverseMapSpec_Flag: { target: targetId } });
-    const relMap = world.reverseMap.get(meta)!;
+    const relMap = world.reverseMap.get(meta);
+    assert(relMap != null);
     expect(relMap.get(-1)).toBe(storageA);
 
     spawn(storageB, { ReverseMapSpec_Flag: { target: targetId } });
@@ -632,7 +639,7 @@ describe("reverse map maintenance", () => {
 
     // Removing every source and re-inserting from one storage never re-promotes
     reverseRemove(world.reverseMap, meta, targetIndex, entityIndex(sourceA));
-    reverseInsert(world, meta, targetIndex, storageA, entityIndex(sourceA));
+    reverseInsert({ state: world, rel: meta }, targetIndex, storageA, entityIndex(sourceA));
     expect(relMap.get(-1)).toBe(false);
   });
 
@@ -642,16 +649,19 @@ describe("reverse map maintenance", () => {
     const storage = register(world, archetype([RelSpec_Comp], [Rel]));
     const simpleStorage = register(world, archetype([RelSpec_Comp]));
 
-    const meta = getRelationMeta(Rel)!;
+    const meta = getRelationMeta(Rel);
+    assert(meta != null);
     const targetId = spawn(simpleStorage);
     const sourceId = spawn(storage, { ReverseMapSpec_Remove: { target: targetId } });
     const targetIndex = entityIndex(targetId);
 
     reverseRemove(world.reverseMap, meta, targetIndex, entityIndex(sourceId));
 
-    const bucket = sourceBucket(world.reverseMap.get(meta)!, targetIndex);
+    const reverseMap = world.reverseMap.get(meta);
+    assert(reverseMap != null);
+    const bucket = sourceBucket(reverseMap, targetIndex);
     expect(bucket).toBeDefined();
-    expect(bucket!.size).toBe(0);
+    expect(bucket?.size).toBe(0);
   });
 });
 
@@ -811,7 +821,9 @@ describe("link and unlink", () => {
     expect(sourceIndices(world, Rel, targetId)).toStrictEqual([]);
     const row = rowOf(storage, sourceId);
     expect(storage.mask[row]).toBe(0);
-    expect(storage.columns.get(getRelationMeta(Rel)!)!.target![row]).toBe(0);
+    const relMeta = getRelationMeta(Rel);
+    assert(relMeta != null);
+    expect(storage.columns.get(relMeta)?.target?.[row]).toBe(0);
   });
 
   it("unlink on an already-unlinked optional relation is a no-op", () => {
@@ -959,8 +971,8 @@ describe("link value cloning", () => {
     // Reference semantics: the stored value IS the caller's object
     const storedConfig = get(storage, sourceId, LinkRefTest.config);
     expect(storedConfig).toBe(configObj);
-    expect(storedConfig!.enabled).toBe(false);
-    expect(storedConfig!.timeout).toBe(9999);
+    expect(storedConfig?.enabled).toBe(false);
+    expect(storedConfig?.timeout).toBe(9999);
   });
 });
 

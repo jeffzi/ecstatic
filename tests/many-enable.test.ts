@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import {
   alive,
@@ -50,7 +50,7 @@ describe("enableMany with ids", () => {
     enableMany(storage, [id], { ManyStunned: true, ManyShield: { hp: 75 } });
 
     expect(has(storage, id, [Stunned, Shield])).toBe(true);
-    expect(storage.columns.get(Shield)!.hp![rowOf(storage, id)]).toBe(75);
+    expect(storage.columns.get(Shield)?.hp?.[rowOf(storage, id)]).toBe(75);
   });
 
   it("filters false entries at resolve time", () => {
@@ -82,11 +82,13 @@ describe("enableMany with ids", () => {
 
     enableMany(storage, [idA, idB], { ManyShield: true });
 
-    const soa = storage.columns.get(Shield)!;
-    expect(soa.hp![rowOf(storage, idA)]).toBe(75);
-    expect(soa.defense![rowOf(storage, idA)]).toBe(10);
-    expect(soa.hp![rowOf(storage, idB)]).toBe(50);
-    expect(soa.defense![rowOf(storage, idB)]).toBe(10);
+    const soa = storage.columns.get(Shield);
+
+    assert(soa != null);
+    expect(soa.hp?.[rowOf(storage, idA)]).toBe(75);
+    expect(soa.defense?.[rowOf(storage, idA)]).toBe(10);
+    expect(soa.hp?.[rowOf(storage, idB)]).toBe(50);
+    expect(soa.defense?.[rowOf(storage, idB)]).toBe(10);
   });
 
   it("is idempotent — calling twice succeeds, entity remains alive", () => {
@@ -112,9 +114,11 @@ describe("enableMany with ids", () => {
 
     enableMany(storage, [idA, idB], { ManyAura: { effect: obj } });
 
-    const soa = storage.columns.get(Aura)!;
-    expect(soa.effect![rowOf(storage, idA)]).toBe(obj);
-    expect(soa.effect![rowOf(storage, idB)]).toBe(obj);
+    const soa = storage.columns.get(Aura);
+
+    assert(soa != null);
+    expect(soa.effect?.[rowOf(storage, idA)]).toBe(obj);
+    expect(soa.effect?.[rowOf(storage, idB)]).toBe(obj);
   });
 
   it("errors on a stale entity ID with zero rows changed", () => {
