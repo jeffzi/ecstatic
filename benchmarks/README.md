@@ -1,6 +1,7 @@
 # Benchmarks
 
-Regression-detection benchmarks for ecstatic, timed with [mitata](https://github.com/evanwashere/mitata).
+Regression-detection benchmarks for ecstatic, timed with
+[mitata](https://github.com/evanwashere/mitata).
 
 For what each benchmark measures and why, see [`docs/benchmarks/`](../docs/benchmarks/README.md).
 This file covers running the suite and how much of the original Lua suite it currently covers.
@@ -44,12 +45,12 @@ invoked by hand without the flag.
 
 ### One process per benchmark
 
-The runner measures nothing itself. It spawns a fresh child process per selected benchmark, one
-at a time, and concatenates the children's reports into the single JSON document it prints.
+The runner measures nothing itself. It spawns a fresh child process per selected benchmark, one at a
+time, and concatenates the children's reports into the single JSON document it prints.
 
 Sharing one process makes a benchmark's numbers depend on what ran before it — heap shape, JIT
-state, and accumulated GC pressure all carry over. Measured in one process, `post_churn_throughput` reads
-around 240 µs; measured first in its own process, around 9 µs. Isolation is what makes one
+state, and accumulated GC pressure all carry over. Measured in one process, `post_churn_throughput`
+reads around 240 µs; measured first in its own process, around 9 µs. Isolation is what makes one
 benchmark's number comparable to another's.
 
 The cost is roughly 150–300 ms of startup per child. Progress goes to stderr, the report to stdout,
@@ -71,10 +72,10 @@ tracking regressions on the JSC side; it is not a measurement of the shipping ru
 
 ## gymrat setup
 
-[gymrat](https://github.com/jeffzi/gymrat) provides both `npm run bench` and `npm run bench:measure`.
-It is not published to npm, and the `file:` link that provides its binary is machine-local —
-deliberately kept out of version control. To run either command, clone and build gymrat, then link
-it into this repository:
+[gymrat](https://github.com/jeffzi/gymrat) provides both `npm run bench` and
+`npm run bench:measure`. It is not published to npm, and the `file:` link that provides its binary
+is machine-local — deliberately kept out of version control. To run either command, clone and build
+gymrat, then link it into this repository:
 
 ```bash
 npm --prefix <gymrat-checkout> ci
@@ -88,25 +89,24 @@ modifications uncommitted.
 ## Measuring one version
 
 `npm run bench:measure` is gymrat's `measure` and needs the [gymrat setup](#gymrat-setup) above: one
-target, sampled the same way a compare samples
-each side, reported as a median ± spread per metric with no deltas and no verdicts. It answers
-"what are my numbers right now?" — and, run against an unchanged target, "how noisy is this
-machine?"
+target, sampled the same way a compare samples each side, reported as a median ± spread per metric
+with no deltas and no verdicts. It answers "what are my numbers right now?" — and, run against an
+unchanged target, "how noisy is this machine?"
 
 ```bash
 npm run bench:measure -- --prepare "npm run -s build"   # the working tree
 npm run bench:measure -- main                           # a git ref, in a temp worktree
 ```
 
-With no target it measures the working tree in place, which makes the `--prepare` override
-mandatory for the same reason it is on an in-place compare: the configured prepare runs `npm ci`,
-which is right for a fresh worktree and wrong for your working tree. A git ref needs no override.
+With no target it measures the working tree in place, which makes the `--prepare` override mandatory
+for the same reason it is on an in-place compare: the configured prepare runs `npm ci`, which is
+right for a fresh worktree and wrong for your working tree. A git ref needs no override.
 
 ### Reading the noise floor
 
 Sampling one unchanged target reports dispersion that no code change can explain, so the spread
-column is the machine's noise floor. Read it before trusting a small delta from a compare, and
-raise `--samples` when a verdict gates anything:
+column is the machine's noise floor. Read it before trusting a small delta from a compare, and raise
+`--samples` when a verdict gates anything:
 
 ```bash
 npm run bench:measure -- --prepare "npm run -s build" --samples 15
@@ -119,8 +119,8 @@ Some benchmarks are near-zero-variance — `many.despawn_all` self-compared with
 ## Comparing two versions
 
 `npm run bench` is gymrat's `compare` and needs the [gymrat setup](#gymrat-setup) above. Its mitata
-adapter reads the JSON report and emits
-`<group>.<benchmark>/time` and `<group>.<benchmark>/heap` metrics.
+adapter reads the JSON report and emits `<group>.<benchmark>/time` and `<group>.<benchmark>/heap`
+metrics.
 
 ### Two git refs
 
@@ -190,9 +190,9 @@ is identical on every run.
 
 ## Coverage
 
-27 of the original suite's 95 timed benchmarks are ported. The rest are blocked on API that this port
-does not have yet; the phase column names the port-roadmap phase that introduces it — phase 4 is
-bitmasks and filters, phase 5 is resources and relations.
+27 of the original suite's 95 timed benchmarks are ported. The rest are blocked on API that this
+port does not have yet; the phase column names the port-roadmap phase that introduces it — phase 4
+is bitmasks and filters, phase 5 is resources and relations.
 
 **Ported** means the benchmark runs the same operations in the same order and volumes as its Lua
 original. **Adapted** means it does the same work, but reaching it required a deliberate departure

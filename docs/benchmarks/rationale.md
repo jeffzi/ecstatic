@@ -9,14 +9,14 @@ states its teardown once in its intro.
 ## Overview
 
 This is a **regression-detection benchmark suite** for ecstatic, an entity component system (ECS),
-running on Node (V8) via
-[mitata](https://github.com/evanwashere/mitata). The goal is catching performance regressions
-between ecstatic releases, not comparing ecstatic against other ECS frameworks.
+running on Node (V8) via [mitata](https://github.com/evanwashere/mitata). The goal is catching
+performance regressions between ecstatic releases, not comparing ecstatic against other ECS
+frameworks.
 
-Each benchmark targets a specific ecstatic code path. A regression rarely moves a single number —
-a slowdown in `each()` moves all nine iteration benchmarks — but the set that moves narrows where
-it lives. A change confined to `deferred_despawn` and `many.despawn_half` points at the batch
-despawn path; one that moves every `soa_*` benchmark points at the iteration view.
+Each benchmark targets a specific ecstatic code path. A regression rarely moves a single number — a
+slowdown in `each()` moves all nine iteration benchmarks — but the set that moves narrows where it
+lives. A change confined to `deferred_despawn` and `many.despawn_half` points at the batch despawn
+path; one that moves every `soa_*` benchmark points at the iteration view.
 
 **Benchmarks are keyed to API forms and workload shapes, not to the current implementation.** The
 suite doubles as the fixed contract for benchmark-driven optimization passes: during such a pass the
@@ -84,8 +84,8 @@ through a view bound once per row, so a read or write costs a column lookup and 
 resolution. The field-count scaling benchmarks
 ([`soa_1field`](specifications/iteration.md#soa_1field)..[`soa_10field`](specifications/iteration.md#soa_10field))
 cover the only variable there: how many fields the callback touches per entity. The `get()`/`set()`
-functions are a different path: they unpack an entity ID to its index, validate liveness under
-debug builds, and resolve the component column with its error checks, on every call. The
+functions are a different path: they unpack an entity ID to its index, validate liveness under debug
+builds, and resolve the component column with its error checks, on every call. The
 [access benchmarks](specifications/access.md) cover this resolve-and-read/write path with scaling
 from 1 to 4 fields and both the field-descriptor and component-record `set` overloads.
 
@@ -96,9 +96,9 @@ eliminates an entire benchmark category that most ECS suites require.
 **A clean world is not the world that ships.** Fresh, front-to-back storage is the easiest case and
 the least representative one: real game worlds churn for hours, and swap-and-pop leaves the dense
 array scrambled. [`post_churn_throughput`](specifications/iteration.md#post_churn_throughput)
-therefore pairs with `throughput` on a deliberately fragmented world, so a regression in swap-and-pop
-reorganization or freelist recycling has somewhere to show up. Inspired by the `IteratePathological`
-benchmark in [EnTT](https://github.com/skypjack/entt), a C++ ECS library.
+therefore pairs with `throughput` on a deliberately fragmented world, so a regression in
+swap-and-pop reorganization or freelist recycling has somewhere to show up. Inspired by the
+`IteratePathological` benchmark in [EnTT](https://github.com/skypjack/entt), a C++ ECS library.
 
 **Removing everything is a special case, so it cannot be the only one measured.** `many.despawn` and
 `many.despawn_all` both clear the whole archetype, and the fill pass that back-fills freed slots is

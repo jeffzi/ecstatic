@@ -66,8 +66,8 @@ churn. Inspired by the `IteratePathological` benchmark in EnTT, a C++ ECS librar
 
 ## each_chained
 
-**Purpose:** Measure per-pass overhead when 4 sequential `each()` calls propagate values
-A → B → C → D → E.
+**Purpose:** Measure per-pass overhead when 4 sequential `each()` calls propagate values A → B → C →
+D → E.
 
 | Property | Value                                      |
 | -------- | ------------------------------------------ |
@@ -149,10 +149,11 @@ dead.length = 0
 collect-then-flush alternative, where systems mark the dead into a reused buffer and a cleanup pass
 flushes them after the loop. The buffer is emptied after each flush rather than replaced, which is
 required for correctness: IDs left behind would be handed to the next iteration's `despawnMany` as
-already-dead entities. The flush input is also what distinguishes this from [`many.despawn_half`](batch.md#despawn_half).
-That benchmark shuffles its ID list to defeat sequential access, while IDs collected during `each()`
-arrive in descending dense order, so the flush's generation checks and freelist pushes walk the
-entity arrays sequentially — the input shape this idiom actually produces in a frame.
+already-dead entities. The flush input is also what distinguishes this from
+[`many.despawn_half`](batch.md#despawn_half). That benchmark shuffles its ID list to defeat
+sequential access, while IDs collected during `each()` arrive in descending dense order, so the
+flush's generation checks and freelist pushes walk the entity arrays sequentially — the input shape
+this idiom actually produces in a frame.
 
 ---
 
@@ -231,5 +232,5 @@ cache-line effects as field count grows.
 each(storage, (e) => sink += e.F10.a + e.F10.b + ... + e.F10.j)
 ```
 
-**Rationale:** Ten array reads per entity, one from each of ten separate column arrays. Completes the
-field-count scaling curve from 1 to 10.
+**Rationale:** Ten array reads per entity, one from each of ten separate column arrays. Completes
+the field-count scaling curve from 1 to 10.
