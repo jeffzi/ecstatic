@@ -42,8 +42,12 @@ function relationSourceCleanup(storage: Storage, row: number, index: number): vo
   const relDescriptors = storage.relationDescriptors;
   const reverseMap = storage.world.reverseMap;
   for (let ri = 0; ri < storage.relationN; ri++) {
-    const targetId = relCols[ri]![row]!;
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- ri < storage.relationN ≤ relCols.length
+    const targetCol = relCols[ri]!;
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- row < storage.n ≤ targetCol.length
+    const targetId = targetCol[row]!;
     if (targetId !== 0) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- ri < storage.relationN ≤ relDescriptors.length
       reverseRemove(reverseMap, relDescriptors[ri]!, entityIndex(targetId), index);
     }
   }
@@ -58,7 +62,31 @@ function relationTargetCleanup(world: WorldState, index: number): void {
   if (index <= world.maxTargetIndex) {
     const reverseMap = world.reverseMap;
     for (const rel of world.relations) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- rel registered in reverseMap at world init
       reverseMap.get(rel)!.delete(index);
+    }
+  }
+}
+
+/**
+ * Bulk target cleanup: for each world relation, delete every dying entity's
+ * index from the reverse map. `getIndex` resolves the k-th entity's index;
+ * the `maxTarget` watermark skips entities above the target range.
+ */
+function bulkTargetCleanup(
+  world: WorldState,
+  count: number,
+  getIndex: (k: number) => number,
+): void {
+  if (world.relations.length === 0) return;
+  const maxTarget = world.maxTargetIndex;
+  for (const rel of world.relations) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- rel registered in reverseMap at world init
+    const relMap = world.reverseMap.get(rel)!;
+    for (let k = 0; k < count; k++) {
+      const index = getIndex(k);
+      if (index > maxTarget) continue;
+      relMap.delete(index);
     }
   }
 }
@@ -95,24 +123,16 @@ function compactAndFreeMarked(storage: Storage, indices: number[], count: number
   if (storage.relationN > 0) {
     const sparse = world.sparse;
     for (let k = 0; k < count; k++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- k < count ≤ indices.length
       const index = indices[k]!;
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- index is a live entity index
       relationSourceCleanup(storage, sparse[index]!, index);
     }
   }
   // Target cleanup: relations-outer with the watermark hoisted, so the
   // per-relation bucket map is fetched once per relation, not per entity.
-  if (world.relations.length > 0) {
-    const maxTarget = world.maxTargetIndex;
-    for (const rel of world.relations) {
-      const relMap = world.reverseMap.get(rel)!;
-      for (let k = 0; k < count; k++) {
-        const index = indices[k]!;
-        if (index <= maxTarget) {
-          relMap.delete(index);
-        }
-      }
-    }
-  }
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- k < count ≤ indices.length
+  bulkTargetCleanup(world, count, (k) => indices[k]!);
 
   if (boundary !== 0) {
     fillFreedSlots(storage, indices, count, boundary);
@@ -124,7 +144,9 @@ function compactAndFreeMarked(storage: Storage, indices: number[], count: number
   const sparse = world.sparse;
   let freeHead = world.freeHead;
   for (let k = 0; k < count; k++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- k < count ≤ indices.length
     const index = indices[k]!;
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- index is a live entity index
     generation[index] = nextGeneration(generation[index]!, index);
     sparse[index] = freeHead;
     freeHead = index;
@@ -154,26 +176,31 @@ function fillFreedSlots(
   let last = storage.n - 1;
 
   for (let k = 0; k < count; k++) {
-    const di = sparse[indices[k]!]!;
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- k < count ≤ indices.length
+    const idx = indices[k]!;
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- idx is a live entity index
+    const di = sparse[idx]!;
     if (di < boundary) {
       // Bounded scan: legitimate stops are always at a survivor at or above
       // the boundary; walking past it means the invariant is broken, and
       // erroring beats an unbounded scan.
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- last < entities.length
       while (last >= boundary && entityArch[entityIndex(entities[last]!)] === undefined) {
         last -= 1;
       }
       if (last < boundary) {
         throw new Error("despawnMany: compaction invariant violated");
       }
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- last ≥ boundary (checked above)
       entities[di] = entities[last]!;
       for (const col of storage.flatColumns) {
         col[di] = col[last];
       }
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- last is a valid dense index
       storage.mask[di] = storage.mask[last]!;
-      if (storage.matchers.length !== 0) {
-        for (const matched of storage.matcherMatched) {
-          matched[di] = matched[last]!;
-        }
+      for (const matched of storage.matcherMatched) {
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- last is a valid dense index
+        matched[di] = matched[last]!;
       }
       sparse[entityIndex(entities[di])] = di;
       last -= 1;
@@ -321,28 +348,20 @@ function despawnManyStorageNoIds(storage: Storage): void {
   // sparse links the reverse map is keyed against.
   if (storage.relationN > 0) {
     for (let row = 0; row < oldN; row++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- row < oldN ≤ entities.length
       relationSourceCleanup(storage, row, entityIndex(storage.entities[row]!));
     }
   }
   // Target cleanup runs even for relation-free storages — a dying entity may
-  // be the target of relations on OTHER archetypes. Relations-outer with the
-  // watermark hoisted: one bucket-map fetch per relation, not per entity.
-  if (world.relations.length > 0) {
-    const maxTarget = world.maxTargetIndex;
-    const reverseMap = world.reverseMap;
-    for (const rel of world.relations) {
-      const relMap = reverseMap.get(rel)!;
-      for (let row = 0; row < oldN; row++) {
-        const index = entityIndex(storage.entities[row]!);
-        if (index <= maxTarget) {
-          relMap.delete(index);
-        }
-      }
-    }
-  }
+  // be the target of relations on OTHER archetypes.
+  const entities = storage.entities;
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- row < oldN ≤ entities.length
+  bulkTargetCleanup(world, oldN, (row) => entityIndex(entities[row]!));
 
   for (let row = 0; row < oldN; row++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- row < oldN ≤ entities.length
     const index = entityIndex(storage.entities[row]!);
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- index is a live entity index
     generation[index] = nextGeneration(generation[index]!, index);
     storage.sparse[index] = freeHead;
     freeHead = index;
@@ -370,6 +389,7 @@ function despawnManyStorageWithIds(storage: Storage, ids: EntityId[]): void {
   // Restore already-cleared back-pointers so a retry with a fixed list works.
   const restoreAndThrow = (message: string): never => {
     for (let k = 0; k < validCount; k++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- k < validCount ≤ DESPAWN_LIVE_INDICES.length
       entityArch[DESPAWN_LIVE_INDICES[k]!] = storage;
     }
     throw new Error(message);
@@ -455,6 +475,7 @@ function despawnManyWorldWithIds(world: WorldState, ids: EntityId[]): void {
 }
 
 function despawnEntity(storage: Storage, index: number): void {
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- index is a live entity index
   const row = storage.sparse[index]!;
   const last = storage.n - 1;
 
@@ -466,19 +487,23 @@ function despawnEntity(storage: Storage, index: number): void {
   relationTargetCleanup(storage.world, index);
 
   if (row !== last) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- last < storage.n ≤ entities.length
     storage.entities[row] = storage.entities[last]!;
 
     for (const col of storage.flatColumns) {
       col[row] = col[last];
     }
 
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- last is a valid dense index
     storage.mask[row] = storage.mask[last]!;
     if (storage.matchers.length !== 0) {
       for (const matched of storage.matcherMatched) {
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- last is a valid dense index
         matched[row] = matched[last]!;
       }
     }
 
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- last < storage.n; row was swapped from last
     const lastEntityId = storage.entities[last]!;
     const swappedIndex = entityIndex(lastEntityId);
     storage.sparse[swappedIndex] = row;
@@ -495,6 +520,7 @@ function despawnEntity(storage: Storage, index: number): void {
 
   storage.world.entityArch[index] = undefined;
 
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- index is a live entity index
   storage.generation[index] = nextGeneration(storage.generation[index]!, index);
 
   // Push the index onto the LIFO freelist: the dead sparse slot holds the next pointer

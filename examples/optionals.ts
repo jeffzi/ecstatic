@@ -62,8 +62,11 @@ console.log(`eShielded stunned: ${has(enemies, eShielded, Stunned)}`);
 // Batch spawn: all entities get the same optional state at creation
 const shieldedIds = spawnMany(enemies, 3, { Shield: true, OnFire: true });
 console.log(`\nspawned ${shieldedIds.length} entities with Shield+OnFire enabled`);
-console.log(`first has Shield: ${has(enemies, shieldedIds[0]!, Shield)}`);
-console.log(`first shield hp (defaults): ${get(enemies, shieldedIds[0]!, Shield.hp)}`);
+const firstShielded = shieldedIds[0];
+if (firstShielded != null) {
+  console.log(`first has Shield: ${has(enemies, firstShielded, Shield)}`);
+  console.log(`first shield hp (defaults): ${get(enemies, firstShielded, Shield.hp)}`);
+}
 
 despawn(enemies, eShielded);
 despawnMany(enemies, shieldedIds);

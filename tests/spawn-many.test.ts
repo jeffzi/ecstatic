@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import { MAX_INDEX } from "../src/entity-id.js";
 import { alive, archetype, components, despawn, type EntityId, spawnMany } from "../src/index.js";
@@ -37,10 +37,11 @@ describe("spawnMany", () => {
     spawnMany(storage, 2);
 
     // Position is required — defaults must be written at spawn time
-    const posSoa = storage.columns.get(Position)!;
+    const posSoa = storage.columns.get(Position);
+    assert(posSoa != null);
     for (let i = 0; i < 2; i++) {
-      expect(posSoa.x![i]).toBe(0);
-      expect(posSoa.y![i]).toBe(0);
+      expect(posSoa.x?.[i]).toBe(0);
+      expect(posSoa.y?.[i]).toBe(0);
     }
   });
 
@@ -54,10 +55,12 @@ describe("spawnMany", () => {
         [Position.__ecstatic_name]: { x: 10, y: 20 },
       });
 
-      const posSoa = storage.columns.get(Position)!;
+      const posSoa = storage.columns.get(Position);
+
+      assert(posSoa != null);
       for (let i = 0; i < 2; i++) {
-        expect(posSoa.x![i]).toBe(10);
-        expect(posSoa.y![i]).toBe(20);
+        expect(posSoa.x?.[i]).toBe(10);
+        expect(posSoa.y?.[i]).toBe(20);
       }
     });
 
@@ -70,10 +73,12 @@ describe("spawnMany", () => {
         [Position.__ecstatic_name]: { x: 10 },
       });
 
-      const posSoa = storage.columns.get(Position)!;
+      const posSoa = storage.columns.get(Position);
+
+      assert(posSoa != null);
       for (let i = 0; i < 2; i++) {
-        expect(posSoa.x![i]).toBe(10);
-        expect(posSoa.y![i]).toBe(0);
+        expect(posSoa.x?.[i]).toBe(10);
+        expect(posSoa.y?.[i]).toBe(0);
       }
     });
   });
@@ -84,9 +89,13 @@ describe("spawnMany", () => {
       const Arch = archetype([Position]);
       const storage = register(world, Arch);
 
-      const id1 = spawnMany(storage, 1)[0]!;
-      const id2 = spawnMany(storage, 1)[0]!;
-      const id3 = spawnMany(storage, 1)[0]!;
+      const id1 = spawnMany(storage, 1)[0];
+
+      assert(id1 != null);
+      const id2 = spawnMany(storage, 1)[0];
+      assert(id2 != null);
+      const id3 = spawnMany(storage, 1)[0];
+      assert(id3 != null);
 
       // Despawn id1 and id2, creating freelist entries
       despawn(storage, id1);
@@ -95,8 +104,12 @@ describe("spawnMany", () => {
       // spawnMany should reuse those slots
       const newIds = spawnMany(storage, 2);
 
-      expect(alive(storage, newIds[0]!)).toBe(true);
-      expect(alive(storage, newIds[1]!)).toBe(true);
+      const newId0 = newIds[0];
+      assert(newId0 != null);
+      const newId1 = newIds[1];
+      assert(newId1 != null);
+      expect(alive(storage, newId0)).toBe(true);
+      expect(alive(storage, newId1)).toBe(true);
 
       // The old despawned IDs are stale (generation changed)
       expect(alive(storage, id1)).toBe(false);
@@ -110,11 +123,14 @@ describe("spawnMany", () => {
       const Arch = archetype([Position]);
       const storage = register(world, Arch);
 
-      const id = spawnMany(storage, 1)[0]!;
+      const id = spawnMany(storage, 1)[0];
+
+      assert(id != null);
       despawn(storage, id);
 
       // Spawn a new entity in the freed slot (new generation)
-      const newId = spawnMany(storage, 1)[0]!;
+      const newId = spawnMany(storage, 1)[0];
+      assert(newId != null);
 
       expect(alive(storage, id)).toBe(false);
       expect(alive(storage, newId)).toBe(true);
@@ -125,9 +141,13 @@ describe("spawnMany", () => {
       const Arch = archetype([Position]);
       const storage = register(world, Arch);
 
-      const id1 = spawnMany(storage, 1)[0]!;
-      const id2 = spawnMany(storage, 1)[0]!;
-      const id3 = spawnMany(storage, 1)[0]!;
+      const id1 = spawnMany(storage, 1)[0];
+
+      assert(id1 != null);
+      const id2 = spawnMany(storage, 1)[0];
+      assert(id2 != null);
+      const id3 = spawnMany(storage, 1)[0];
+      assert(id3 != null);
 
       // Despawn only id1
       despawn(storage, id1);
@@ -135,8 +155,12 @@ describe("spawnMany", () => {
       // spawnMany 2: first comes from freelist (id1's slot), second is fresh
       const newIds = spawnMany(storage, 2);
 
-      expect(alive(storage, newIds[0]!)).toBe(true);
-      expect(alive(storage, newIds[1]!)).toBe(true);
+      const newId0 = newIds[0];
+      assert(newId0 != null);
+      const newId1 = newIds[1];
+      assert(newId1 != null);
+      expect(alive(storage, newId0)).toBe(true);
+      expect(alive(storage, newId1)).toBe(true);
 
       expect(alive(storage, id1)).toBe(false);
       expect(alive(storage, id2)).toBe(true);
@@ -149,8 +173,10 @@ describe("spawnMany", () => {
       const storage = register(world, Arch);
 
       // Despawn some entities to seed the freelist
-      const old1 = spawnMany(storage, 1)[0]!;
-      const old2 = spawnMany(storage, 1)[0]!;
+      const old1 = spawnMany(storage, 1)[0];
+      assert(old1 != null);
+      const old2 = spawnMany(storage, 1)[0];
+      assert(old2 != null);
       spawnMany(storage, 1); // retained entity — keeps archetype non-empty
       despawn(storage, old1);
       despawn(storage, old2);
@@ -225,8 +251,12 @@ describe("spawnMany", () => {
 
       expect(result).toBe(buf);
 
-      expect(alive(storage, buf[0]!)).toBe(true);
-      expect(alive(storage, buf[1]!)).toBe(true);
+      const bufId0 = buf[0];
+      assert(bufId0 != null);
+      const bufId1 = buf[1];
+      assert(bufId1 != null);
+      expect(alive(storage, bufId0)).toBe(true);
+      expect(alive(storage, bufId1)).toBe(true);
 
       expect(buf).toHaveLength(2);
     });
@@ -250,12 +280,16 @@ describe("spawnMany", () => {
     it("fills out with the same ids the non-out overload returns for the same world state", () => {
       const expectedWorld = createWorld();
       const expectedStorage = register(expectedWorld, archetype([Position]));
-      despawn(expectedStorage, spawnMany(expectedStorage, 2)[1]!);
+      const expectedToDespawn = spawnMany(expectedStorage, 2)[1];
+      assert(expectedToDespawn != null);
+      despawn(expectedStorage, expectedToDespawn);
       const expectedIds = spawnMany(expectedStorage, 3);
 
       const world = createWorld();
       const storage = register(world, archetype([Position]));
-      despawn(storage, spawnMany(storage, 2)[1]!);
+      const toDespawn = spawnMany(storage, 2)[1];
+      assert(toDespawn != null);
+      despawn(storage, toDespawn);
       const buf: EntityId[] = [];
 
       const ids = spawnMany(storage, 3, buf);
@@ -284,9 +318,11 @@ describe("spawnMany", () => {
 
       spawnMany(storage, 2, { [Position.__ecstatic_name]: { x: 42 } });
 
-      const posSoa = storage.columns.get(Position)!;
+      const posSoa = storage.columns.get(Position);
+
+      assert(posSoa != null);
       for (let i = 0; i < 2; i++) {
-        expect(posSoa.x![i]).toBe(42);
+        expect(posSoa.x?.[i]).toBe(42);
       }
     });
   });
@@ -305,10 +341,10 @@ describe("spawnMany", () => {
       const beforeNextIndex = world.nextIndex;
       const beforeFreeHead = world.freeHead;
 
-      // Act: spawnMany needs 3 fresh slots — overflows.
+      // spawnMany needs 3 fresh slots — overflows.
       expect(() => {
         spawnMany(storage, 3);
-      }).toThrow();
+      }).toThrow("entity index overflow");
 
       // World must be completely unchanged.
       expect(storage.n).toBe(beforeN);
@@ -322,15 +358,17 @@ describe("spawnMany", () => {
       const storage = register(world, Arch);
 
       // Build a 2-slot freelist by spawning then despawning 2 entities.
-      const tmp1 = spawnMany(storage, 1)[0]!;
-      const tmp2 = spawnMany(storage, 1)[0]!;
+      const tmp1 = spawnMany(storage, 1)[0];
+      assert(tmp1 != null);
+      const tmp2 = spawnMany(storage, 1)[0];
+      assert(tmp2 != null);
       despawn(storage, tmp1);
       despawn(storage, tmp2);
 
       // Now push nextIndex to the ceiling — freelist reuse must still succeed.
       world.nextIndex = MAX_INDEX;
 
-      // Act: spawn 2 — fits entirely in the freelist.
+      // spawn 2 — fits entirely in the freelist.
       expect(() => {
         spawnMany(storage, 2);
       }).not.toThrow();
@@ -343,7 +381,8 @@ describe("spawnMany", () => {
       const storage = register(world, Arch);
 
       // Build a 1-slot freelist.
-      const tmp = spawnMany(storage, 1)[0]!;
+      const tmp = spawnMany(storage, 1)[0];
+      assert(tmp != null);
       despawn(storage, tmp);
 
       // Simulate nextIndex one step below the ceiling: 1 fresh slot is possible, but 2 are not.
@@ -353,10 +392,10 @@ describe("spawnMany", () => {
       const beforeNextIndex = world.nextIndex;
       const beforeFreeHead = world.freeHead;
 
-      // Act: spawn 3 — freelist covers 1, needs 2 fresh → overflows.
+      // spawn 3 — freelist covers 1, needs 2 fresh → overflows.
       expect(() => {
         spawnMany(storage, 3);
-      }).toThrow();
+      }).toThrow("entity index overflow");
 
       // World must be completely unchanged.
       expect(storage.n).toBe(beforeN);
@@ -370,13 +409,14 @@ describe("spawnMany", () => {
       const storage = register(world, Arch);
 
       // Build a 1-slot freelist.
-      const tmp = spawnMany(storage, 1)[0]!;
+      const tmp = spawnMany(storage, 1)[0];
+      assert(tmp != null);
       despawn(storage, tmp);
 
       // Place nextIndex two steps below the ceiling: 2 fresh slots fit.
       world.nextIndex = MAX_INDEX - 2;
 
-      // Act: spawn 3 — freelist covers 1, needs 2 fresh → fits.
+      // spawn 3 — freelist covers 1, needs 2 fresh → fits.
       expect(() => {
         spawnMany(storage, 3);
       }).not.toThrow();

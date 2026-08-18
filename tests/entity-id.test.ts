@@ -46,12 +46,10 @@ describe("generational IDs", () => {
   });
 
   it("rejects fresh entity indices at the derived index limit", () => {
-    // Should not throw at MAX_INDEX - 1
     expect(() => {
       assertEntityIndex(MAX_INDEX - 1);
     }).not.toThrow();
 
-    // Should throw at MAX_INDEX, with a message mentioning MAX_INDEX - 1
     expect(() => {
       assertEntityIndex(MAX_INDEX);
     }).toThrow(new RegExp(String(MAX_INDEX - 1)));

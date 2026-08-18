@@ -5,10 +5,10 @@ Source: [`benchmarks/entity-bench.ts`](../../../benchmarks/entity-bench.ts)
 Shared constants (`N`, the 5x world, `DT`) are defined in [parameters](parameters.md); the `sink`
 accumulator is explained in [rationale](../rationale.md#conventions).
 
-Single-entity lifecycle calls, one at a time. No benchmark here uses a warmup pass. `spawn_recycle` and `alive_check` leave the population
-as they found it and reuse one world across samples. The rest change it, so the suite's
-`manualBench` shim rebuilds their world before each iteration and destroys it after, both outside
-the clock. Every benchmark here ends with `destroyWorld()`.
+Single-entity lifecycle calls, one at a time. No benchmark here uses a warmup pass. `spawn_recycle`
+and `alive_check` leave the population as they found it and reuse one world across samples. The rest
+change it, so the suite's `manualBench` shim rebuilds their world before each iteration and destroys
+it after, both outside the clock. Every benchmark here ends with `destroyWorld()`.
 
 ## spawn_empty
 
@@ -71,10 +71,10 @@ for (let i = 0; i < N; i++) {
 ```
 
 **Rationale:** Identical workload to `spawn_with_data` except for where the overrides object comes
-from. `spawn_with_data` builds a fresh nested literal on every call; this benchmark hoists it out of the
-loop. The delta is what constructing those objects costs — two allocations per spawn that the caller
-can avoid entirely. The hoist stays inside the timed body, so the one allocation it does make is
-still counted.
+from. `spawn_with_data` builds a fresh nested literal on every call; this benchmark hoists it out of
+the loop. The delta is what constructing those objects costs — two allocations per spawn that the
+caller can avoid entirely. The hoist stays inside the timed body, so the one allocation it does make
+is still counted.
 
 ---
 
@@ -147,6 +147,6 @@ for (let i = 0; i < 2 * N; i++) {
 
 **Rationale:** Half the IDs are stale (generation mismatch). Tests the generational ID check path
 with unpredictable branch patterns, preventing branch prediction from hiding lookup cost. The
-world-scoped `alive(world, id)` overload needs no separate benchmark: both forms share one implementation
-— a single generation-array compare keyed by the unpacked entity index — so this benchmark pins that path
-for both.
+world-scoped `alive(world, id)` overload needs no separate benchmark: both forms share one
+implementation — a single generation-array compare keyed by the unpacked entity index — so this
+benchmark pins that path for both.

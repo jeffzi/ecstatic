@@ -26,18 +26,19 @@ import { reverseInsert, reverseRemove } from "./reverse-map.js";
  * means "no target" and is skipped; a dead previous target needs no removal —
  * despawn already cleaned its bucket.
  */
-function removePreviousTarget(
-  world: World,
-  rel: ComponentDescriptor,
-  targetColumn: Float64Array,
-  di: number,
-  sourceIndex: number,
-): void {
-  const prevTarget = targetColumn[di]!;
-  if (prevTarget !== 0) {
+interface LinkCtx {
+  world: World;
+  rel: ComponentDescriptor;
+  targetColumn: Float64Array;
+  di: number;
+}
+
+function removePreviousTarget(ctx: LinkCtx, sourceIndex: number): void {
+  const prevTarget = ctx.targetColumn[ctx.di];
+  if (prevTarget !== undefined && prevTarget !== 0) {
     const prevTargetIndex = entityIndex(prevTarget);
-    if (world.generation[prevTargetIndex] === prevTarget) {
-      reverseRemove(world.reverseMap, rel, prevTargetIndex, sourceIndex);
+    if (ctx.world.generation[prevTargetIndex] === prevTarget) {
+      reverseRemove(ctx.world.reverseMap, ctx.rel, prevTargetIndex, sourceIndex);
     }
   }
 }
@@ -70,6 +71,7 @@ function resolveTargetColumn(storage: Storage, rel: ComponentDescriptor): Float6
  * @throws If the relation is not on the entity's archetype
  * @throws If DEBUG and the source or target ID is stale
  */
+/* oxlint-disable max-params -- public API: link overloads */
 export function link<R extends Relation>(
   world: World,
   id: EntityId,
@@ -84,9 +86,12 @@ export function link(
   target: EntityId,
   values?: object,
 ): void {
+  /* oxlint-enable max-params */
   const sourceIndex = entityIndex(id);
   const storage = resolveEntityArch(world, id);
-  const di = storage.sparse[sourceIndex]!;
+  const di = storage.sparse[sourceIndex];
+  /* istanbul ignore next */
+  if (di === undefined) throw new Error("invariant: entity missing from sparse array");
 
   const targetIndex = entityIndex(target);
   if (DEBUG && world.generation[targetIndex] !== target) {
@@ -94,7 +99,7 @@ export function link(
   }
 
   const targetColumn = resolveTargetColumn(storage, rel);
-  removePreviousTarget(world, rel, targetColumn, di, sourceIndex);
+  removePreviousTarget({ world, rel, targetColumn, di }, sourceIndex);
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the public overload types values as the relation's partial field record
   const fieldValues = values as Record<string, unknown> | undefined;
@@ -104,12 +109,14 @@ export function link(
     enableOne(storage, di, rel, fieldValues);
   } else if (fieldValues !== undefined) {
     // Required relation: just write the data fields (always "enabled")
-    const soa = storage.columns.get(rel)!;
+    const soa = storage.columns.get(rel);
+    /* istanbul ignore next */
+    if (soa === undefined) throw new Error("invariant: relation missing from columns map");
     writeFieldOverrides(soa, rel.__ecstatic_fields, di, fieldValues);
   }
 
   targetColumn[di] = target;
-  reverseInsert(world, rel, targetIndex, storage, sourceIndex);
+  reverseInsert({ state: world, rel }, targetIndex, storage, sourceIndex);
 }
 
 /**
@@ -128,7 +135,9 @@ export function unlink(world: World, id: EntityId, rel: Relation): void;
 export function unlink(world: World, id: EntityId, rel: ComponentDescriptor): void {
   const sourceIndex = entityIndex(id);
   const storage = resolveEntityArch(world, id);
-  const di = storage.sparse[sourceIndex]!;
+  const di = storage.sparse[sourceIndex];
+  /* istanbul ignore next */
+  if (di === undefined) throw new Error("invariant: entity missing from sparse array");
 
   const targetColumn = resolveTargetColumn(storage, rel);
 
@@ -137,7 +146,7 @@ export function unlink(world: World, id: EntityId, rel: ComponentDescriptor): vo
     throw new Error(errorUnlinkRequired(rel.__ecstatic_name));
   }
 
-  removePreviousTarget(world, rel, targetColumn, di, sourceIndex);
+  removePreviousTarget({ world, rel, targetColumn, di }, sourceIndex);
 
   targetColumn[di] = 0;
   disableOne(storage, di, rel);

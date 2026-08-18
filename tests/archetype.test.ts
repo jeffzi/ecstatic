@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import { archetype } from "../src/archetype.js";
 import { type ComponentDescriptor, components } from "../src/component.js";
@@ -128,7 +128,8 @@ describe("archetype", () => {
       const arch = archetype([A], [B]);
       const bit = arch.optionalBits.get("ArchTestNotBits_B");
       const notBit = arch.optionalNotBits.get("ArchTestNotBits_B");
-      expect(notBit).toBe(~bit! >>> 0);
+      assert(bit != null);
+      expect(notBit).toBe(~bit >>> 0);
     });
 
     it("provides optionalBitLookup keyed by descriptor", () => {
@@ -149,7 +150,6 @@ describe("archetype", () => {
       const { ReservedEntities: Comp } = components({
         ReservedEntities: { x: 0 },
       });
-      // Rename the descriptor to have reserved name
       asMutableDescriptor(Comp).__ecstatic_name = "entities";
 
       expect(() => {
@@ -175,10 +175,11 @@ describe("archetype", () => {
         const { [`Reserved_${name}`]: Comp } = components({
           [`Reserved_${name}`]: { x: 0 },
         });
+        assert(Comp != null);
         asMutableDescriptor(Comp).__ecstatic_name = name;
 
         expect(() => {
-          archetype([Comp!]);
+          archetype([Comp]);
         }).toThrow(`component name ${name} is reserved on archetypes`);
       },
     );
@@ -193,10 +194,11 @@ describe("archetype", () => {
       const { [`Reserved_${name}`]: Comp } = components({
         [`Reserved_${name}`]: { x: 0 },
       });
+      assert(Comp != null);
       asMutableDescriptor(Comp).__ecstatic_name = name;
 
       expect(() => {
-        archetype([Comp!]);
+        archetype([Comp]);
       }).toThrow(`component name ${name} is reserved on archetypes`);
     });
 
@@ -258,7 +260,8 @@ describe("archetype", () => {
         const { [i]: Comp } = components({
           [i]: { val: i },
         });
-        optionals.push(Comp!);
+        assert(Comp != null);
+        optionals.push(Comp);
       }
 
       expect(() => {

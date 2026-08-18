@@ -214,7 +214,9 @@ function fillFromDefaults(data: Record<string, unknown>, meta: ResourceMeta): vo
   const fields = meta.fields;
   const defaults = meta.defaults;
   for (let i = 0; i < fields.length; i++) {
-    const field = fields[i]!;
+    const field = fields[i];
+    /* istanbul ignore next */
+    if (field === undefined) throw new Error("invariant: field index out of bounds");
     data[field] = cloneValue(defaults[field]);
   }
 }

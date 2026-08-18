@@ -52,6 +52,7 @@ registerBench("iteration.post_churn_throughput", function* () {
       }
     });
     for (let k = 0; k < victims.length; k++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- k < victims.length
       despawn(storage, victims[k]!);
     }
     for (let k = 0; k < victims.length; k++) {

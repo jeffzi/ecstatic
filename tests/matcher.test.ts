@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import {
   archetype,
@@ -75,7 +75,8 @@ describe("matcher registration", () => {
     });
 
     expect(new Set(visited)).toStrictEqual(new Set([id1, id3]));
-    const matcher = storage.matchers[0]!;
+    const matcher = storage.matchers[0];
+    assert(matcher != null);
     expect(matcher.matched[rowOf(storage, id1)]).toBe(1);
     expect(matcher.matched[rowOf(storage, id3)]).toBe(1);
   });
@@ -91,7 +92,9 @@ describe("matched[] synchronization", () => {
     // Grow past the initial capacity of 8.
     spawnMany(storage, 20);
 
-    const matcher = storage.matchers[0]!;
+    const matcher = storage.matchers[0];
+
+    assert(matcher != null);
     expect(storage.matcherMatched[0]).toBe(matcher.matched);
     expect(matcher.matched.length).toBe(storage.entities.length);
     expect(matcher.matched[rowOf(storage, id1)]).toBe(1);
@@ -159,11 +162,21 @@ describe("matched[] synchronization", () => {
     each(storage, { all: [Stunned] }, () => {});
 
     const ids = spawnMany(storage, 6);
-    enable(storage, ids[4]!, Stunned);
-    enable(storage, ids[5]!, Stunned);
+    const id4 = ids[4];
+    assert(id4 != null);
+    const id5 = ids[5];
+    assert(id5 != null);
+    enable(storage, id4, Stunned);
+    enable(storage, id5, Stunned);
 
     // Free early rows so the tail survivors compact down into them.
-    despawnMany(storage, [ids[0]!, ids[1]!, ids[2]!]);
+    const d0 = ids[0];
+    assert(d0 != null);
+    const d1 = ids[1];
+    assert(d1 != null);
+    const d2 = ids[2];
+    assert(d2 != null);
+    despawnMany(storage, [d0, d1, d2]);
 
     const visited: number[] = [];
     each(storage, { all: [Stunned] }, (e) => {

@@ -32,7 +32,6 @@ describe("destroyWorld", () => {
 
     expect(storage1.n).toBe(0);
     expect(storage2.n).toBe(0);
-    // Storages are disconnected from the destroyed world
     expect(storage1.world).toBeUndefined();
     expect(storage2.world).toBeUndefined();
   });
@@ -75,7 +74,7 @@ describe("destroyed world guards", () => {
 
     expect(() => {
       register(world, Arch);
-    }).toThrow();
+    }).toThrow("world is destroyed");
   });
 
   it("getStorage errors on destroyed world", () => {
@@ -87,7 +86,7 @@ describe("destroyed world guards", () => {
 
     expect(() => {
       getStorage(world, storage.archetype);
-    }).toThrow();
+    }).toThrow("world is destroyed");
   });
 
   it("is a no-op when destroyWorld is called twice", () => {

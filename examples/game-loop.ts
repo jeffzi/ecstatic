@@ -78,8 +78,8 @@ function deathSystem(): void {
 
 function cleanupSystem(): void {
   for (let i = 0; i < despawnCount; i++) {
-    const id = despawnList[i]!;
-    if (alive(world, id)) {
+    const id = despawnList[i];
+    if (id != null && alive(world, id)) {
       despawn(world, id);
     }
   }

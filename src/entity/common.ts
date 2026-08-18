@@ -74,5 +74,6 @@ export function resolveEntityArch(storageOrWorld: Storage | WorldState, id: Enti
 
   // DEBUG's stale check guarantees the slot is occupied; under NDEBUG a
   // stale ID is the caller's bug (same contract as the spawn/despawn hot paths)
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- DEBUG guard above validates occupancy; NDEBUG treats stale access as caller error
   return storageOrWorld.entityArch[index]!;
 }

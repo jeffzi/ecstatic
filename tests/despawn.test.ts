@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import { entityIndex, initialEntityId, MAX_GEN, MAX_INDEX } from "../src/entity-id.js";
 import { alive, archetype, components, despawn, ref, spawn } from "../src/index.js";
@@ -41,13 +41,15 @@ describe("despawn", () => {
     // Remove middle entity — last entity (50,60) should swap into its index
     despawn(storage, id2);
 
-    const pos = storage.columns.get(Position)!;
+    const pos = storage.columns.get(Position);
+
+    assert(pos != null);
     // Dense row 0: original entity (10,20)
-    expect(pos.x![0]).toBe(10);
-    expect(pos.y![0]).toBe(20);
+    expect(pos.x?.[0]).toBe(10);
+    expect(pos.y?.[0]).toBe(20);
     // Dense row 1: swapped-in entity (50,60)
-    expect(pos.x![1]).toBe(50);
-    expect(pos.y![1]).toBe(60);
+    expect(pos.x?.[1]).toBe(50);
+    expect(pos.y?.[1]).toBe(60);
     expect(storage.n).toBe(2);
   });
 
@@ -237,7 +239,6 @@ describe("despawn safety checks", () => {
     const id = spawn(storage);
     const index = entityIndex(id);
 
-    // Force the slot to the last representable generation, then despawn it.
     const ceilingId = ((MAX_GEN - 1) * MAX_INDEX + index) as typeof id;
     world.generation[index] = ceilingId;
     storage.entities[0] = ceilingId;
@@ -262,9 +263,11 @@ describe("despawn safety checks", () => {
 
     despawn(storage, id1);
 
-    const col = storage.columns.get(RefComp)!;
+    const col = storage.columns.get(RefComp);
+
+    assert(col != null);
     // After swap-pop, tail slot (index 1) must be cleared to release the ref
-    expect(col.handle![1]).toBeUndefined();
+    expect(col.handle?.[1]).toBeUndefined();
   });
 
   it("world-form despawn is a no-op when entityArch[index] is unset", () => {
@@ -280,7 +283,6 @@ describe("despawn safety checks", () => {
     expect(() => {
       despawn(world, id);
     }).not.toThrow();
-    // Storage should be untouched
     expect(storage.n).toBe(1);
   });
 });

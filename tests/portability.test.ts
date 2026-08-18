@@ -1,7 +1,7 @@
 import { runInNewContext } from "node:vm";
 
 import { build, type BuildResult } from "esbuild";
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 interface VmEcs {
   components(defs: Record<string, Record<string, unknown>>): Record<string, unknown>;
@@ -31,7 +31,11 @@ function evalInBareContext(
   bundle: BuildResult,
   contextExtras: Record<string, unknown> = {},
 ): VmEcs {
-  const code = new TextDecoder().decode(bundle.outputFiles![0]!.contents);
+  const outputFiles = bundle.outputFiles;
+  assert(outputFiles != null);
+  const firstFile = outputFiles[0];
+  assert(firstFile != null);
+  const code = new TextDecoder().decode(firstFile.contents);
   const context: Record<string, unknown> = { ...contextExtras };
   runInNewContext(code, context);
   return (context as { ecstatic: VmEcs }).ecstatic;
@@ -66,8 +70,8 @@ describe("portability", () => {
       const visited: number[] = [];
       ecs.each(storage, (e) => {
         visited.push(e.id as unknown as number);
-        expect(e.PortVmPosition!.x).toBe(10);
-        expect(e.PortVmPosition!.y).toBe(20);
+        expect(e.PortVmPosition?.x).toBe(10);
+        expect(e.PortVmPosition?.y).toBe(20);
       });
 
       expect(visited).toStrictEqual([id]);
@@ -97,7 +101,7 @@ describe("portability", () => {
 
       expect(() => {
         ecs.get(storage, id, (Position as Record<string, unknown>).x);
-      }).toThrow();
+      }).toThrow("stale entity ID");
     });
   });
 
