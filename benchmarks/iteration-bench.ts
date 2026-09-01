@@ -20,7 +20,7 @@ export function sinkValue(): number {
   return sink;
 }
 
-registerBench("iteration.throughput", function* () {
+registerBench("iteration/throughput", function* () {
   const { world, trackedStorage: storage } = benchCreateWorld({ noBackground: true });
 
   const integrate = (): void => {
@@ -39,7 +39,7 @@ registerBench("iteration.throughput", function* () {
 // Same pass as throughput, but over a storage whose rows have been churned:
 // five rounds of despawning every third entity and respawning the same count
 // leave the freelist and row order fragmented the way a running game does.
-registerBench("iteration.post_churn_throughput", function* () {
+registerBench("iteration/post_churn_throughput", function* () {
   const { world, trackedStorage: storage } = benchCreateWorld({ noBackground: true });
 
   for (let round = 0; round < 5; round++) {
@@ -75,7 +75,7 @@ registerBench("iteration.post_churn_throughput", function* () {
 
 // Four dependent passes over one storage: each reads the column the previous
 // pass wrote. Four separate traversals, not one pass doing four assignments.
-registerBench("iteration.each_chained", function* () {
+registerBench("iteration/each_chained", function* () {
   const { world, storage } = makeBareWorld(chainArch);
 
   each(storage, (e) => {
@@ -102,7 +102,7 @@ registerBench("iteration.each_chained", function* () {
 
 // Despawns every second entity from inside the callback iterating it — the
 // swap-and-pop has to stay correct while the traversal is in flight.
-registerBench("iteration.each_with_despawn", function* () {
+registerBench("iteration/each_with_despawn", function* () {
   yield manualBench(
     () => {
       const ctx = benchCreateWorld({ noBackground: true });
@@ -124,7 +124,7 @@ registerBench("iteration.each_with_despawn", function* () {
 
 // The soa_* family varies only in how many fields of one component the pass
 // touches: 1, 2, 5, then 10. The spread shows what each extra column costs.
-registerBench("iteration.soa_1field", function* () {
+registerBench("iteration/soa_1field", function* () {
   const { world, storage } = makeBareWorld(soa1Arch);
 
   const pass = (): void => {
@@ -139,7 +139,7 @@ registerBench("iteration.soa_1field", function* () {
   destroyWorld(world);
 });
 
-registerBench("iteration.soa_2field", function* () {
+registerBench("iteration/soa_2field", function* () {
   const { world, storage } = makeBareWorld(soa2Arch);
 
   const pass = (): void => {
@@ -154,7 +154,7 @@ registerBench("iteration.soa_2field", function* () {
   destroyWorld(world);
 });
 
-registerBench("iteration.soa_5field", function* () {
+registerBench("iteration/soa_5field", function* () {
   const { world, storage } = makeBareWorld(soa5Arch);
 
   const pass = (): void => {
@@ -169,7 +169,7 @@ registerBench("iteration.soa_5field", function* () {
   destroyWorld(world);
 });
 
-registerBench("iteration.soa_10field", function* () {
+registerBench("iteration/soa_10field", function* () {
   const { world, storage } = makeBareWorld(soa10Arch);
 
   const pass = (): void => {
@@ -196,7 +196,7 @@ registerBench("iteration.soa_10field", function* () {
 
 // The deferred alternative to each_with_despawn: collect the doomed IDs during
 // the pass, then flush them in one batch once iteration is over.
-registerBench("iteration.deferred_despawn", function* () {
+registerBench("iteration/deferred_despawn", function* () {
   /**
    * Reused across iterations: the collect pass fills it and the flush empties
    * it. Emptying is not optional — leaving the IDs in place would hand

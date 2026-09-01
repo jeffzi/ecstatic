@@ -21,7 +21,7 @@ export function sinkValue(): number {
   return sink;
 }
 
-registerBench("entity.spawn_empty", function* () {
+registerBench("entity/spawn_empty", function* () {
   yield manualBench(
     () => {
       const ctx = benchCreateWorld();
@@ -35,7 +35,7 @@ registerBench("entity.spawn_empty", function* () {
   );
 });
 
-registerBench("entity.spawn_with_data", function* () {
+registerBench("entity/spawn_with_data", function* () {
   yield manualBench(
     () => {
       const ctx = benchCreateWorld();
@@ -52,7 +52,7 @@ registerBench("entity.spawn_with_data", function* () {
 // Same spawn as spawn_with_data, but the overrides object is allocated once and
 // passed by reference on every call — the delta is what building a fresh
 // override literal per spawn costs.
-registerBench("entity.spawn_indirect", function* () {
+registerBench("entity/spawn_indirect", function* () {
   yield manualBench(
     () => {
       const ctx = benchCreateWorld();
@@ -67,7 +67,7 @@ registerBench("entity.spawn_indirect", function* () {
   );
 });
 
-registerBench("entity.despawn", function* () {
+registerBench("entity/despawn", function* () {
   yield manualBench(
     () => benchCreateWorld(),
     ({ n, trackedStorage, tracked }) => {
@@ -82,7 +82,7 @@ registerBench("entity.despawn", function* () {
 // Net-neutral: despawns all N tracked entities, then spawns N back, so the
 // population is unchanged at the end of every iteration and the freelist is
 // exercised in its steady state.
-registerBench("entity.spawn_recycle", function* () {
+registerBench("entity/spawn_recycle", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
   yield timedBench(() => {
@@ -102,7 +102,7 @@ registerBench("entity.spawn_recycle", function* () {
 
 // Half the IDs checked are stale — the ones spawned and immediately despawned
 // during setup — so the generation comparison takes both outcomes.
-registerBench("entity.alive_check", function* () {
+registerBench("entity/alive_check", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
   const stale: EntityId[] = [];

@@ -15,7 +15,7 @@ frameworks.
 
 Each benchmark targets a specific ecstatic code path. A regression rarely moves a single number — a
 slowdown in `each()` moves all nine iteration benchmarks — but the set that moves narrows where it
-lives. A change confined to `deferred_despawn` and `many.despawn_half` points at the batch despawn
+lives. A change confined to `deferred_despawn` and `many/despawn_half` points at the batch despawn
 path; one that moves every `soa_*` benchmark points at the iteration view.
 
 **Benchmarks are keyed to API forms and workload shapes, not to the current implementation.** The
@@ -100,8 +100,8 @@ therefore pairs with `throughput` on a deliberately fragmented world, so a regre
 swap-and-pop reorganization or freelist recycling has somewhere to show up. Inspired by the
 `IteratePathological` benchmark in [EnTT](https://github.com/skypjack/entt), a C++ ECS library.
 
-**Removing everything is a special case, so it cannot be the only one measured.** `many.despawn` and
-`many.despawn_all` both clear the whole archetype, and the fill pass that back-fills freed slots is
+**Removing everything is a special case, so it cannot be the only one measured.** `many/despawn` and
+`many/despawn_all` both clear the whole archetype, and the fill pass that back-fills freed slots is
 skipped entirely when no entity survives. The pattern real games run is partial: projectile cleanup,
 area-of-effect kills, wave teardown, deferred cleanup queues.
 [`despawn_half`](specifications/batch.md#despawn_half) is the benchmark that actually reaches the

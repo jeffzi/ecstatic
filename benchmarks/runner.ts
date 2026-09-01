@@ -220,9 +220,9 @@ const REGEX_METACHARACTERS = /[\\^$.*+?()[\]{}|]/g;
 /**
  * A regex source matching exactly `name` and nothing else.
  *
- * Benchmark names contain `.`, so the name is escaped as well as anchored:
- * unescaped, the filter for `access.get_1field` would also match
- * `access:get_1field`.
+ * The name is escaped as well as anchored — keep the escape even though
+ * current names carry no regex metacharacters: a future name that does must
+ * still select only itself.
  */
 export function anchoredFilter(name: string): string {
   return `^${name.replace(REGEX_METACHARACTERS, String.raw`\$&`)}$`;

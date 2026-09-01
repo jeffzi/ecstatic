@@ -19,7 +19,7 @@ export function sinkValue(): number {
   return sink;
 }
 
-registerBench("access.get_1field", function* () {
+registerBench("access/get_1field", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
   yield timedBench(() => {
@@ -32,7 +32,7 @@ registerBench("access.get_1field", function* () {
   destroyWorld(world);
 });
 
-registerBench("access.get_2field", function* () {
+registerBench("access/get_2field", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
   yield timedBench(() => {
@@ -48,7 +48,7 @@ registerBench("access.get_2field", function* () {
   destroyWorld(world);
 });
 
-registerBench("access.get_4field", function* () {
+registerBench("access/get_4field", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
   yield timedBench(() => {
@@ -66,7 +66,7 @@ registerBench("access.get_4field", function* () {
   destroyWorld(world);
 });
 
-registerBench("access.set_1field", function* () {
+registerBench("access/set_1field", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
   yield timedBench(() => {
@@ -79,7 +79,7 @@ registerBench("access.set_1field", function* () {
   destroyWorld(world);
 });
 
-registerBench("access.set_record", function* () {
+registerBench("access/set_record", function* () {
   const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
   yield timedBench(() => {

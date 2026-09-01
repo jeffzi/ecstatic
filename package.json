@@ -77,9 +77,6 @@
     "typescript": "^7.0.0",
     "vitest": "^4.1.0"
   },
-  "optionalDependencies": {
-    "gymrat": "file:../gymrat"
-  },
   "engines": {
     "node": ">=22"
   }

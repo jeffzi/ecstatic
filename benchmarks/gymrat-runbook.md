@@ -17,7 +17,7 @@ suite are preserved.
 
 `npm run bench:autoresearch` starts a supervised session (`gymrat supervise`); `gymrat start` runs
 the same loop by hand. gymrat owns everything mechanical: it builds through the `prepare` step in
-`gymrat.json`, samples the suite, draws progress, prints verdicts, records the log, and runs
+`gymrat.toml`, samples the suite, draws progress, prints verdicts, records the log, and runs
 `npm run check` and `npm test` before a `keep` lands. This runbook adds only the domain rules.
 
 Edit in the experiment worktree that `start` printed, then `gymrat iterate`, then `gymrat keep -m`
@@ -40,14 +40,14 @@ required for the session; a missing bun aborts `iterate`.
 ## Benchmark suite
 
 27 benchmarks in 4 groups: `access` (5), `entity` (6), `iteration` (9), `many` (7), each measured
-under both engines — 27 × 2 = 54 gating `/time` metrics. Aliases carry an `<engine>/` prefix
-(`node/access.get_1field`, `bun/access.get_1field`), and all benchmarks run under node before bun.
+under both engines — 27 × 2 = 54 gating `#time` metrics. Aliases carry an `<engine>/` prefix
+(`node/access/get_1field`, `bun/access/get_1field`), and all benchmarks run under node before bun.
 Memory is the allocation gate's job (node only). No `filter` is configured, so all 54 gate a `keep`;
 the primary metric is the geomean of all of them (gymrat's default).
 
 `benchmarks/main.ts` measures nothing itself. It spawns one child process per benchmark, one at a
 time, so heap shape, JIT state, and GC pressure from one benchmark never reach the next. Measured in
-a shared process, `iteration.post_churn_throughput` reads around 240 µs; alone, around 9 µs. Every
+a shared process, `iteration/post_churn_throughput` reads around 240 µs; alone, around 9 µs. Every
 number the session records depends on that isolation, so every optimization lives in `src/` and the
 runner stays as it is.
 
