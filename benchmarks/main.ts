@@ -61,6 +61,10 @@ const USAGE_EXIT = 2;
  * `throw: true` makes a failing benchmark body crash this child; mitata's
  * default records the exception in `runs[].error` and still exits 0, which would
  * hand the parent a report full of missing numbers that looks successful.
+ *
+ * @param benchName - Exact name of the benchmark to measure; must be in `benchNames()`.
+ * @throws Error when `benchName` is not registered or no `gc` is exposed; a throwing benchmark
+ * body also propagates, by way of `throw: true`.
  */
 async function runChild(benchName: string): Promise<void> {
   if (!benchNames().includes(benchName)) {
@@ -96,7 +100,18 @@ function isEnoent(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-/** Run one child to completion and return everything it wrote to stdout. */
+/**
+ * Run one child to completion.
+ *
+ * @param spec - Command and arguments to spawn, as `childSpawnSpec` builds them; `args` is copied
+ * before spawning.
+ * @param engine - Engine the spec targets; used only to turn a missing `bun` binary into a
+ * readable error.
+ * @returns Everything the child wrote to stdout, decoded as UTF-8, once it exits with status 0.
+ * @throws Error (as a rejection) when the child cannot be spawned — `bun not found` for a missing
+ * bun binary, the raw spawn error otherwise — or exits with a non-zero status or a signal, naming
+ * the command and the cause.
+ */
 function collectChildReport(spec: ChildSpawnSpec, engine: Engine): Promise<string> {
   return new Promise((resolve, reject) => {
     // stdout is captured because it carries the report; stderr is inherited so
@@ -138,6 +153,14 @@ function collectChildReport(spec: ChildSpawnSpec, engine: Engine): Promise<strin
  * measure the contention. The first failure aborts the run rather than spending
  * minutes finishing the remaining children — a failing benchmark is
  * deterministic, and comparison tooling re-invokes this command once per sample.
+ *
+ * @param engines - Engines to run every selected benchmark under; the outer loop, so one engine's
+ * children all finish before the next engine's start.
+ * @param filter - Unanchored regex source selecting benchmarks by name; `undefined` runs every
+ * registered benchmark.
+ * @throws Error when the filter matches no benchmark; `UsageError` on an invalid filter regex;
+ * `ChildReportError` on an unusable child report; and the spawn or exit error of the first child
+ * that fails.
  */
 async function runParent(engines: readonly Engine[], filter?: string): Promise<void> {
   const selected = selectBenchmarks(benchNames(), filter);

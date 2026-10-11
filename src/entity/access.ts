@@ -36,9 +36,14 @@ type SettableFields<C> = C extends { readonly __ecstatic_relation_meta: unknown 
 
 /**
  * Guard against writing the reserved `target` field of a relation — the
- * target column is owned by `link`/`unlink`. Covers the field-descriptor
- * form (`fieldOrValues` is the field name) and the record form
- * (`fieldOrValues` is the values record).
+ * target column is owned by `link`/`unlink`.
+ *
+ * @param comp - Component being written; only a relation is guarded, so a
+ *   plain component may freely own a field named `target`.
+ * @param fieldOrValues - The field name in the field-descriptor form of
+ *   `set`, or the values record in the record form; the record is only
+ *   inspected for a `target` key, never written.
+ * @throws If `comp` is a relation and the write names `target`.
  */
 function guardRelationTargetWrite(
   comp: ComponentDescriptor,
@@ -54,6 +59,14 @@ function guardRelationTargetWrite(
 /**
  * Resolve the column backing a component field on a storage.
  *
+ * @param storage - Storage whose archetype and columns are consulted.
+ * @param di - Dense row of the entity, used only for the DEBUG check that an
+ *   optional component is enabled on that row.
+ * @param comp - Component that owns the field; must carry data fields.
+ * @param fieldName - Declared field name on `comp`.
+ * @returns The column backing the field, indexed by dense row: a typed array
+ *   for numeric and boolean fields, a plain array for reference fields. Column
+ *   growth replaces it, so index it before the next spawn.
  * @throws If the component is not on the storage's archetype
  * @throws If DEBUG and the component is a disabled optional on this entity
  * @throws If the component has no data fields (tag component)
@@ -98,8 +111,15 @@ interface RowCtx {
 }
 
 /**
- * Write one field value, encoding booleans as their 0/1 column representation
- * (boolean fields are stored in Uint8Array columns).
+ * Write one field value into its column.
+ *
+ * @param row - The entity's storage and dense row index.
+ * @param comp - Component that owns the field.
+ * @param fieldName - Declared field name on `comp`.
+ * @param value - New value, stored by reference; on a boolean field `true`
+ *   is encoded as 1 and any other value as 0, matching the Uint8Array column.
+ * @throws Whatever {@link resolveFieldColumn} throws when the component or
+ *   field cannot be resolved on the archetype.
  */
 function writeField(
   row: RowCtx,
@@ -151,12 +171,15 @@ export function get(
  * Write one field via a descriptor or multiple fields via a partial
  * component record.
  *
- * Two forms:
- * - `set(storageOrWorld, id, field, value)` — single field descriptor + value;
- *   `undefined` clears a ref field.
- * - `set(storageOrWorld, id, Component, { field: value, ... })` — partial
- *   values record; omitted fields keep their current values.
- *
+ * @param storageOrWorld - The entity's storage, or the world to resolve it
+ *   from; the storage form additionally checks ownership under DEBUG.
+ * @param id - Generational entity id, validated for staleness only under
+ *   DEBUG.
+ * @param field - Field descriptor to write (e.g. `Position.x`); in the record
+ *   form, the component whose fields to patch.
+ * @param value - New value, stored by reference; `undefined` clears a ref
+ *   field. In the record form, a partial values record whose omitted fields
+ *   keep their current values.
  * @throws If the entity ID is stale or from another storage (under DEBUG)
  * @throws If the component or a field cannot be resolved on the archetype
  */
@@ -217,13 +240,17 @@ export function set(
 }
 
 /**
- * Returns the target entity ID for a relation on an entity in any archetype.
- * Resolves the entity's archetype via world lookup, then reads the relation's
- * target column. Returns `undefined` when the source entity is dead (checked
- * unconditionally, never stripped), the relation is optional and disabled,
- * the entity is unlinked (0 sentinel), or the target is dead (stale
- * generation).
+ * Read the target of a relation on an entity in any archetype, resolving the
+ * entity's archetype via world lookup.
  *
+ * @param world - World that owns the entity; its generation table decides
+ *   liveness, and that check is never stripped under NDEBUG.
+ * @param id - Source entity id; a dead id yields `undefined`, not an error.
+ * @param rel - Relation to read; must be on the entity's archetype.
+ * @returns The live target's id, branded with the relation's constraints, or
+ *   `undefined` when the source is dead, the relation is an optional that is
+ *   disabled on this entity, the entity is unlinked (0 sentinel), or the
+ *   target has since been despawned (stale generation).
  * @throws If the relation is not on the entity's archetype
  */
 export function getTarget<R extends Relation>(
@@ -239,7 +266,6 @@ export function getTarget<R extends Relation>(
     return undefined;
   }
 
-  // Guard: entity must exist in the world
   const storage = world.entityArch[index];
   if (storage === undefined) {
     return undefined;
@@ -249,7 +275,7 @@ export function getTarget<R extends Relation>(
   /* istanbul ignore next */
   if (di === undefined) throw new Error("invariant: entity missing from sparse array");
   const soa = storage.columns.get(rel);
-  const targetColumn = soa?.target;
+  const targetColumn = soa?.["target"];
   if (!(targetColumn instanceof Float64Array)) {
     throw new Error(ERROR_RELATION_NOT_ON_ARCHETYPE);
   }

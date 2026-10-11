@@ -68,7 +68,13 @@ export const TRIVIAL_MATCHER: Matcher = {
   matched: new Uint8Array(0),
 };
 
-/** True when the storage's archetype carries every listed component (required or optional). */
+/**
+ * Test whether a storage's archetype carries every listed component, required or optional.
+ *
+ * @param storage - Storage whose archetype is tested; only its component set is read.
+ * @param compIds - Components to look for; an empty list matches every storage.
+ * @returns `true` when every listed component is on the archetype, `false` at the first missing one.
+ */
 function storageHasAll(storage: Storage, compIds: readonly ComponentDescriptor[]): boolean {
   for (const comp of compIds) {
     if (!storage.componentLookup.has(comp)) {
@@ -78,7 +84,14 @@ function storageHasAll(storage: Storage, compIds: readonly ComponentDescriptor[]
   return true;
 }
 
-/** Storages in the world whose archetypes carry all listed components. */
+/**
+ * Collect the storages in a world whose archetypes carry all listed components.
+ *
+ * @param world - World whose registered storages are scanned, in registration order.
+ * @param compIds - Components every returned storage must carry; an empty list matches every
+ *   storage.
+ * @returns A fresh array per call, in registration order; empty when nothing matches.
+ */
 export function findArchetypes(
   world: WorldState,
   compIds: readonly ComponentDescriptor[],
@@ -97,6 +110,10 @@ export function findArchetypes(
  * into its three axes, defaulting absent axes to the shared empty sentinel.
  * Shared by `resolveFilter` and `query`, which both accept the same
  * array-or-object filter grammar.
+ *
+ * @param filter - Filter descriptor, or a bare component array treated as `{all: filter}`.
+ * @returns A fresh `[allIds, anyIds, noneIds]` tuple; absent axes hold
+ *   {@link EMPTY_COMPONENT_IDS}, present axes alias the caller's arrays (no copy).
  */
 export function normalizeFilter(
   filter: EachFilter | readonly ComponentDescriptor[],
@@ -119,9 +136,14 @@ export function normalizeFilter(
 
 /**
  * Resolve a filter (descriptor object or bare `{all}` component array)
- * against a storage. Returns the Matcher on match, `false` if the storage
- * can never satisfy the filter, or {@link TRIVIAL_MATCHER} when every
- * constraint is trivially satisfied.
+ * against a storage.
+ *
+ * @param storage - Storage whose component set and optional bits the filter is checked against
+ *   and on which a non-trivial matcher is registered.
+ * @param filter - Filter descriptor, or a bare component array treated as `{all: filter}`.
+ * @returns The storage's {@link Matcher} for the resulting masks — deduped, so the same object is
+ *   returned for every resolution with the same masks — or `false` if the storage can never
+ *   satisfy the filter, or {@link TRIVIAL_MATCHER} when every constraint is trivially satisfied.
  */
 export function resolveFilter(
   storage: Storage,
@@ -132,10 +154,14 @@ export function resolveFilter(
 }
 
 /**
- * Resolve the `any` axis: returns the bitmask for optional-component membership,
- * or `false` when the axis is impossible (all components absent from the archetype).
- * When a required component satisfies the axis, the returned mask is 0 (trivially
- * satisfied — no per-row bitmask check needed).
+ * Resolve the `any` axis against a storage's component sets.
+ *
+ * @param anyIds - Components of the `any` axis; an empty list is unconstrained and resolves to 0.
+ * @param optionalBitLookup - The storage's optional component → presence-bit map.
+ * @param componentLookup - The storage's full component set, required and optional.
+ * @returns The OR of the listed optional components' presence bits; 0 when a required component
+ *   satisfies the axis (trivially true — no per-row bitmask check needed) or the axis is empty;
+ *   `false` when the axis is impossible (every listed component is absent from the archetype).
  */
 function resolveAnyMask(
   anyIds: readonly ComponentDescriptor[],
@@ -172,6 +198,15 @@ function resolveAnyMask(
  *   the storage unmatchable.
  * - `none`: optionals contribute bits; a required component makes the
  *   storage unmatchable; absent components are trivially satisfied.
+ *
+ * @param storage - Storage whose `componentLookup` and `optionalBitLookup` are consulted and on
+ *   which a non-trivial matcher is registered.
+ * @param allIds - Components every matching entity must carry.
+ * @param anyIds - Components of which at least one must be present; empty means unconstrained.
+ * @param noneIds - Components no matching entity may carry; empty means unconstrained.
+ * @returns The storage's {@link Matcher} for the computed masks — deduped, so the same object is
+ *   returned for every resolution with the same masks — or `false` when the storage can never
+ *   match, or {@link TRIVIAL_MATCHER} when all three masks are zero.
  */
 // fallow-ignore-next-line complexity
 export function resolveFilterMasks(

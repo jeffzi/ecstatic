@@ -15,6 +15,7 @@ describe("view optionals typing", () => {
 
   it("narrows an optional data component through truthiness", () => {
     each(storage, (e) => {
+      // oxlint-disable-next-line typescript/strict-boolean-expressions -- the test pins truthiness narrowing
       if (e.Shield) {
         e.Shield.hp = 1;
         expectTypeOf(e.Shield.hp).toEqualTypeOf<number>();

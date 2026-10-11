@@ -15,7 +15,12 @@ import { registerBench } from "./runner.js";
 
 let sink = 0;
 
-/** Accumulated field reads and entity counts, kept live so V8 cannot elide the passes. */
+/**
+ * Accumulated field reads and entity counts, kept live so V8 cannot elide the passes.
+ *
+ * @returns The running sum so far; meaningless as a number, it exists to be fed to
+ * `do_not_optimize` after `run` returns.
+ */
 export function sinkValue(): number {
   return sink;
 }

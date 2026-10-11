@@ -85,7 +85,6 @@ function runOpScript(suffix: string, seed: number): Trace {
     resourceValue: 0,
   };
 
-  // Phase 1: spawn entities with seeded positions
   for (let i = 0; i < 8; i++) {
     const x = Math.floor(rng() * 100);
     const y = Math.floor(rng() * 100);
@@ -96,11 +95,9 @@ function runOpScript(suffix: string, seed: number): Trace {
     trace.spawnedIds.push(id);
   }
 
-  // Phase 2: spawnMany
   const batchIds = spawnMany(pvStorage, 4);
   trace.spawnManyIds.push(...batchIds);
 
-  // Phase 3: despawn some entities (seeded selection)
   const despawnCount = 3;
   for (let i = 0; i < despawnCount; i++) {
     const idx = Math.floor(rng() * trace.spawnedIds.length);
@@ -111,7 +108,6 @@ function runOpScript(suffix: string, seed: number): Trace {
     }
   }
 
-  // Phase 4: enable/disable optional tag on remaining entities
   each(pvStorage, (e) => {
     if (rng() > 0.5) {
       enable(pvStorage, e.id, Tag);
@@ -123,7 +119,7 @@ function runOpScript(suffix: string, seed: number): Trace {
     }
   });
 
-  // Phase 5: spawn targets and link/unlink (Owns is optional)
+  // Owns is an optional relation, so link/unlink toggles it on the owned entities.
   const target1 = spawn(simpleStorage);
   const target2 = spawn(simpleStorage);
   const owned1 = spawn(ownedStorage);
@@ -134,40 +130,29 @@ function runOpScript(suffix: string, seed: number): Trace {
   link(world, owned2, Owns, target1);
   link(world, owned3, Owns, target2);
 
-  // Retarget owned2 from target1 to target2
   link(world, owned2, Owns, target2);
-  // Unlink owned3
   unlink(world, owned3, Owns);
 
-  // Phase 6: resource set
   setResource(world, Score, { value: 42 });
 
-  // ---- Record trace ----
-
-  // each order
   each(pvStorage, (e) => {
     trace.eachOrder.push(e.id);
   });
 
-  // query order (across all storages with Position)
   query(world, [Position], (e) => {
     trace.queryOrder.push(e.id);
   });
 
-  // querySources order
   querySources(world, Owns, target2, (e) => {
     trace.querySourcesOrder.push(e.id);
   });
 
-  // getSources
   trace.getSourcesResult = [...getSources(world, Owns, target1)];
 
-  // alive results for all originally spawned IDs
   for (const id of trace.spawnedIds) {
     trace.aliveResults.push(alive(pvStorage, id));
   }
 
-  // resource
   trace.resourceValue = getResource(world, Score).value;
 
   return trace;
@@ -197,7 +182,6 @@ describe("determinism", () => {
       expect(trace.spawnManyIds.length).toBe(4);
       expect(trace.eachOrder.length).toBeGreaterThan(0);
       expect(trace.queryOrder.length).toBeGreaterThan(0);
-      // Some entities were despawned
       expect(trace.aliveResults.filter((a) => !a).length).toBeGreaterThan(0);
       expect(trace.resourceValue).toBe(42);
     });
@@ -221,7 +205,6 @@ describe("determinism", () => {
         visited.push(e.id);
       });
 
-      // Backward: last spawned first
       expect(visited).toStrictEqual([id2, id1, id0]);
     });
 
@@ -245,15 +228,13 @@ describe("determinism", () => {
       expect(storage.entities[0]).toBe(id0);
       expect(storage.entities[1]).toBe(id2);
 
-      // The formerly-last entity (id2) now occupies row 1 (the despawned row)
       expect(rowOf(storage, id2)).toBe(1);
 
       const pos = storage.columns.get(Position);
       assert(pos != null);
-      expect(pos.x?.[1]).toBe(20);
-      expect(pos.y?.[1]).toBe(20);
+      expect(pos["x"]?.[1]).toBe(20);
+      expect(pos["y"]?.[1]).toBe(20);
 
-      // each visits backward: id2 (row 1) then id0 (row 0)
       const visited: number[] = [];
       each(storage, (e) => {
         visited.push(e.id);
@@ -284,10 +265,8 @@ describe("determinism", () => {
 
       expect(entityIndex(reused)).toBe(entityIndex(id1));
 
-      // But it has a different (higher) generation, so it's a different ID
       expect(reused).not.toBe(id1);
 
-      // The old id1 is no longer alive
       expect(alive(storage, id1)).toBe(false);
       expect(alive(storage, reused)).toBe(true);
     });

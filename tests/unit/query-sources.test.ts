@@ -558,6 +558,7 @@ describe("hasSources / countSources", () => {
 });
 
 describe("reverse queries on unregistered relations", () => {
+  /** World with one registered archetype and a live target entity, for relations that were never registered. */
   function unregisteredContext() {
     const world = createWorld();
     const simple = register(world, archetype([QSSpec_Comp]));

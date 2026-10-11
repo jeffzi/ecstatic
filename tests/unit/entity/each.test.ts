@@ -62,7 +62,7 @@ describe("each — single archetype", () => {
 
     expect(readX).toBe(10);
     expect(readY).toBe(20);
-    expect(storage.columns.get(Position)?.x?.[0]).toBe(99);
+    expect(storage.columns.get(Position)?.["x"]?.[0]).toBe(99);
   });
 
   it("skips callback if archetype is empty", () => {
@@ -122,13 +122,12 @@ describe("each — edge cases", () => {
       e.EachTestPosition.x = e.EachTestPosition.x + 1000;
     });
 
-    // After iteration, all initially-present entities should have their values incremented
     expect(colGrew).toBe(true);
     for (let i = 0; i < 8; i++) {
       const pos = storage.columns.get(Position);
       assert(pos != null);
       // Entities are stored at indices 0-7; backward iteration means we wrote to indices 7,6,5...0
-      expect(pos.x?.[i]).toBe(i + 1000);
+      expect(pos["x"]?.[i]).toBe(i + 1000);
     }
     // Spawned-mid-pass entities should not have been visited/incremented
     expect(storage.n).toBe(18); // 8 original + 10 spawned
@@ -149,7 +148,6 @@ describe("each — edge cases", () => {
       spawn(storage, { EachTestPosition: { x: 99, y: 0 } });
     });
 
-    // Only the 2 entities that existed before each() started should be visited
     expect(visitedIds).toHaveLength(2);
     expect(visitedIds).toContain(id1);
     expect(visitedIds).toContain(id2);
@@ -179,7 +177,7 @@ describe("each — edge cases", () => {
     const flagCol = storage.columns.get(Flag);
     assert(flagCol != null);
     // Boolean false should be stored as 0 in Uint8Array
-    expect(flagCol.enabled?.[0]).toBe(0);
+    expect(flagCol["enabled"]?.[0]).toBe(0);
   });
 
   it("boolean view setter stores 1 when writing true", () => {
@@ -199,7 +197,7 @@ describe("each — edge cases", () => {
     const col = storage.columns.get(BoolComp);
 
     assert(col != null);
-    expect(col.active?.[0]).toBe(1);
+    expect(col["active"]?.[0]).toBe(1);
   });
 });
 

@@ -11,8 +11,6 @@ import type {
   EachView as _PublicEachView,
   // @ts-expect-error field descriptor internals are not public: fields are reached through the component
   FieldDescriptor as _PublicFieldDescriptor,
-  // @ts-expect-error field value resolution is not public: `get()` and view access already expose it
-  FieldValue as _PublicFieldValue,
   // @ts-expect-error optional override shape is not public: `spawn()` types its own overrides argument
   OptionalOverridesFor as _PublicOptionalOverridesFor,
   // @ts-expect-error query view shape is not public: `query()` returns it already typed

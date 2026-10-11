@@ -46,8 +46,8 @@ describe("spawn with optionals", () => {
     const soa = storage.columns.get(Shield);
 
     assert(soa != null);
-    expect(soa.hp?.[row]).toBe(50);
-    expect(soa.defense?.[row]).toBe(10);
+    expect(soa["hp"]?.[row]).toBe(50);
+    expect(soa["defense"]?.[row]).toBe(10);
   });
 
   it("enables an optional data component with defaults on override true", () => {
@@ -62,8 +62,8 @@ describe("spawn with optionals", () => {
     expect(storage.mask[row]).toBe(bit);
     const soa = storage.columns.get(Shield);
     assert(soa != null);
-    expect(soa.hp?.[row]).toBe(50);
-    expect(soa.defense?.[row]).toBe(10);
+    expect(soa["hp"]?.[row]).toBe(50);
+    expect(soa["defense"]?.[row]).toBe(10);
   });
 
   it("enables an optional data component and patches listed fields on record override", () => {
@@ -78,8 +78,8 @@ describe("spawn with optionals", () => {
     expect(storage.mask[row]).toBe(bit);
     const soa = storage.columns.get(Shield);
     assert(soa != null);
-    expect(soa.hp?.[row]).toBe(200);
-    expect(soa.defense?.[row]).toBe(10);
+    expect(soa["hp"]?.[row]).toBe(200);
+    expect(soa["defense"]?.[row]).toBe(10);
   });
 
   it("enables an optional tag on override true", () => {
@@ -112,8 +112,8 @@ describe("spawn with optionals", () => {
     const positionSoa = storage.columns.get(Position);
 
     assert(positionSoa != null);
-    expect(positionSoa.x?.[row]).toBe(5);
-    expect(positionSoa.y?.[row]).toBe(0);
+    expect(positionSoa["x"]?.[row]).toBe(5);
+    expect(positionSoa["y"]?.[row]).toBe(0);
     const shieldBit = storage.archetype.optionalBits.get("SpawnOptShield");
     assert(shieldBit != null);
     const stunnedBit = storage.archetype.optionalBits.get("SpawnOptStunned");
@@ -134,8 +134,8 @@ describe("spawn with optionals", () => {
     for (const id of ids) {
       const row = rowOf(storage, id);
       expect(storage.mask[row]).toBe(shieldBit);
-      expect(soa.hp?.[row]).toBe(75);
-      expect(soa.defense?.[row]).toBe(10);
+      expect(soa["hp"]?.[row]).toBe(75);
+      expect(soa["defense"]?.[row]).toBe(10);
     }
   });
 });
@@ -153,8 +153,8 @@ describe("spawn pre-population on recycled slots", () => {
     const soa = storage.columns.get(Shield);
 
     assert(soa != null);
-    expect(soa.hp?.[row]).toBe(50);
-    expect(soa.defense?.[row]).toBe(10);
+    expect(soa["hp"]?.[row]).toBe(50);
+    expect(soa["defense"]?.[row]).toBe(10);
   });
 
   it("re-populates optional defaults on recycled slots through the spawnMany batch path", () => {
@@ -170,8 +170,8 @@ describe("spawn pre-population on recycled slots", () => {
     assert(soa != null);
     for (const id of ids) {
       const row = rowOf(storage, id);
-      expect(soa.hp?.[row]).toBe(50);
-      expect(soa.defense?.[row]).toBe(10);
+      expect(soa["hp"]?.[row]).toBe(50);
+      expect(soa["defense"]?.[row]).toBe(10);
     }
   });
 
@@ -187,8 +187,8 @@ describe("spawn pre-population on recycled slots", () => {
     const soa = storage.columns.get(Shield);
 
     assert(soa != null);
-    expect(soa.hp?.[row]).toBe(50);
-    expect(soa.defense?.[row]).toBe(10);
+    expect(soa["hp"]?.[row]).toBe(50);
+    expect(soa["defense"]?.[row]).toBe(10);
   });
 });
 
@@ -227,6 +227,6 @@ describe("spawn mixing optional relations with plain optionals", () => {
     expect(storage.mask[row]).toBe(storage.optionalBitLookup.get(Shield));
     const followsMeta = getRelationMeta(Follows);
     assert(followsMeta != null);
-    expect(storage.columns.get(followsMeta)?.target?.[row]).toBe(0);
+    expect(storage.columns.get(followsMeta)?.["target"]?.[row]).toBe(0);
   });
 });

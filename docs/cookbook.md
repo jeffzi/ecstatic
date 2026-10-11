@@ -71,6 +71,7 @@ Each system file exports one function that takes `world` (and any other state it
 
 ```typescript
 import { getResource, query } from "ecstatic";
+
 import { Time, Position, Velocity } from "./schema";
 
 export function movementSystem(world: World): void {

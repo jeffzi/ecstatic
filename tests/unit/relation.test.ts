@@ -234,7 +234,7 @@ describe("registering relation archetypes", () => {
     assert(pureOptMeta != null);
     const soa = storage.columns.get(pureOptMeta);
     expect(soa).toBeDefined();
-    expect(soa?.target).toBeDefined();
+    expect(soa?.["target"]).toBeDefined();
   });
 
   it("leaves relation state empty for relation-free archetypes", () => {
@@ -378,7 +378,7 @@ describe("optional relation birth-link at spawn", () => {
     expect(storage.mask[row]).toBe(0);
     const unlinkedMeta = getRelationMeta(OptionalUnlinked);
     assert(unlinkedMeta != null);
-    expect(storage.columns.get(unlinkedMeta)?.target?.[row]).toBe(0);
+    expect(storage.columns.get(unlinkedMeta)?.["target"]?.[row]).toBe(0);
   });
 
   it("spawn with optional relation and partial data fields", () => {
@@ -452,7 +452,7 @@ describe("optional relation birth-link at spawn", () => {
     const row = rowOf(storage, second);
     const recycleMeta = getRelationMeta(OptionalRecycle);
     assert(recycleMeta != null);
-    expect(storage.columns.get(recycleMeta)?.target?.[row]).toBe(0);
+    expect(storage.columns.get(recycleMeta)?.["target"]?.[row]).toBe(0);
   });
 });
 
@@ -478,11 +478,14 @@ function visitAll(storage: AtomicFixture["storage"]): number[] {
 }
 
 /**
- * Entity ids the `all: [BirthLinkAtomic_Rel]` matcher visits in `storage`.
+ * Walks `storage` with the `all: [BirthLinkAtomic_Rel]` matcher.
  *
  * Also doubles as matcher warm-up: calling it during Arrange materializes and
  * refreshes the cached matcher, so a later call exercises the cached path — the
  * one that can observe a stale presence bit left on a recycled row.
+ *
+ * @param storage - Storage whose rows the matcher walks.
+ * @returns Entity ids, in visit order, of rows matching `all: [BirthLinkAtomic_Rel]`.
  */
 function visitLinked(storage: AtomicFixture["storage"]): number[] {
   const visited: number[] = [];
@@ -823,7 +826,7 @@ describe("link and unlink", () => {
     expect(storage.mask[row]).toBe(0);
     const relMeta = getRelationMeta(Rel);
     assert(relMeta != null);
-    expect(storage.columns.get(relMeta)?.target?.[row]).toBe(0);
+    expect(storage.columns.get(relMeta)?.["target"]?.[row]).toBe(0);
   });
 
   it("unlink on an already-unlinked optional relation is a no-op", () => {

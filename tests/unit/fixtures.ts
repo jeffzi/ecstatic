@@ -44,10 +44,13 @@ export function isDescriptorView(v: unknown): v is DescriptorView {
 }
 
 /**
- * Casts a component descriptor to a mutable {@link DescriptorView}, throwing
- * if the value isn't a descriptor. Used by tests that mutate descriptor
- * internals (e.g. `__ecstatic_name`) to exercise edge cases the public API
- * can't reach.
+ * Narrows a component descriptor to a mutable {@link DescriptorView}, for tests
+ * that mutate descriptor internals (e.g. `__ecstatic_name`) to exercise edge
+ * cases the public API can't reach.
+ *
+ * @param c - Value expected to be a component descriptor.
+ * @returns The same object, typed as a mutable {@link DescriptorView}.
+ * @throws Error when `c` is not a descriptor.
  */
 export const asMutableDescriptor = (c: unknown): DescriptorView => {
   if (isDescriptorView(c)) return c;

@@ -12,8 +12,8 @@ import type { Storage, WorldState } from "../world.js";
 
 /**
  * Sentinel key inside a relation's reverse map holding the single-storage
- * flag. Entity indices are 0-based in this port, so the flag key is -1 (the
- * original used key 0, free only because Lua entity indices start at 1).
+ * flag. Entity indices are 0-based, so -1 can never collide with a real target
+ * index; do not change it to a non-negative key.
  */
 export const SINGLE_STORAGE_KEY = -1;
 
@@ -29,9 +29,17 @@ export type SourceBucket = Map<number, Storage>;
 export type RelationReverseMap = Map<number, SourceBucket | Storage | false>;
 
 /**
- * The source bucket for a target index, or `undefined` when none exists.
+ * Look up the source bucket recorded for a target index.
+ *
  * The `instanceof` check both narrows away the flag-value union members and
  * covers the missing-key case.
+ *
+ * @param relMap - One relation's reverse map, as stored under
+ *   `world.reverseMap`.
+ * @param targetIndex - Entity index (not the generational id) of the target.
+ * @returns The live bucket, whose mutations are visible through the map, or
+ *   `undefined` when no source has ever linked to this target index since
+ *   the map was last reset; removal leaves empty buckets in place.
  */
 export function sourceBucket(
   relMap: RelationReverseMap,
@@ -42,9 +50,13 @@ export function sourceBucket(
 }
 
 /**
- * The relation's single-storage flag: the sole source storage while one
- * storage has ever sourced the relation, `false` once sources span multiple
- * storages, `undefined` before the first insert.
+ * Read the relation's single-storage flag.
+ *
+ * @param relMap - One relation's reverse map, as stored under
+ *   `world.reverseMap`.
+ * @returns The sole source storage while one storage has ever sourced the
+ *   relation, `false` once sources span multiple storages, `undefined` before
+ *   the first insert.
  */
 export function soleStorage(relMap: RelationReverseMap): Storage | false | undefined {
   const flag = relMap.get(SINGLE_STORAGE_KEY);
@@ -75,6 +87,14 @@ export interface ReverseCtx {
  * single-source-archetype case. Never re-promoted from `false` (conservative
  * — target/source removal cannot make it lie), never cleaned up; a full
  * reverse-map reset drops it with the map.
+ *
+ * @param ctx - World state and the relation whose reverse map receives the
+ *   entry; the relation must already be registered in that world.
+ * @param targetIndex - Entity index of the link target.
+ * @param storage - Storage owning the source entity, stored as the bucket
+ *   value so reverse iteration skips an archetype lookup.
+ * @param sourceIndex - Entity index of the source; an existing entry for it
+ *   is overwritten, so re-linking to the same target is idempotent.
  */
 export function reverseInsert(
   ctx: ReverseCtx,
@@ -112,6 +132,14 @@ export function reverseInsert(
  * Remove a source entity index from the reverse map for a relation.
  * O(1) hash deletion. Does not drop empty target buckets.
  * The top-level `rel` entry is pre-initialized at registration time.
+ *
+ * @param reverseMap - The world's relation → reverse-map table.
+ * @param rel - Relation whose entry to drop; must be registered in this
+ *   world.
+ * @param targetIndex - Entity index of the target whose bucket holds the
+ *   source; a target with no bucket is a no-op.
+ * @param sourceIndex - Entity index of the source to drop; a source not in
+ *   the bucket is a no-op.
  */
 export function reverseRemove(
   reverseMap: Map<ComponentDescriptor, RelationReverseMap>,

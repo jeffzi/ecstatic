@@ -15,7 +15,7 @@ describe("components", () => {
     );
     expect(asMutableDescriptor(defs.ComponentsSpecPosition).__ecstatic_fields[0]).toBe("x");
     expect(asMutableDescriptor(defs.ComponentsSpecPosition).__ecstatic_fields[1]).toBe("y");
-    expect(asMutableDescriptor(defs.ComponentsSpecVelocity).__ecstatic_defaults.vx).toBe(0);
+    expect(asMutableDescriptor(defs.ComponentsSpecVelocity).__ecstatic_defaults["vx"]).toBe(0);
   });
 
   it("uses empty objects as tag descriptors", () => {
@@ -33,7 +33,7 @@ describe("components", () => {
     expect(asMutableDescriptor(Position).__ecstatic_name).toBe("ComponentsSpecSinglePosition");
     expect(asMutableDescriptor(Position).__ecstatic_fields[0]).toBe("x");
     expect(asMutableDescriptor(Position).__ecstatic_fields[1]).toBe("y");
-    expect(asMutableDescriptor(Position).__ecstatic_defaults.x).toBe(0);
+    expect(asMutableDescriptor(Position).__ecstatic_defaults["x"]).toBe(0);
   });
 
   it("uses omitted fields as a tag descriptor", () => {

@@ -78,6 +78,7 @@ describe("RelationFields", () => {
       offsetX: number;
       label: string;
     }>();
+    // oxlint-disable-next-line typescript/no-generated-empty-object-type -- the assertion is that a pure link has no data fields
     expectTypeOf<keyof RelationFields<typeof Pure>>().toBeNever();
   });
 });

@@ -37,9 +37,16 @@ function releaseIfAcquired(storage: Storage | undefined): void {
 }
 
 /**
- * The live source bucket for a (relation, target) pair, or `undefined` when
- * the target is stale, the relation is unregistered, or no source was ever
- * linked to the target.
+ * Resolve the live source bucket for a (relation, target) pair.
+ *
+ * @param world - World whose `generation` table validates the target and whose `reverseMap`
+ *   holds the relation's buckets.
+ * @param rel - Relation descriptor keying the reverse map.
+ * @param target - Packed entity id of the link target; its generation is checked, not just its
+ *   index, so a recycled slot never aliases.
+ * @returns The bucket mapping source index to source storage — the world's own live `Map`, not a
+ *   copy — or `undefined` when the target is stale, the relation is unregistered, or no source
+ *   was ever linked to the target (buckets persist once created, so one may be empty).
  */
 function resolveBucket(
   world: World,
@@ -73,6 +80,17 @@ function resolveBucket(
  * shorthand), resolution is per storage: a storage that can never match is
  * skipped without touching its sources, and per-source enabled-bit semantics
  * match `each` filters.
+ *
+ * @param world - World whose reverse map is walked.
+ * @param rel - Relation the sources link through.
+ * @param target - Packed entity id of the link target; a stale id (generation advanced) visits
+ *   nothing rather than throwing.
+ * @param filter - Optional. Component-array `{all}` shorthand or `{all?, any?, none?}` descriptor,
+ *   resolved per storage; when given, `fn` is the following argument and sees only matching
+ *   sources.
+ * @param fn - Called once per source with the pooled per-storage view, rebound to each row; the
+ *   view object is reused across calls, so it is valid only for the duration of the callback.
+ * @throws If the callback argument is not a function (reachable only from untyped callers).
  */
 /* oxlint-disable max-params -- public API: querySources overloads */
 export function querySources<R extends Relation>(
@@ -184,16 +202,30 @@ function querySourcesUnfiltered(bucket: SourceBucket, callback: (view: EachView)
   }
 }
 
-/** A matcher with no active masks matches every row — skip the per-row test. */
+/**
+ * A matcher with no active masks matches every row, so the per-row flag test can be skipped.
+ *
+ * @param matcher - Matcher resolved for the current storage (never `false`; callers check that
+ *   first).
+ * @returns `true` when all three masks are 0 — the shape `resolveFilter` returns as
+ *   `TRIVIAL_MATCHER` when required components alone satisfy every constraint.
+ */
 function isTrivialMatcher(matcher: Matcher): boolean {
   return matcher.allMask === 0 && matcher.anyMask === 0 && matcher.noneMask === 0;
 }
 
 /**
- * Dispatch the filtered walk: when the single-storage flag holds a storage,
- * the matcher and view resolve once and the loop reads them from locals — the
- * fast path. Otherwise sources interleave across archetypes and per-storage
- * state is cached behind a storage-identity compare.
+ * Dispatch the filtered walk: when the single-storage flag holds a storage, the matcher and view
+ * resolve once and the loop reads them from locals — the fast path. Otherwise sources interleave
+ * across archetypes and per-storage state is cached behind a storage-identity compare.
+ *
+ * @param bucket - Live source bucket for the target, walked in insertion order.
+ * @param sole - The relation's single-storage flag as read before the walk: a `Storage` while
+ *   one storage has ever sourced the relation, `false` once sources span several, `undefined`
+ *   before the first insert.
+ * @param filter - Component-array `{all}` shorthand or `{all?, any?, none?}` descriptor,
+ *   resolved per storage.
+ * @param callback - Invoked with the pooled view bound to each matching source row.
  */
 function querySourcesFiltered(
   bucket: SourceBucket,
@@ -289,7 +321,16 @@ function assertStorageReady(
   }
 }
 
-/** Re-resolve the matcher and swap the checked-out view for a new storage. */
+/**
+ * Re-resolve the matcher and swap the checked-out view for a new storage.
+ *
+ * @param state - Walk state mutated in place: `skipStorage` is set when the storage can never
+ *   match (and nothing else changes), otherwise `skipMatchCheck`, `matcher`, `acquired`, and
+ *   `bound` are refreshed and the previously acquired view is released.
+ * @param storage - The storage the next bucket entries belong to.
+ * @param filter - Component-array shorthand or `{all?, any?, none?}` descriptor resolved against
+ *   `storage`.
+ */
 function enterStorage(
   state: MultiStorageState,
   storage: Storage,
@@ -316,13 +357,19 @@ function pullNext<T>(iter: IterableIterator<T>): T | undefined {
 }
 
 /**
- * Walk bucket entries with per-storage state, refreshed only when the entry's
- * storage changes (storage-identity compare) — the flat bucket interleaves
- * sources from different archetypes in insertion order.
+ * Walk bucket entries with per-storage state, refreshed only when the entry's storage changes
+ * (storage-identity compare) — the flat bucket interleaves sources from different archetypes in
+ * insertion order.
  *
- * `pending` is an entry already pulled from `entries`: the sole walk pulls one
- * to detect a foreign storage and hands the remainder of the walk over here,
- * so that entry is processed before the iterator advances again.
+ * @param entries - Bucket iterator, possibly already advanced by the sole-storage walk; consumed
+ *   to exhaustion.
+ * @param pending - An entry already pulled from `entries`: the sole walk pulls one to detect a
+ *   foreign storage and hands the remainder of the walk over here, so that entry is processed
+ *   before the iterator advances again. `undefined` when the walk starts from the iterator.
+ * @param filter - Component-array shorthand or `{all?, any?, none?}` descriptor, re-resolved on
+ *   each storage change.
+ * @param callback - Invoked with the pooled view bound to each matching source row; the view of
+ *   the last storage entered is released in a `finally`, even when the callback throws.
  */
 function querySourcesFilteredMulti(
   entries: MapIterator<[number, Storage]>,
@@ -367,12 +414,17 @@ function querySourcesFilteredMulti(
 }
 
 /**
- * Return all source entity IDs linked to a given target via a relation — the
- * non-callback complement to `querySources` (same visit set, no filtering).
+ * Return all source entity IDs linked to a given target via a relation — the non-callback
+ * complement to `querySources` (same visit set, no filtering).
  *
- * Pass `out` to reuse an existing array: it is filled and returned with the
- * tail cleared, so `result.length === n` holds on every call. A stale target
- * or unregistered relation yields an empty result (out-form: `out` emptied).
+ * @param world - World whose reverse map is read.
+ * @param rel - Relation the sources link through.
+ * @param target - Packed entity id of the link target.
+ * @param out - Optional buffer to reuse: ids are written from index 0 and its length is set to
+ *   the source count, truncating any longer tail; a stale target or unregistered relation
+ *   empties it. Omit to allocate a fresh array.
+ * @returns The ids in bucket insertion order — `out` itself when given, else a new array — so
+ *   `result.length` is the source count on every call.
  */
 export function getSources(
   world: World,
@@ -404,8 +456,14 @@ export function getSources(
 }
 
 /**
- * Whether at least one source is linked to the target via the relation.
- * Stale targets and unregistered relations report `false`. Zero allocation.
+ * Whether at least one source is linked to the target via the relation. Zero allocation: only
+ * the bucket's size is probed.
+ *
+ * @param world - World whose reverse map is read.
+ * @param rel - Relation the sources link through.
+ * @param target - Packed entity id of the link target.
+ * @returns `true` when the target's bucket holds a source; `false` for a stale target, an
+ *   unregistered relation, or a bucket whose sources were all unlinked.
  */
 export function hasSources(world: World, rel: Relation, target: EntityId): boolean {
   const bucket = resolveBucket(world, rel, target);
@@ -413,9 +471,13 @@ export function hasSources(world: World, rel: Relation, target: EntityId): boole
 }
 
 /**
- * Number of source entities linked to the target via the relation, across
- * all archetypes. Stale targets and unregistered relations report `0`.
- * Zero allocation.
+ * Number of source entities linked to the target via the relation, across all archetypes. Zero
+ * allocation: only the bucket's size is read.
+ *
+ * @param world - World whose reverse map is read.
+ * @param rel - Relation the sources link through.
+ * @param target - Packed entity id of the link target.
+ * @returns The bucket size, or `0` for a stale target or an unregistered relation.
  */
 export function countSources(world: World, rel: Relation, target: EntityId): number {
   const bucket = resolveBucket(world, rel, target);

@@ -37,7 +37,12 @@ const NS_PER_MS = 1e6;
 // World creation
 // ---------------------------------------------------------------------------
 
-/** A generator on the suite's fixed seed, so every world lays out identically. */
+/**
+ * Create a generator on the suite's fixed seed, so every world lays out identically.
+ *
+ * @returns A fresh mulberry32 generator yielding floats in `[0, 1)`; every call to this function
+ * starts the same sequence over from the beginning.
+ */
 export function benchRandom(): () => number {
   return mulberry32(SEED);
 }
@@ -69,8 +74,11 @@ export interface CreateOpts {
  * entity-count sweeps, and taking the count as a parameter would let one
  * benchmark quietly measure a different world than the rest.
  *
- * The tracked ID array is shuffled so index order does not match row order —
- * random-access benchmarks would otherwise walk the storage front to back and
+ * @param opts - `noBackground: true` skips the 4N background entities, isolating the tracked
+ * archetype; the default builds them.
+ * @returns The world, its tracked storage, and `n` (always `DEFAULT_N`); the caller owns the
+ * world and nothing here releases it. `tracked` holds the N ids shuffled so index order does not
+ * match row order — random-access benchmarks would otherwise walk the storage front to back and
  * measure a prefetch-friendly pattern no real workload has.
  */
 export function benchCreateWorld(opts: CreateOpts = {}): BenchCtx<typeof trackedArch> {
@@ -109,7 +117,14 @@ export interface BareCtx<A extends AnyArchetype> {
   n: number;
 }
 
-/** Build a world holding nothing but `DEFAULT_N` default-valued entities of one archetype. */
+/**
+ * Build a world holding nothing but `DEFAULT_N` default-valued entities of one archetype.
+ *
+ * @param arch - Archetype to register and spawn from; it must declare no required relation,
+ * since every entity is spawned with no overrides.
+ * @returns The world, the registered storage for `arch`, and `n` (always `DEFAULT_N`); the
+ * caller owns the world and nothing here releases it.
+ */
 export function makeBareWorld<A extends AnyArchetype>(arch: A): BareCtx<A> {
   const n = DEFAULT_N;
   const world = createWorld();
@@ -135,11 +150,16 @@ export interface TimedYield {
 }
 
 /**
- * Time `body` under mitata's default batching, reporting time only.
+ * Time a body under mitata's default batching, reporting time only.
  *
  * `heap: false` because the suite owns time and nothing else: memory is gated
  * separately by the allocation gate, and mitata's per-iteration heap delta is
  * GC-timing noise that would otherwise gate optimization verdicts.
+ *
+ * @param body - Work to time; mitata calls it many times per sample against whatever the
+ * enclosing generator set up, so it must leave that state as it found it.
+ * @returns The object to `yield` from a mitata generator benchmark; `bench` is `body` itself,
+ * not a wrapper.
  */
 export function timedBench(body: () => void): TimedYield {
   return { heap: false, bench: body };
@@ -152,17 +172,23 @@ export interface ManualYield {
 }
 
 /**
- * Time `body` against a world `build` produces fresh for every iteration.
+ * Time a body against a world built fresh for every iteration.
  *
  * Benches whose body consumes the world it runs against — spawning, despawning,
  * anything that leaves the population changed — cannot reuse one world across
  * samples, and mitata's default batching would replay the body thousands of
  * times per sample against a world that only survives the first. Manual mode
- * disables batching and takes the elapsed nanoseconds this function returns,
- * which cover `body` alone: construction and teardown fall outside the clock.
+ * disables batching.
  *
  * `heap: false` because the heap delta would otherwise be swamped by the
  * per-iteration world construction rather than reporting what `body` allocated.
+ *
+ * @param build - Produces a fresh context per iteration; its cost falls outside the clock.
+ * @param body - Work to time, run once per iteration against the context `build` just made; it
+ * may consume the world freely.
+ * @returns The object to `yield` from a mitata generator benchmark; its `manual` reports the
+ * elapsed nanoseconds of `body` alone, and destroys the context's world after every call,
+ * whether or not `body` threw.
  */
 export function manualBench<C extends { world: World }>(
   build: () => C,

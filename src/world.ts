@@ -188,7 +188,8 @@ interface MutableStorage extends Omit<Storage, "world"> {
 /**
  * Create a new world with initial capacity.
  *
- * @returns An opaque World object
+ * @returns A fresh world with `INITIAL_WORLD_CAPACITY` entity slots pre-allocated, no archetype
+ *   registered, and an empty freelist; the caller owns it and releases it with `destroyWorld`.
  */
 export function createWorld(): World {
   const state: WorldState = {
@@ -214,10 +215,10 @@ export function createWorld(): World {
  * Register an archetype with a world, creating storage for that archetype.
  * Idempotent: registering the same archetype twice returns the same storage object.
  *
- * @param world - The world to register in
- * @param arch - The archetype descriptor, or a class extending `Archetype()`, to register
- * @returns The storage object for this archetype in this world
- *
+ * @param world - World that will own the storage; must not have been destroyed.
+ * @param arch - The archetype descriptor, or a class extending `Archetype()`, to register.
+ * @returns The storage for this archetype in this world — the same object on every call for the
+ *   same archetype, empty when newly created.
  * @throws If the world is destroyed
  * @throws If the class form is an `Archetype()` result that was never subclassed, or an
  *   indirect subclass of one
@@ -236,7 +237,7 @@ export function register(world: World, arch: ArchetypeRef): Storage {
   const descriptor = resolveArchetype(arch);
 
   const existing = state.storages.get(descriptor.id);
-  if (existing) {
+  if (existing !== undefined) {
     return existing;
   }
 
@@ -253,10 +254,10 @@ export function register(world: World, arch: ArchetypeRef): Storage {
 /**
  * Retrieve the storage for an archetype in a world.
  *
- * @param world - The world to query
- * @param arch - The archetype descriptor, or a class extending `Archetype()`, to look up
- * @returns The storage object (must be registered)
- *
+ * @param world - World the archetype was registered in; must not have been destroyed.
+ * @param arch - The archetype descriptor, or a class extending `Archetype()`, to look up.
+ * @returns The storage `register` created for this archetype — the same object `register`
+ *   returned, never a copy.
  * @throws If the world is destroyed
  * @throws If the archetype is not registered in this world
  * @throws If the class form is an `Archetype()` result that was never subclassed, or an
@@ -274,7 +275,7 @@ export function getStorage(world: World, arch: ArchetypeRef): Storage {
   }
 
   const storage = state.storages.get(resolveArchetype(arch).id);
-  if (!storage) {
+  if (storage === undefined) {
     throw new Error("archetype not registered in this world");
   }
 
@@ -284,6 +285,10 @@ export function getStorage(world: World, arch: ArchetypeRef): Storage {
 /**
  * Flatten a storage's per-component SoA columns into a single array for
  * cheap iteration (e.g. capacity checks, grow loops).
+ *
+ * @param columns - One storage's component → SoA column-record map.
+ * @returns A fresh array of every column across all components, in map then field order; the
+ *   column arrays themselves are shared with `columns`, not copied.
  */
 export function collectFlatColumns(
   columns: Map<ComponentDescriptor, SoAColumns>,
@@ -300,7 +305,11 @@ export function collectFlatColumns(
 /**
  * Track an archetype's relation descriptors in the world for later
  * reverse-map operations (deduped across archetypes, reverse-map entries
- * pre-initialized). Returns true when the archetype carries any relation.
+ * pre-initialized).
+ *
+ * @param state - World whose `relations`, `reverseMap`, and `hasAnyRelations` are updated.
+ * @param arch - Archetype being registered; both its required and optional components are scanned.
+ * @returns `true` when the archetype carries any relation, required or optional.
  */
 function registerWorldRelations(state: WorldState, arch: ArchetypeDescriptor): boolean {
   let hasRelations = false;
@@ -328,6 +337,12 @@ interface RelationColumns {
 /**
  * Pre-compute the relation target columns for fast despawn source cleanup:
  * required relations first (bit 0), then optionals with their presence bit.
+ *
+ * @param arch - Archetype whose required and optional relations are collected.
+ * @param columns - The storage's component → SoA map; each relation's `target` column is taken
+ *   from here, so the returned columns alias the storage's.
+ * @returns Three freshly allocated parallel arrays — target columns, descriptors, and the
+ *   presence bit (0 for required relations) — aligned by index.
  */
 function collectRelationColumns(
   arch: ArchetypeDescriptor,
@@ -339,7 +354,7 @@ function collectRelationColumns(
 
   for (const comp of arch.components) {
     if (getRelationMeta(comp) !== undefined) {
-      const targetCol = columns.get(comp)?.target;
+      const targetCol = columns.get(comp)?.["target"];
       if (targetCol instanceof Float64Array) {
         relationTargetColumns.push(targetCol);
         relationDescriptors.push(comp);
@@ -349,7 +364,7 @@ function collectRelationColumns(
   }
   for (const comp of arch.optionals) {
     if (getRelationMeta(comp) !== undefined) {
-      const targetCol = columns.get(comp)?.target;
+      const targetCol = columns.get(comp)?.["target"];
       const optBit = arch.optionalBitLookup.get(comp);
       if (targetCol instanceof Float64Array && optBit !== undefined) {
         relationTargetColumns.push(targetCol);
@@ -363,7 +378,14 @@ function collectRelationColumns(
 }
 
 /**
- * Create a storage object for a single archetype in a world.
+ * Build the SoA columns for every column-carrying component of an archetype,
+ * collecting the reference columns despawn must clear.
+ *
+ * @param arch - Archetype whose components get columns; tag-only optionals get none.
+ * @returns `columns`: component → SoA map with every column sized to `INITIAL_ARCH_CAPACITY`;
+ *   `despawnClear`: the plain-array columns of reference-marked fields, whose freed slots are
+ *   cleared on despawn.
+ * @throws If a reference mark has no matching field name (invariant guard, unreachable)
  */
 function buildColumns(arch: ArchetypeDescriptor): {
   columns: Map<ComponentDescriptor, SoAColumns>;
@@ -441,10 +463,9 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
     optionalNotBitLookup: arch.optionalNotBitLookup,
   } as Storage;
 
-  // Add named SoA aliases (e.g., storage.Position = soa)
   for (const comp of [...arch.components, ...arch.optionals]) {
     const soa = columns.get(comp);
-    if (soa) {
+    if (soa !== undefined) {
       (storage as Record<string, unknown>)[comp.__ecstatic_name] = soa;
     }
   }
@@ -454,6 +475,13 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
 
 /**
  * Create a SoA (Structure of Arrays) for a component's fields.
+ *
+ * @param comp - Component whose declared fields become columns: width-marked and boolean fields
+ *   get typed arrays, ref and string fields plain arrays, and a relation gets an extra `target`
+ *   Float64Array outside its declared fields.
+ * @param capacity - Initial length of every column, in rows.
+ * @returns A fresh column record keyed by field name (plus `target` for relations).
+ * @throws If the field list has a hole (invariant guard, unreachable)
  */
 function createSoA(comp: ComponentDescriptor, capacity: number): SoAColumns {
   const fields = comp.__ecstatic_fields;
@@ -467,7 +495,7 @@ function createSoA(comp: ComponentDescriptor, capacity: number): SoAColumns {
     if (fieldName === undefined) throw new Error("invariant: field index out of bounds");
     const ctor = columnCtors[i];
 
-    if (ctor) {
+    if (ctor !== undefined) {
       // Width-marked field or boolean: use typed array
       soa[fieldName] = new ctor(capacity);
     } else {
@@ -479,7 +507,7 @@ function createSoA(comp: ComponentDescriptor, capacity: number): SoAColumns {
   // Relations get a `target` column outside __ecstatic_fields: packed entity
   // ids are floats, same as storage.entities.
   if (getRelationMeta(comp) !== undefined) {
-    soa.target = new Float64Array(capacity);
+    soa["target"] = new Float64Array(capacity);
   }
 
   return soa;
@@ -491,7 +519,9 @@ function createSoA(comp: ComponentDescriptor, capacity: number): SoAColumns {
  * Subsequent calls to register() or getStorage() will error unconditionally.
  * Calling destroyWorld twice is a no-op (not an error).
  *
- * @param world - The world to destroy
+ * @param world - World to tear down: every storage is emptied and detached (its `world` backref
+ *   set to `undefined`) and the world's own tables are reset; a world already destroyed is left
+ *   as is.
  */
 export function destroyWorld(world: World): void {
   const state = world as WorldState;

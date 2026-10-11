@@ -55,6 +55,16 @@ const QUERY_CACHE = new WeakMap<object, WeakMap<WorldState, ResolvedQuery>>();
  * Resolve (or reuse) the matching storages and matchers for a filter object
  * against a world. Stale entries (epoch mismatch after `register`/
  * `destroyWorld`) are re-resolved and replace the cached entry.
+ *
+ * @param state - World whose registered storages are searched and whose
+ *   `queryEpoch` validates the cache entry.
+ * @param target - The caller's filter object, used only as the cache identity
+ *   key; a fresh literal per call never hits the cache.
+ * @param filter - The already-normalized axes of `target`; resolution reads
+ *   these, not `target`.
+ * @returns The cached or freshly built resolution, with `storages[i]` paired
+ *   to `matchers[i]`; the object is shared with later calls, so callers must
+ *   not mutate it.
  */
 function resolveQuery(state: WorldState, target: object, filter: FilterAxes): ResolvedQuery {
   let perWorld = QUERY_CACHE.get(target);
@@ -91,7 +101,19 @@ function resolveQuery(state: WorldState, target: object, filter: FilterAxes): Re
  * match and empty storages are skipped; iteration within each storage is
  * reverse, so despawning the current entity is safe.
  *
+ * @param world - World whose registered archetypes are searched; `register`
+ *   and `destroyWorld` invalidate the cached resolution.
+ * @param comps - Non-empty component list, treated as the `all` axis; hoist it
+ *   to a constant so the per-world resolution cache keys on the same object
+ *   every call.
+ * @param filter - Alternative to `comps`: `{all, any?, none?}` where `all` is
+ *   a non-empty list; hoist it to a constant for the same cache-identity
+ *   reason as `comps`.
+ * @param fn - Called once per matching entity with the storage's pooled view
+ *   rebound in place; the same object is reused across calls, so keep the
+ *   `id` rather than the view for anything outliving the callback.
  * @throws If the `all` axis (or comps array) is empty
+ * @throws If `fn` is not a function (reachable only past the overload types)
  */
 export function query<const Comps extends readonly [ComponentDescriptor, ...ComponentDescriptor[]]>(
   world: World,

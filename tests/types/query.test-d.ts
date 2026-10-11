@@ -18,6 +18,7 @@ describe("query typing", () => {
     query(world, { all: [Position], any: [Shield, Stunned] }, (e) => {
       expectTypeOf(e.Shield).toEqualTypeOf<{ hp: number } | undefined>();
       expectTypeOf(e.Stunned).toEqualTypeOf<true | undefined>();
+      // oxlint-disable-next-line typescript/strict-boolean-expressions -- the test pins truthiness narrowing
       if (e.Shield) {
         e.Shield.hp = 1;
       }

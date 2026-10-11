@@ -31,6 +31,15 @@ import type { SpawnOverrides } from "./spawn.js";
  *
  * `relationDescriptors` lists required relations before optionals, so errors
  * surface in archetype declaration order.
+ *
+ * @param storage - Storage being spawned into; its `relationDescriptors`
+ *   drive the checks, so a storage with no relations is a no-op.
+ * @param overrides - The spawn's per-component override record, or
+ *   `undefined` for a default spawn; each relation is read by name.
+ * @throws If a required relation's override has no `target`, or names the 0
+ *   sentinel.
+ * @throws If an optional relation's override names the 0 sentinel as target.
+ * @throws If a relation's target is not alive in the storage's world.
  */
 export function assertRelationTargets(
   storage: Storage,
@@ -46,9 +55,21 @@ export function assertRelationTargets(
 }
 
 /**
- * Validate one relation's spawn override value against the birth-link grammar:
- * a required relation must name a live target, an optional one may omit the
- * birth link entirely but cannot name a dead or sentinel target.
+ * Validate one relation's spawn override value against the birth-link grammar.
+ *
+ * @param state - World whose generation table decides target liveness.
+ * @param name - Relation name, used only in error messages.
+ * @param optional - Whether the relation is optional on the archetype; an
+ *   optional relation may omit the birth link, a required one must name a
+ *   target.
+ * @param raw - The relation's override as the caller wrote it: `undefined`
+ *   or `true` (no birth link), `false` (stay unlinked; a required relation's
+ *   rejection is owned by `resolveRequiredOverride`), or a record whose
+ *   `target` is the link target.
+ * @throws If a required relation has no target.
+ * @throws If the target is the 0 sentinel.
+ * @throws If the target id's generation does not match the world's, i.e. the
+ *   target is dead or its index has been recycled.
  */
 function assertRelationTarget(
   state: WorldState,
@@ -62,7 +83,7 @@ function assertRelationTarget(
     return;
   }
 
-  const rawTarget = raw === undefined || raw === true ? undefined : raw.target;
+  const rawTarget = raw === undefined || raw === true ? undefined : raw["target"];
   if (rawTarget === undefined) {
     if (optional) {
       return;
@@ -89,10 +110,20 @@ export interface SpawnRange {
 }
 
 /**
- * Birth-link an optional relation for `count` rows starting at `denseStart`:
- * write the target column and record each source in the target's reverse
- * bucket. Targets are pre-validated by `assertRelationTargets`, so this write
- * path never throws — see that function before adding a check here.
+ * Birth-link an optional relation for a run of freshly spawned rows: write
+ * the target column and record each source in the target's reverse bucket.
+ * Targets are pre-validated by `assertRelationTargets`, so this write path
+ * never throws — see that function before adding a check here.
+ *
+ * @param range - Storage plus the rows to link, `count` dense rows starting
+ *   at `denseStart`, all of which must already hold their entity ids.
+ * @param comp - The optional relation being linked; also keys the reverse
+ *   map.
+ * @param soa - The relation's column record on the storage; only its `target`
+ *   column is written.
+ * @param rawTarget - Target entity id from the override; 0 (reachable only
+ *   under NDEBUG, where it is unvalidated) leaves the rows unlinked with no
+ *   reverse entry.
  */
 export function birthLinkOptional(
   range: SpawnRange,
@@ -109,7 +140,7 @@ export function birthLinkOptional(
     return;
   }
   // oxlint-disable-next-line typescript/no-non-null-assertion -- relation SoA always has a target column
-  const targetCol = soa.target!;
+  const targetCol = soa["target"]!;
   const targetIdx = entityIndex(target);
   const reverseCtx: ReverseCtx = { state: storage.world, rel: comp };
   for (let i = 0; i < count; i++) {
@@ -121,7 +152,7 @@ export function birthLinkOptional(
 }
 
 /**
- * Record reverse-map entries for the required relations of `count` freshly
+ * Record reverse-map entries for the required relations of a run of freshly
  * spawned rows, reading targets from the already-initialized target columns.
  *
  * Target presence (0 = not provided) and liveness are validated by
@@ -129,6 +160,12 @@ export function birthLinkOptional(
  * reverse entry that aliases onto a reused slot. Under NDEBUG both checks are
  * absent: the entity spawns unlinked on a 0 target, and no reverse entry is
  * recorded.
+ *
+ * @param storage - Storage the rows were spawned into; its parallel
+ *   `relationTargetColumns`, `relationDescriptors`, and `relationOptionalBits`
+ *   arrays are walked, skipping optional relations.
+ * @param denseStart - Dense index of the first new row.
+ * @param count - Number of consecutive new rows from `denseStart`.
  */
 export function insertRequiredRelationEntries(
   storage: Storage,
@@ -165,9 +202,15 @@ interface RequiredEntryCtx {
 }
 
 /**
- * Record one required-relation birth entry. A 0 target means "not provided",
- * only reachable under NDEBUG, where the entity is left unlinked with no
- * reverse entry.
+ * Record one required-relation birth entry in the reverse map.
+ *
+ * @param ctx - World state, the source's storage, and the relation being
+ *   recorded.
+ * @param target - Target entity id read from the target column; 0 means "not
+ *   provided", reachable only under NDEBUG, and leaves the entity unlinked
+ *   with no reverse entry.
+ * @param di - Dense row of the source entity; must already hold its entity
+ *   id.
  */
 function insertRequiredEntry(ctx: RequiredEntryCtx, target: number, di: number): void {
   if (target === 0) {

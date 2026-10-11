@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { checkVersion, syncVersion } from "../../scripts/sync-version.js";
 import { VERSION } from "../../src/index.js";
 
+/** Creates a temp project directory holding a package.json with `version` and an empty src/, and returns its path. */
 function createProject(version: string): string {
   const dir = join(
     tmpdir(),
@@ -89,7 +90,7 @@ describe("checkVersion", () => {
     try {
       checkVersion(dir);
     } catch {
-      // expected to throw
+      // the mismatch error is not under test here; only the untouched file is asserted below
     }
 
     const after = readFileSync(join(dir, "src", "version.ts"), "utf-8");

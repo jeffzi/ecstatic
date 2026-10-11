@@ -22,7 +22,14 @@ function generateContent(version: string): string {
   return `${HEADER}/** The package's semver, synced from package.json at build time. */\nexport const VERSION: string = "${version}";\n`;
 }
 
-/** Write `src/version.ts` from the version in `package.json`. Idempotent. */
+/**
+ * Write `src/version.ts` from the version in `package.json`. Idempotent.
+ *
+ * @param projectRoot - Directory holding `package.json` and `src/`; the CLI passes
+ * `process.cwd()`.
+ * @throws Error when `package.json` has no string `version` field; a read or write failure
+ * propagates as the filesystem error itself.
+ */
 export function syncVersion(projectRoot: string): void {
   const version = readPackageVersion(projectRoot);
   const content = generateContent(version);
@@ -32,7 +39,10 @@ export function syncVersion(projectRoot: string): void {
 /**
  * Verify that `src/version.ts` matches `package.json`.
  *
- * @throws Error naming both versions when they differ.
+ * @param projectRoot - Directory holding `package.json` and `src/`; the CLI passes
+ * `process.cwd()`.
+ * @throws Error naming both versions when they differ, or when `package.json` has no string
+ * `version` field; a missing `src/version.ts` propagates as the read error itself.
  */
 export function checkVersion(projectRoot: string): void {
   const packageVersion = readPackageVersion(projectRoot);

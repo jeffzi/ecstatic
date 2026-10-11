@@ -16,7 +16,12 @@ import { registerBench } from "./runner.js";
 
 let sink = 0;
 
-/** Accumulated spawn IDs and alive hits, kept live so V8 cannot elide the calls. */
+/**
+ * Accumulated spawn IDs and alive hits, kept live so V8 cannot elide the calls.
+ *
+ * @returns The running sum so far; meaningless as a number, it exists to be fed to
+ * `do_not_optimize` after `run` returns.
+ */
 export function sinkValue(): number {
   return sink;
 }

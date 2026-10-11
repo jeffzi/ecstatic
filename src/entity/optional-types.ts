@@ -15,7 +15,11 @@ export type ArchetypeOfStorage<S> = S extends Storage<infer A> ? A : ArchetypeDe
 /** Union of every component name on an archetype (required + optional). */
 export type AllNames<A> = ComponentName<ComponentsOf<A>[number] | OptionalsOf<A>[number]>;
 
-/** Union of optional component names on an archetype. */
+/**
+ * Union of optional component names on an archetype; a wide (untyped)
+ * archetype yields `string`, which makes {@link CheckOptional} skip
+ * compile-time validation.
+ */
 export type OptionalNames<A> = ComponentName<OptionalsOf<A>[number]>;
 
 /**

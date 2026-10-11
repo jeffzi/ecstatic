@@ -473,7 +473,6 @@ describe("matcher predicate parity (Alpha ∧ (Beta ∨ Gamma) ∧ ¬Delta)", ()
 
     expect(new Set(matchedIds(storage))).toStrictEqual(new Set([alphaBeta, alphaGamma]));
 
-    // Disabling the all-clause tag drops a previously matching entity.
     disable(storage, alphaBeta, Alpha);
     expect(matchedIds(storage)).toStrictEqual([alphaGamma]);
   });

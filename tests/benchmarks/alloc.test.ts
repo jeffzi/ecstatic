@@ -13,6 +13,7 @@ import {
 const BUDGET = 100;
 const EPSILON = 8;
 
+/** An "each_all" AllocResult with an ok verdict, with any field replaceable through `overrides`. */
 function allocResult(overrides: Partial<AllocResult> = {}): AllocResult {
   return { name: "each_all", measured: 0, budget: 0, verdict: "ok", ...overrides };
 }
@@ -23,9 +24,13 @@ function reportLines(report: string): string[] {
 }
 
 /**
- * Whitespace-separated tokens of the line whose first token is `name`, or `[]`
- * when no line names that op. Column padding is presentation, so the tests read
+ * Whitespace-separated tokens of the line whose first token is `name`.
+ * Column padding is presentation, so the tests read
  * tokens rather than exact spacing.
+ *
+ * @param report - The formatted alloc report.
+ * @param name - The op name to look up; matched against each line's first token.
+ * @returns The line's whitespace-separated tokens, or `[]` when no line names that op.
  */
 function tokensFor(report: string, name: string): string[] {
   const line = reportLines(report).find((candidate) => candidate.trim().split(/\s+/)[0] === name);

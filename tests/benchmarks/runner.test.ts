@@ -243,6 +243,10 @@ const CONTEXT: unknown = { cpu: { freq: 3.2 }, runtime: "node" };
  *
  * `stats`, `args` and `kind` are fields the runner never reads — they are here
  * so the tests can prove they survive parsing and merging.
+ *
+ * @param alias - The benchmark name.
+ * @param overrides - Fields replacing the defaults.
+ * @returns A BenchEntry shaped like one mitata json entry.
  */
 function benchEntry(alias: string, overrides: Partial<BenchEntry> = {}): BenchEntry {
   return {
@@ -253,6 +257,7 @@ function benchEntry(alias: string, overrides: Partial<BenchEntry> = {}): BenchEn
   };
 }
 
+/** A valid single-entry BenchReport for BENCH, with any field replaceable through `overrides`. */
 function report(overrides: Partial<BenchReport> = {}): BenchReport {
   return { layout: LAYOUT, benchmarks: [benchEntry(BENCH)], context: CONTEXT, ...overrides };
 }
@@ -340,7 +345,7 @@ describe("namespaceReport", () => {
 
     const entry = namespaced.benchmarks[0];
     expect(entry?.runs).toStrictEqual(customRuns);
-    expect(entry?.kind).toBe("iter");
+    expect(entry?.["kind"]).toBe("iter");
     expect(namespaced.layout).toStrictEqual(LAYOUT);
     expect(namespaced.context).toStrictEqual(CONTEXT);
   });

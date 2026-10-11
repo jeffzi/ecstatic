@@ -24,17 +24,17 @@ describe("register", () => {
 
     assert(posCol != null);
     expect(posCol).toBeDefined();
-    expect(posCol.x).toBeDefined();
-    expect(posCol.y).toBeDefined();
-    expect(posCol.x).toBeInstanceOf(Float64Array);
-    expect(posCol.y).toBeInstanceOf(Float64Array);
+    expect(posCol["x"]).toBeDefined();
+    expect(posCol["y"]).toBeDefined();
+    expect(posCol["x"]).toBeInstanceOf(Float64Array);
+    expect(posCol["y"]).toBeInstanceOf(Float64Array);
 
     const velCol = storage.columns.get(Velocity);
 
     assert(velCol != null);
     expect(velCol).toBeDefined();
-    expect(velCol.vx).toBeDefined();
-    expect(velCol.vy).toBeDefined();
+    expect(velCol["vx"]).toBeDefined();
+    expect(velCol["vy"]).toBeDefined();
   });
 
   it("starts with zero entities", () => {
@@ -119,7 +119,7 @@ describe("column construction", () => {
 
     const soa = storage.columns.get(Comp);
     assert(soa != null);
-    const col = soa.x;
+    const col = soa["x"];
     expect(col).toBeInstanceOf(Float64Array);
   });
 
@@ -133,7 +133,7 @@ describe("column construction", () => {
 
     const soa = storage.columns.get(Comp);
     assert(soa != null);
-    const col = soa.active;
+    const col = soa["active"];
     expect(col).toBeInstanceOf(Uint8Array);
   });
 
@@ -147,7 +147,7 @@ describe("column construction", () => {
 
     const soa = storage.columns.get(Comp);
     assert(soa != null);
-    const col = soa.target;
+    const col = soa["target"];
     expect(Array.isArray(col)).toBe(true);
   });
 
@@ -161,7 +161,7 @@ describe("column construction", () => {
 
     const soa = storage.columns.get(Comp);
     assert(soa != null);
-    const col = soa.count;
+    const col = soa["count"];
     expect(col).toBeInstanceOf(Int32Array);
   });
 });
@@ -172,7 +172,7 @@ describe("named SoA aliases", () => {
     const Arch = archetype([Position]);
     const storage = register(world, Arch);
 
-    expect(storage.WorldTestPosition).toBeDefined();
+    expect(storage["WorldTestPosition"]).toBeDefined();
     expect(storage).toHaveProperty("WorldTestPosition.x");
     expect(storage).toHaveProperty("WorldTestPosition.y");
   });
@@ -220,7 +220,7 @@ describe("optional components with fields", () => {
 
     const optCol = storage.columns.get(Opt);
     expect(optCol).toBeDefined();
-    expect(optCol?.optVal).toBeInstanceOf(Float64Array);
+    expect(optCol?.["optVal"]).toBeInstanceOf(Float64Array);
   });
 
   it("skips columns for optional tag components (no fields)", () => {
@@ -241,7 +241,7 @@ describe("optional components with fields", () => {
     const Arch = archetype([Position], [Opt]);
     const storage = register(world, Arch);
 
-    expect(storage.OptWithAlias).toBeDefined();
+    expect(storage["OptWithAlias"]).toBeDefined();
     expect(storage).toHaveProperty("OptWithAlias.value", expect.any(Float64Array));
   });
 });

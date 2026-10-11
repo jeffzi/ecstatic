@@ -25,6 +25,10 @@ import {
   insertRequiredRelationEntries,
 } from "./spawn-link.js";
 
+// ---------------------------------------------------------------------------
+// Spawn override types
+// ---------------------------------------------------------------------------
+
 /**
  * Per-component spawn overrides, keyed by component name.
  *
@@ -119,19 +123,23 @@ export type OptionalSpawnValue<P> =
 export type SpawnOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescriptor extends A
   ? SpawnOverrides
   : {
-        [P in ComponentsOf<A>[number] as IsRelationSlot<P> extends true
-          ? never
-          : ComponentName<P>]?: RequiredSpawnValue<P>;
+        [
+          P in ComponentsOf<A>[number] as IsRelationSlot<P> extends true ? never : ComponentName<P>
+        ]?: RequiredSpawnValue<P>;
       } & {
         // Required relations MUST be provided at spawn — their keys are non-optional.
-        [P in ComponentsOf<A>[number] as IsRelationSlot<P> extends true
-          ? ComponentName<P>
-          : never]: RelationSpawnValue<P>;
+        [
+          P in ComponentsOf<A>[number] as IsRelationSlot<P> extends true ? ComponentName<P> : never
+        ]: RelationSpawnValue<P>;
       } & {
         [P in OptionalsOf<A>[number] as ComponentName<P>]?: OptionalSpawnValue<P>;
       } extends infer S
     ? { [K in keyof S]: S[K] }
     : never;
+
+// ---------------------------------------------------------------------------
+// Single spawn
+// ---------------------------------------------------------------------------
 
 /**
  * Spawn an entity with optional component field overrides.
@@ -143,6 +151,14 @@ export type SpawnOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescript
  * Atomic in checked mode: a relation birth-link target that is missing, 0, or
  * stale is rejected before any allocation, so the world is left untouched.
  *
+ * @param storage - Archetype storage the entity joins. This form accepts only archetypes without
+ *   a required relation, since omitted overrides cannot supply the mandatory birth-link target;
+ *   the overload with mandatory overrides accepts any storage.
+ * @param overrides - Per-component values keyed by component name: a field record patches the
+ *   listed fields (values stored by reference, not cloned), `true` keeps defaults, and on an
+ *   optional component `false` or absence leaves it disabled. Omitted means every required
+ *   component takes its defaults and no optional is enabled.
+ * @returns The packed generational id of the new entity, branded with the storage's archetype.
  * @throws If the world is out of entity indices
  * @throws If an override sets a required component to `false`
  * @throws (checked mode) If a relation birth-link target is missing, 0, or stale
@@ -196,10 +212,21 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   return eid;
 }
 
+// ---------------------------------------------------------------------------
+// Allocation and growth
+// ---------------------------------------------------------------------------
+
 /**
- * Allocate a single entity index: pop from the freelist if one is available,
- * otherwise allocate fresh (growing world arrays and initializing the slot's
- * generation value as needed).
+ * Allocate a single entity index: pop from the freelist if one is available, otherwise allocate
+ * fresh (growing world arrays and initializing the slot's generation value as needed).
+ *
+ * @param state - World whose freelist, `nextIndex`, and generation table are advanced; a fresh
+ *   allocation may replace `generation` and `sparse` with grown arrays, so re-read them after
+ *   the call.
+ * @returns The allocated entity index. A recycled slot keeps the generation despawn already
+ *   advanced; a fresh one is initialized to generation 1, so `state.generation[index]` is the
+ *   packed id to hand out either way.
+ * @throws If every index below `MAX_INDEX` is in use and the freelist is empty.
  */
 function allocateOneIndex(state: WorldState): number {
   if (state.freeHead !== NO_FREE_SLOT) {
@@ -221,7 +248,16 @@ function allocateOneIndex(state: WorldState): number {
   return index;
 }
 
-/** Copy a column into a double-capacity replacement of the same constructor. */
+/**
+ * Copy a column into a replacement of the same constructor at a new capacity.
+ *
+ * @param col - Typed-array column to copy from; left untouched, so callers must store the
+ *   replacement everywhere the old array was aliased.
+ * @param capacity - Length of the replacement; never smaller than `col.length`, or
+ *   `TypedArray.set` throws.
+ * @returns A fresh typed array of `col`'s constructor with `col`'s contents at the front and
+ *   zeros after.
+ */
 function grownColumn<T extends TypedArray>(col: T, capacity: number): T {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- TypedArray constructor pattern
   const ctor = col.constructor as new (n: number) => T;
@@ -231,9 +267,11 @@ function grownColumn<T extends TypedArray>(col: T, capacity: number): T {
 }
 
 /**
- * Grow world arrays (generation, sparse, entityArch) to double capacity and
- * refresh the aliases on every registered storage — nothing may keep pointing
- * at a replaced array.
+ * Grow world arrays (generation, sparse, entityArch) to double capacity and refresh the aliases
+ * on every registered storage — nothing may keep pointing at a replaced array.
+ *
+ * @param state - World whose `generation` and `sparse` are replaced (every storage's cached
+ *   aliases are rewritten to the new arrays) and whose `entityArch` is extended in place.
  */
 function growWorldArrays(state: WorldState): void {
   const capacity = state.generation.length * 2;
@@ -248,10 +286,14 @@ function growWorldArrays(state: WorldState): void {
 }
 
 /**
- * Grow every parallel array of a storage together (entities, mask, all
- * TypedArray columns) to double capacity. Plain-Array columns (ref/string)
- * auto-extend on indexed assignment and are never replaced, so despawnClear
- * references stay valid. flatColumns is rebuilt from the updated columns.
+ * Grow every parallel array of a storage together (entities, mask, all TypedArray columns) to
+ * double capacity. Plain-Array columns (ref/string) auto-extend on indexed assignment and are
+ * never replaced, so despawnClear references stay valid. flatColumns is rebuilt from the updated
+ * columns.
+ *
+ * @param storage - Storage whose capacity doubles: `entities`, `mask`, every typed column,
+ *   `flatColumns`, `relationTargetColumns`, and each matcher's `matched` array are replaced
+ *   together, so any of them cached across the call is stale.
  */
 function growStorageArrays(storage: Storage): void {
   const capacity = storage.entities.length * 2;
@@ -273,7 +315,7 @@ function growStorageArrays(storage: Storage): void {
   const relN = storage.relationN;
   for (let ri = 0; ri < relN; ri++) {
     // oxlint-disable-next-line typescript/no-non-null-assertion -- ri < relN ≤ relationDescriptors.length
-    const targetCol = storage.columns.get(storage.relationDescriptors[ri]!)?.target;
+    const targetCol = storage.columns.get(storage.relationDescriptors[ri]!)?.["target"];
     if (targetCol instanceof Float64Array) {
       storage.relationTargetColumns[ri] = targetCol;
     }
@@ -281,6 +323,10 @@ function growStorageArrays(storage: Storage): void {
 
   growMatcherArrays(storage, capacity);
 }
+
+// ---------------------------------------------------------------------------
+// Field initialization
+// ---------------------------------------------------------------------------
 
 function fillRange(
   col: { [i: number]: unknown },
@@ -294,10 +340,17 @@ function fillRange(
 }
 
 /**
- * Initialize SoA fields for `count` dense rows starting at `denseStart`:
- * per required component, per field (column-major), write the override value
- * when present (`!== undefined`), else the default for non-ref fields.
- * Ref fields with no override stay undefined (despawn cleared the slot).
+ * Initialize SoA fields for a run of dense rows: per required component, per field
+ * (column-major), write the override value when present (`!== undefined`), else the default for
+ * non-ref fields. Ref fields with no override stay undefined (despawn cleared the slot).
+ *
+ * @param storage - Storage whose required components' columns are written.
+ * @param denseStart - First dense row of the run; rows `[denseStart, denseStart + count)` must
+ *   already be reserved (`storage.n` advanced and arrays grown).
+ * @param count - Number of consecutive rows to fill; every row gets the same values.
+ * @param overrides - Spawn overrides keyed by component name; `undefined` means defaults
+ *   everywhere. A required relation additionally takes its `target` from its record here.
+ * @throws If an override sets a required component to `false`.
  */
 function initComponentFields(
   storage: Storage,
@@ -330,17 +383,22 @@ function initComponentFields(
 
     // Target column lives outside __ecstatic_fields, directly in the SoA.
     if (getRelationMeta(comp) !== undefined) {
-      initRelationTarget(soa, denseStart, count, fieldOverrides?.target);
+      initRelationTarget(soa, denseStart, count, fieldOverrides?.["target"]);
     }
   }
 }
 
 /**
- * Initialize a relation's target column for `count` rows: the override target
- * when provided, else sentinel 0. Unlinked relations store 0 (not undefined)
- * so liveness checks fail naturally — no live packed id is ever 0
- * (generations start at MAX_INDEX + index), so 0 exclusively means
- * "not linked".
+ * Initialize a relation's target column for a run of rows. Unlinked relations store 0 (not
+ * undefined) so liveness checks fail naturally — no live packed id is ever 0 (generations start
+ * at MAX_INDEX + index), so 0 exclusively means "not linked".
+ *
+ * @param soa - The relation component's column record; a record without a `target` column is a
+ *   no-op.
+ * @param denseStart - First dense row of the run.
+ * @param count - Number of consecutive rows written.
+ * @param targetOverride - Packed id of the birth-link target, written as-is to every row;
+ *   `undefined` writes the 0 sentinel instead.
  */
 function initRelationTarget(
   soa: SoAColumns,
@@ -348,7 +406,7 @@ function initRelationTarget(
   count: number,
   targetOverride: unknown,
 ): void {
-  const targetCol = soa.target;
+  const targetCol = soa["target"];
   if (targetCol === undefined) {
     return;
   }
@@ -358,11 +416,15 @@ function initRelationTarget(
 }
 
 /**
- * Pre-populate optional-component columns with declared defaults for `count`
- * rows starting at `denseStart` (column-major). Runs on every spawn — fresh
- * and recycled — so a previous occupant's values never resurface; override
- * patches land on top afterwards. Ref fields stay untouched: despawn already
- * cleared their slots.
+ * Pre-populate optional-component columns with declared defaults (column-major). Runs on every
+ * spawn — fresh and recycled — so a previous occupant's values never resurface; override patches
+ * land on top afterwards. Ref fields stay untouched: despawn already cleared their slots.
+ *
+ * @param storage - Storage whose optional components' columns are written; field-less tag
+ *   optionals have no column record and are skipped, and relation optionals get the 0 target
+ *   sentinel.
+ * @param denseStart - First dense row of the run.
+ * @param count - Number of consecutive rows written.
  */
 function writeOptionalDefaults(storage: Storage, denseStart: number, count: number): void {
   for (const comp of storage.archetype.optionals) {
@@ -398,14 +460,22 @@ function writeOptionalDefaults(storage: Storage, denseStart: number, count: numb
 }
 
 /**
- * Resolve optional spawn overrides for `count` rows starting at `denseStart`
- * and return the accumulated presence mask: `true` enables with the
- * pre-populated defaults, a record enables and patches the listed fields on
- * top of them, `false`/absent stays disabled.
+ * Resolve optional spawn overrides for a run of rows and accumulate the presence mask: `true`
+ * enables with the pre-populated defaults, a record enables and patches the listed fields on top
+ * of them, `false`/absent stays disabled.
  *
- * Iterates the archetype's optionals, so unknown override keys are silently
- * ignored (the types reject them) — unlike `enable`, whose record form
- * throws on unknown names at runtime.
+ * Iterates the archetype's optionals, so unknown override keys are silently ignored (the types
+ * reject them) — unlike `enable`, whose record form throws on unknown names at runtime.
+ *
+ * @param storage - Storage whose optional columns are patched and whose `optionalBitLookup`
+ *   supplies each enabled component's bit.
+ * @param denseStart - First dense row of the run.
+ * @param count - Number of consecutive rows that receive the same patches and birth links.
+ * @param overrides - Spawn overrides keyed by component name; `undefined` short-circuits to an
+ *   empty mask with no column writes. An optional relation record carrying a `target` also
+ *   birth-links every row in the run.
+ * @returns The OR of the presence bits of every enabled optional — the mask every row in the
+ *   run should carry; the caller writes it to `storage.mask`, this function does not.
  */
 // Spawn hot path: the override grammar's per-kind continues and the
 // column-major field loops stay fused in one function so a batch pays one
@@ -456,28 +526,36 @@ function applyOptionalOverrides(
     // Optional relation birth-link: presence bit is already set above and
     // data fields patched (the synthetic target column is not in
     // __ecstatic_fields); write the target and record the reverse entries.
-    if (getRelationMeta(comp) !== undefined && raw.target !== undefined) {
-      birthLinkOptional(range, comp, soa, raw.target);
+    if (getRelationMeta(comp) !== undefined && raw["target"] !== undefined) {
+      birthLinkOptional(range, comp, soa, raw["target"]);
     }
   }
   return bits;
 }
 
+// ---------------------------------------------------------------------------
+// Batch spawn and override resolution
+// ---------------------------------------------------------------------------
+
 /**
- * Allocate entity indices and fill dense rows and SoA fields for a batch of
- * `count` entities, writing the spawned ids into `out`.
+ * Allocate entity indices and fill dense rows and SoA fields for a batch of entities.
  *
- * `out` is the caller's buffer on the out-parameter path and a fresh array
- * otherwise — one code shape, so a reused buffer costs no extra allocation or
- * copy. Ids are written at ascending indices (growing a short buffer in place),
- * then the length is set to trim any tail left by a longer buffer.
+ * Allocation is fused into the fill loop so no intermediate index array is built. Safe because a
+ * freelist pop never reads a sparse slot written earlier in the same batch: a popped slot leaves
+ * the chain before its sparse entry is overwritten with a dense index.
  *
- * Allocation is fused into the fill loop so no intermediate index array is
- * built. Safe because a freelist pop never reads a sparse slot written earlier
- * in the same batch: a popped slot leaves the chain before its sparse entry is
- * overwritten with a dense index.
- *
- * Assumes overflow was pre-checked and storage.n is the end of the batch.
+ * @param storage - Storage whose rows `[n - count, n)` are filled; `storage.n` must already have
+ *   been advanced past the batch and the arrays grown to hold it.
+ * @param count - Number of entities to allocate and fill; `assertBatchCapacity` must have passed
+ *   for this count so no allocation overflows.
+ * @param overrides - Spawn overrides applied identically to every row; `undefined` means
+ *   defaults everywhere with no optional enabled.
+ * @param out - Receives the spawned ids at indices `[0, count)`. The caller's buffer on the
+ *   out-parameter path and a fresh array otherwise — one code shape, so a reused buffer costs no
+ *   extra allocation or copy. Ids are written at ascending indices (growing a short buffer in
+ *   place), then the length is set to `count` to trim any tail left by a longer buffer.
+ * @throws If an override sets a required component to `false`.
+ * @throws If a fresh index reaches `MAX_INDEX` — unreachable once `assertBatchCapacity` passed.
  */
 function fillBatch(
   storage: Storage,
@@ -543,16 +621,19 @@ function fillBatch(
  * each slot's precomputed packed ID, appends dense rows, and initializes
  * component fields with the same defaults or override values applied to all.
  *
- * The 3rd argument disambiguates based on type:
- * - Array → out buffer (reused and returned)
- * - Object → overrides record (defaults otherwise)
- * - Omitted → fresh array returned
- *
- * The optional 4th argument is an out buffer (ignored if 3rd is already an array).
- *
  * Atomic: no mutation occurs if allocation would overflow MAX_INDEX, or if
  * checked mode rejects a relation birth-link target.
  *
+ * @param storage - Archetype storage the entities join. This form takes no overrides, so it
+ *   accepts only archetypes without a required relation (nothing could supply the mandatory
+ *   birth-link target); the overrides forms accept any storage.
+ * @param count - Number of entities to spawn; `0` allocates nothing and returns `out` emptied.
+ * @param out - Caller-owned buffer that receives the ids: written from index 0, grown in place
+ *   when shorter than `count`, then truncated so `out.length === count`. An array in this third
+ *   position selects this overload; the overrides forms take the buffer as an optional fourth
+ *   argument instead, and omitting it altogether returns a fresh array.
+ * @returns `out` itself, holding the ids in allocation order (recycled freelist slots first,
+ *   then fresh indices), each branded with the storage's archetype.
  * @throws If the batch would exceed entity index capacity
  * @throws (checked mode) If a relation birth-link target is missing, 0, or stale
  */
@@ -586,7 +667,7 @@ export function spawnMany(
   const state = storage.world;
 
   if (count === 0) {
-    if (outBuffer) {
+    if (outBuffer !== undefined) {
       outBuffer.length = 0;
       return outBuffer;
     }
@@ -619,9 +700,15 @@ export function spawnMany(
 }
 
 /**
- * Atomic overflow pre-check for a batch spawn: only the cold near-ceiling
- * path walks the freelist to count recycled slots; the common case is a
- * single comparison. Throws before any mutation.
+ * Atomic overflow pre-check for a batch spawn: only the cold near-ceiling path walks the
+ * freelist to count recycled slots; the common case is a single comparison. Runs before any
+ * mutation.
+ *
+ * @param state - World whose `nextIndex` and freelist decide how many fresh indices the batch
+ *   needs; read only.
+ * @param count - Batch size; the check passes when the fresh indices still required after
+ *   recycling every free slot all stay below `MAX_INDEX`.
+ * @throws If `count` entities cannot be allocated without an index reaching `MAX_INDEX`.
  */
 function assertBatchCapacity(state: WorldState, count: number): void {
   if (state.nextIndex + count - 1 < MAX_INDEX) {
@@ -640,9 +727,13 @@ function assertBatchCapacity(state: WorldState, count: number): void {
 }
 
 /**
- * Resolve a required component's spawn override: a record overrides fields,
- * `true` means defaults, `false` is an error (required components cannot be
- * disabled), absent means defaults.
+ * Resolve a required component's spawn override.
+ *
+ * @param name - The component's declared name, the key looked up in `overrides`.
+ * @param overrides - Spawn overrides record; `undefined` means no overrides at all.
+ * @returns The field record to patch on top of defaults, or `undefined` when the component takes
+ *   its defaults (`true` or absent).
+ * @throws If the override is `false` — required components cannot be disabled at spawn.
  */
 function resolveRequiredOverride(
   name: string,

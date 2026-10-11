@@ -12,7 +12,6 @@
 import type { ComponentDescriptor } from "./component.js";
 import { isComponentDescriptor } from "./component.js";
 
-// Re-export for convenience
 export type { ComponentDescriptor } from "./component.js";
 
 /** Archetype descriptor stored in the cache and returned to users */
@@ -59,7 +58,7 @@ export type OptionalsOf<A> =
     ? O
     : readonly ComponentDescriptor[];
 
-/** Module-level counter for archetype IDs */
+/** Next id to hand out; incremented by buildArchetypeDescriptor only, so ids are unique per process and never reused. */
 let nextArchetypeId = 0;
 
 /** Module-level canonicalization cache: concatenated key → descriptor */
@@ -105,9 +104,15 @@ const RESERVED_NAMES = new Set<string>([
 ]);
 
 /**
- * Compute the canonicalization key for an archetype:
- * format: `req:<key1><key2>...|opt:<key1><key2>...`
- * where each <keyN> is the component's __ecstatic_component_key.
+ * Compute the canonicalization key for an archetype.
+ *
+ * @param required - Required components in declaration order; order is part
+ *   of the key, so a reordered list names a different archetype.
+ * @param optionals - Optional components in declaration order, keyed apart
+ *   from `required` so the same component counts differently in each role.
+ * @returns `req:<key1><key2>...|opt:<key1><key2>...`, where each `<keyN>` is
+ *   the component's `__ecstatic_component_key`; equal for exactly the lists
+ *   that canonicalize to the same descriptor.
  */
 function computeArchetypeKey(
   required: readonly ComponentDescriptor[],
@@ -142,7 +147,7 @@ export function archetype(
 
   const key = computeArchetypeKey(required, optionals);
   const cached = archetypeCache.get(key);
-  if (cached) {
+  if (cached !== undefined) {
     return cached;
   }
 
@@ -226,7 +231,13 @@ export function Archetype(
   return ArchetypeDeclaration;
 }
 
-/** Type guard for the class {@link Archetype} returns, before it is subclassed. */
+/**
+ * Type guard for the class {@link Archetype} returns, before it is subclassed.
+ *
+ * @param value - Any value; non-functions are rejected without inspection.
+ * @returns `true` only for a function carrying `__ecstatic_archetype` as an
+ *   own property, so a subclass, which inherits the static, does not pass.
+ */
 function isArchetypeDeclarationBase(value: unknown): value is ArchetypeDeclarationBase {
   return typeof value === "function" && Object.hasOwn(value, "__ecstatic_archetype");
 }
@@ -262,10 +273,18 @@ export function resolveArchetype(arch: ArchetypeRef): ArchetypeDescriptor {
 }
 
 /**
- * Validate component lists for an archetype:
- * - No more than 32 optionals
- * - No reserved component names
- * - No duplicate components
+ * Validate component lists for an archetype before any descriptor is built.
+ *
+ * @param required - Candidate required components, checked in list order
+ *   after the optional count.
+ * @param optionals - Candidate optional components, checked after `required`,
+ *   so a component present in both lists is reported against the optional.
+ * @throws If `optionals` has more than 32 entries, the 32-bit presence-mask
+ *   limit.
+ * @throws If an entry is not a component descriptor.
+ * @throws If a component appears twice, within one list or across both.
+ * @throws If a component's name collides with a storage or descriptor field
+ *   (`RESERVED_NAMES`).
  */
 function validateArchetype(
   required: readonly ComponentDescriptor[],
@@ -296,6 +315,13 @@ function validateArchetype(
 
 /**
  * Construct an archetype descriptor with all required fields and lookups.
+ *
+ * @param required - Already-validated required components; the array is
+ *   stored as-is, not copied.
+ * @param optionals - Already-validated optional components; the entry at
+ *   position `i` is assigned presence bit `1 << i`.
+ * @returns A new descriptor with a fresh module-wide id and `archetype`
+ *   pointing at itself; the caller is responsible for caching it.
  */
 function buildArchetypeDescriptor(
   required: readonly ComponentDescriptor[],

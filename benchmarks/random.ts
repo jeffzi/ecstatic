@@ -11,15 +11,13 @@
 const UINT32_RANGE = 2 ** 32;
 
 /**
- * Create a mulberry32 generator seeded with `seed`.
+ * Create a mulberry32 generator.
  *
- * The returned function yields a float in `[0, 1)` and advances the generator
- * state on every call. Two generators built from the same seed emit the same
- * sequence.
- *
- * The seed domain is uint32: it is truncated toward zero and wrapped modulo
- * 2^32, so seeds differing only above that width — or only in their fractional
- * part — share a stream.
+ * @param seed - Any number; the domain is uint32, so it is truncated toward zero and wrapped
+ * modulo 2^32, and seeds differing only above that width — or only in their fractional part —
+ * share a stream.
+ * @returns A function yielding a float in `[0, 1)` and advancing its private state on every
+ * call; two generators built from the same seed emit the same sequence.
  */
 export function mulberry32(seed: number): () => number {
   let state = seed | 0;
@@ -32,9 +30,12 @@ export function mulberry32(seed: number): () => number {
 }
 
 /**
- * Fisher-Yates in-place shuffle driven by `rand`, returning `arr` itself.
+ * Fisher-Yates in-place shuffle.
  *
- * Pass a `mulberry32` generator to get a reproducible permutation.
+ * @param arr - Array permuted in place; every element stays, only positions change.
+ * @param rand - Source of floats in `[0, 1)`, called once per element after the first; pass a
+ * `mulberry32` generator to get a reproducible permutation.
+ * @returns `arr` itself, for chaining — no copy is made.
  */
 export function shuffle<T>(arr: T[], rand: () => number): T[] {
   for (let i = arr.length - 1; i > 0; i--) {

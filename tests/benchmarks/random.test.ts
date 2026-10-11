@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import { mulberry32, shuffle } from "../../benchmarks/random.js";
 
+/** Draws `count` successive values from `rand`. */
 function take(rand: () => number, count: number): number[] {
   return Array.from({ length: count }, () => rand());
 }
 
+/** The integers 0 through `count - 1`, ascending. */
 function range(count: number): number[] {
   return Array.from({ length: count }, (_, index) => index);
 }
 
+/** A numerically ascending copy of `values`. */
 function ascending(values: number[]): number[] {
   return values.toSorted((a, b) => a - b);
 }
@@ -21,6 +24,10 @@ function ascending(values: number[]): number[] {
  * values than the script holds is reporting that it makes a different number of
  * draws than expected, and recycling the script would hide that behind a
  * mismatched permutation.
+ *
+ * @param values - The draws to replay, in order.
+ * @returns A generator yielding each entry of `values` once.
+ * @throws Error when called more times than `values` holds.
  */
 function scripted(values: number[]): () => number {
   let index = 0;

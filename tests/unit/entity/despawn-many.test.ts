@@ -171,7 +171,6 @@ describe("despawnMany storage form", () => {
 
       despawn(storage, id2);
 
-      // id2 is stale — should be skipped
       expect(() => {
         despawnMany(storage, [id1, id2, id3]);
       }).not.toThrow();

@@ -17,7 +17,6 @@ import {
   u8,
 } from "../../src/index.js";
 
-// Test fixture: a simple reference type
 interface Handle {
   readonly __handle: unique symbol;
 }

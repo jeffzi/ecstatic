@@ -47,8 +47,8 @@ describe("spawnMany", () => {
     const posSoa = storage.columns.get(Position);
     assert(posSoa != null);
     for (let i = 0; i < 2; i++) {
-      expect(posSoa.x?.[i]).toBe(0);
-      expect(posSoa.y?.[i]).toBe(0);
+      expect(posSoa["x"]?.[i]).toBe(0);
+      expect(posSoa["y"]?.[i]).toBe(0);
     }
   });
 
@@ -66,8 +66,8 @@ describe("spawnMany", () => {
 
       assert(posSoa != null);
       for (let i = 0; i < 2; i++) {
-        expect(posSoa.x?.[i]).toBe(10);
-        expect(posSoa.y?.[i]).toBe(20);
+        expect(posSoa["x"]?.[i]).toBe(10);
+        expect(posSoa["y"]?.[i]).toBe(20);
       }
     });
 
@@ -84,8 +84,8 @@ describe("spawnMany", () => {
 
       assert(posSoa != null);
       for (let i = 0; i < 2; i++) {
-        expect(posSoa.x?.[i]).toBe(10);
-        expect(posSoa.y?.[i]).toBe(0);
+        expect(posSoa["x"]?.[i]).toBe(10);
+        expect(posSoa["y"]?.[i]).toBe(0);
       }
     });
   });
@@ -108,7 +108,6 @@ describe("spawnMany", () => {
       despawn(storage, id1);
       despawn(storage, id2);
 
-      // spawnMany should reuse those slots
       const newIds = spawnMany(storage, 2);
 
       const newId0 = newIds[0];
@@ -156,7 +155,6 @@ describe("spawnMany", () => {
       const id3 = spawnMany(storage, 1)[0];
       assert(id3 != null);
 
-      // Despawn only id1
       despawn(storage, id1);
 
       // spawnMany 2: first comes from freelist (id1's slot), second is fresh
@@ -238,7 +236,7 @@ describe("spawnMany", () => {
       const result = spawnMany(storage, 3, buf);
 
       expect(result).toHaveLength(3);
-      expect(result).toBe(buf); // same array reference
+      expect(result).toBe(buf);
       for (const id of result) {
         expect(alive(storage, id)).toBe(true);
       }
@@ -249,7 +247,6 @@ describe("spawnMany", () => {
       const Arch = archetype([Position]);
       const storage = register(world, Arch);
 
-      // Pre-populate buffer with 5 entities
       const buf = spawnMany(storage, 5);
       expect(buf).toHaveLength(5);
 
@@ -329,7 +326,7 @@ describe("spawnMany", () => {
 
       assert(posSoa != null);
       for (let i = 0; i < 2; i++) {
-        expect(posSoa.x?.[i]).toBe(42);
+        expect(posSoa["x"]?.[i]).toBe(42);
       }
     });
   });

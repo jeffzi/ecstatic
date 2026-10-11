@@ -1,5 +1,5 @@
 /**
- * Common entity operations: staleness checks and field override handling.
+ * Common entity operations: staleness checks and storage resolution.
  */
 
 import { DEBUG } from "../debug.js";
@@ -29,7 +29,6 @@ export function alive(
 
 /**
  * Validate that an entity ID is alive and belongs to the given storage (under DEBUG).
- * Called by get/set before accessing fields.
  *
  * @param storage - The storage to validate against
  * @param id - The entity ID to check

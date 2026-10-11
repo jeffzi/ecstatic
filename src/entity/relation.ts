@@ -20,12 +20,6 @@ import { resolveEntityArch } from "./common.js";
 import { disableOne, enableOne, writeFieldOverrides } from "./optional.js";
 import { reverseInsert, reverseRemove } from "./reverse-map.js";
 
-/**
- * Read the previous target from the relation's target column and, when it is
- * still alive, remove the source's entry from its reverse bucket. Sentinel 0
- * means "no target" and is skipped; a dead previous target needs no removal —
- * despawn already cleaned its bucket.
- */
 interface LinkCtx {
   world: World;
   rel: ComponentDescriptor;
@@ -33,6 +27,17 @@ interface LinkCtx {
   di: number;
 }
 
+/**
+ * Read the previous target from the relation's target column and, when it is
+ * still alive, remove the source's entry from its reverse bucket. Sentinel 0
+ * means "no target" and is skipped; a dead previous target needs no removal —
+ * despawn already cleaned its bucket.
+ *
+ * @param ctx - Link context: the world, the relation, the source storage's
+ *   target column, and the dense row.
+ * @param sourceIndex - Entity index of the source whose reverse entry is
+ *   removed.
+ */
 function removePreviousTarget(ctx: LinkCtx, sourceIndex: number): void {
   const prevTarget = ctx.targetColumn[ctx.di];
   if (prevTarget !== undefined && prevTarget !== 0) {
@@ -44,12 +49,18 @@ function removePreviousTarget(ctx: LinkCtx, sourceIndex: number): void {
 }
 
 /**
- * Resolve a relation's target column on a storage, throwing when the
- * entity's archetype does not carry the relation.
+ * Resolve a relation's target column on a storage.
+ *
+ * @param storage - Storage whose archetype must declare `rel` as a required
+ *   or optional relation.
+ * @param rel - Relation whose target column to read.
+ * @returns The storage's live target column, indexed by dense row; column
+ *   growth replaces it, so index it before the next spawn.
+ * @throws If the archetype does not carry the relation.
  */
 function resolveTargetColumn(storage: Storage, rel: ComponentDescriptor): Float64Array {
   const soa = storage.columns.get(rel);
-  const targetColumn = soa?.target;
+  const targetColumn = soa?.["target"];
   if (!(targetColumn instanceof Float64Array)) {
     throw new Error(ERROR_RELATION_NOT_ON_ARCHETYPE);
   }
@@ -64,10 +75,16 @@ function resolveTargetColumn(storage: Storage, rel: ComponentDescriptor): Float6
  * bit, refreshing matchers) and writes data fields. Either way the previous
  * target's reverse entry (if any, and alive) is removed, the target column
  * is written, and the source lands in the new target's reverse bucket.
- * Field values are stored by reference (no clone).
  *
- * World-scoped: accepts any EntityId and resolves it within the world.
- *
+ * @param world - World that owns both entities; the source's storage is
+ *   resolved from it, so any live id in the world is accepted.
+ * @param id - Source entity id; its archetype must carry `rel`.
+ * @param rel - Relation to write; a required relation only takes new data, an
+ *   optional one is also enabled.
+ * @param target - Target entity id, type-checked against the relation's
+ *   constraints; a stale target is rejected only under DEBUG.
+ * @param values - Data fields to overwrite, stored by reference without
+ *   cloning; omitted fields keep their current column values.
  * @throws If the relation is not on the entity's archetype
  * @throws If DEBUG and the source or target ID is stale
  */
@@ -125,8 +142,11 @@ export function link(
  * column to the 0 sentinel, and clears the presence bit (refreshing
  * matchers). Unlinking an already-unlinked optional relation is a no-op.
  *
- * World-scoped: accepts any EntityId and resolves it within the world.
- *
+ * @param world - World that owns the entity; the source's storage is resolved
+ *   from it, so any live id in the world is accepted.
+ * @param id - Source entity id, validated for staleness only under DEBUG.
+ * @param rel - Optional relation to detach; a required relation cannot be
+ *   unlinked.
  * @throws If the relation is not on the entity's archetype
  * @throws If the relation is required on the archetype
  * @throws If DEBUG and the source ID is stale

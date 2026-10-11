@@ -31,12 +31,14 @@ export interface Matcher {
 }
 
 /**
- * Full all/any/none matcher test against an entity bitmask:
+ * Full all/any/none matcher test against an entity bitmask.
  *
- * - `allMask` — every required optional bit must be set.
- * - `anyMask` — at least one of these bits must be set, unless the matcher
- *   constrains none (`anyMask === 0` short-circuits to pass).
- * - `noneMask` — none of these bits may be set.
+ * @param mask - The row's optional-component presence bits, one bit per enabled optional.
+ * @param allMask - Bits that must all be set in `mask`; 0 imposes no constraint.
+ * @param anyMask - Bits of which at least one must be set in `mask`; 0 short-circuits to pass,
+ *   so a matcher that constrains no `any` axis never fails this leg.
+ * @param noneMask - Bits that must all be clear in `mask`; 0 imposes no constraint.
+ * @returns `true` when `mask` satisfies all three legs.
  */
 export function maskSatisfies(
   mask: number,
@@ -52,9 +54,18 @@ export function maskSatisfies(
 }
 
 /**
- * Returns an existing Matcher for the given masks, or creates and registers
- * a new one — deduped by the (all, any, none) triple. A matcher registered
- * on a storage with live rows backfills `matched` for all of them.
+ * Find or register the storage's matcher for an (all, any, none) mask triple — deduped, so
+ * repeated filter resolution against the same storage shares one `matched` cache.
+ *
+ * @param storage - Storage whose `matchers` and `matcherMatched` lists are searched and, on a
+ *   miss, appended to in lockstep.
+ * @param allMask - Optional bits every matching row must have set.
+ * @param anyMask - Optional bits of which a matching row needs at least one; 0 means no `any`
+ *   constraint.
+ * @param noneMask - Optional bits every matching row must have clear.
+ * @returns The already-registered matcher when the exact triple exists, otherwise a new one
+ *   whose `matched` array is sized to the storage capacity and backfilled for every live row
+ *   against its current mask. Shared by every caller of the same triple; never mutate its masks.
  */
 export function matcherFor(
   storage: Storage,
@@ -71,8 +82,8 @@ export function matcherFor(
     }
   }
 
-  // Capacity-sized so matched stays parallel to the dense arrays; backfill
-  // the live rows against their current masks.
+  // Capacity-sized (not n-sized) so matched stays parallel to the dense
+  // arrays.
   const matched = new Uint8Array(storage.entities.length);
   const n = storage.n;
   const maskArr = storage.mask;
@@ -89,10 +100,16 @@ export function matcherFor(
 }
 
 /**
- * Refresh layer — recompute the derived `matched` cache for one row after a
- * single mask change. `changedBit` carries the bits that were set or
- * cleared; matchers whose `filterMask` doesn't overlap are skipped, and that
- * skip leaves their visit sets intact.
+ * Refresh layer — recompute the derived `matched` cache for one row after a single mask change.
+ * Matchers whose `filterMask` doesn't overlap `changedBit` are skipped, and that skip leaves
+ * their visit sets intact.
+ *
+ * @param storage - Storage whose `matchers` and parallel `matcherMatched` arrays are updated.
+ * @param di - Dense row index whose flags are recomputed; must be a live row (`di < storage.n`).
+ * @param newMask - The row's complete mask after the change, tested as-is — `storage.mask[di]` is
+ *   not read, so callers may write it before or after this call.
+ * @param changedBit - The bits that were set or cleared by the change; a matcher is visited only
+ *   when this overlaps its `filterMask`.
  */
 export function refreshMatchersBit(
   storage: Storage,
@@ -114,10 +131,13 @@ export function refreshMatchersBit(
 }
 
 /**
- * Refresh layer — recompute the derived `matched` cache for one row against
- * a full spawn mask, across all of the storage's matchers. Runs
- * unconditionally on every spawn: recycled rows hold the previous
- * occupant's flags.
+ * Refresh layer — recompute the derived `matched` cache for one row against a full spawn mask,
+ * across all of the storage's matchers. Runs unconditionally on every spawn: recycled rows hold
+ * the previous occupant's flags.
+ *
+ * @param storage - Storage whose matchers are all visited; a storage with none returns at once.
+ * @param di - Dense row index of the freshly spawned entity.
+ * @param mask - The row's complete optional-presence mask as written at spawn.
  */
 export function refreshMatchersMask(storage: Storage, di: number, mask: number): void {
   const matcherN = storage.matchers.length;
@@ -134,10 +154,14 @@ export function refreshMatchersMask(storage: Storage, di: number, mask: number):
 }
 
 /**
- * Write layer — set optional-component bits for one row (the `enable`
- * primitive). ORs `mask` into the authoritative row mask, then refreshes the
- * derived cache; `mask` doubles as the changed-bits argument — every set bit
- * is newly enabled.
+ * Write layer — set optional-component bits for one row (the `enable` primitive), then refresh
+ * the derived cache so filtered iteration sees the change synchronously.
+ *
+ * @param storage - Storage whose `mask[di]` is updated and whose matchers are refreshed.
+ * @param di - Dense row index of a live entity.
+ * @param mask - Bits to OR into the row mask; the same value gates the refresh as the changed
+ *   bits, so pass the bits being enabled rather than a full mask (extra bits only cost extra
+ *   matcher visits).
  */
 export function applyMaskOr(storage: Storage, di: number, mask: number): void {
   const entityMask = storage.mask;
@@ -150,10 +174,15 @@ export function applyMaskOr(storage: Storage, di: number, mask: number): void {
 }
 
 /**
- * Write layer — clear optional-component bits for one row (the `disable`
- * primitive). ANDs `notMask` (the precomputed complement of the bits being
- * cleared) into the authoritative row mask, then refreshes the derived
- * cache; the positive bits being cleared are passed as `mask`.
+ * Write layer — clear optional-component bits for one row (the `disable` primitive), then
+ * refresh the derived cache so filtered iteration sees the change synchronously.
+ *
+ * @param storage - Storage whose `mask[di]` is updated and whose matchers are refreshed.
+ * @param di - Dense row index of a live entity.
+ * @param mask - The positive bits being cleared; only gates the refresh as the changed bits and
+ *   is never applied to the row mask itself.
+ * @param notMask - Precomputed complement of `mask`, ANDed into the row mask. Must agree with
+ *   `mask`: the write uses only this value and the refresh only `mask`.
  */
 export function applyMaskAnd(storage: Storage, di: number, mask: number, notMask: number): void {
   const entityMask = storage.mask;
@@ -166,12 +195,16 @@ export function applyMaskAnd(storage: Storage, di: number, mask: number, notMask
 }
 
 /**
- * Refresh layer (batch) — recompute the derived cache for every live row
- * after a batch mask change, with inverted nesting: per matcher, then per
- * row. Hoisting the per-matcher masks and `matched` array out of the row
- * loop eliminates the per-row lookups of the row-major shape. Matchers whose
- * `filterMask` doesn't overlap `changedBits` are skipped, leaving their
- * visit sets intact.
+ * Refresh layer (batch) — recompute the derived cache for every live row after a batch mask
+ * change, with inverted nesting: per matcher, then per row. Hoisting the per-matcher masks and
+ * `matched` array out of the row loop eliminates the per-row lookups of the row-major shape.
+ * Matchers whose `filterMask` doesn't overlap `changedBits` are skipped, leaving their visit
+ * sets intact.
+ *
+ * @param storage - Storage whose rows `[0, n)` are re-tested against each matcher; returns at
+ *   once when it has no matchers.
+ * @param changedBits - Union of every bit the batch set or cleared across all rows; a matcher is
+ *   visited only when this overlaps its `filterMask`.
  */
 export function refreshMatchersAll(storage: Storage, changedBits: number): void {
   const matcherN = storage.matchers.length;
@@ -192,7 +225,16 @@ export function refreshMatchersAll(storage: Storage, changedBits: number): void 
   }
 }
 
-/** One matcher's flags over the dense range [0, n), with the masks hoisted. */
+/**
+ * One matcher's flags over the dense range `[0, n)`, with the masks hoisted out of the loop.
+ *
+ * @param entityMask - The storage's per-row mask column (`storage.mask`), read per row.
+ * @param matcher - Matcher whose three masks are tested; flags are written through the `matched`
+ *   argument, which aliases `matcher.matched`.
+ * @param matched - Flag array written for rows `[0, n)`; the caller passes
+ *   `storage.matcherMatched[mi]`, the same object as `matcher.matched`.
+ * @param n - Number of live rows (`storage.n`); rows at or beyond it are left stale by design.
+ */
 function refreshOneMatcherDense(
   entityMask: Uint32Array,
   matcher: Matcher,
@@ -209,9 +251,17 @@ function refreshOneMatcherDense(
 }
 
 /**
- * Refresh layer (batch, ids form) — like {@link refreshMatchersAll} but over
- * pre-resolved dense rows (`rows[0..rowCount)`), reusing the caller's cached
- * indices so the refresh pass pays array reads instead of re-resolving ids.
+ * Refresh layer (batch, ids form) — like {@link refreshMatchersAll} but over pre-resolved dense
+ * rows, reusing the caller's cached indices so the refresh pass pays array reads instead of
+ * re-resolving ids.
+ *
+ * @param storage - Storage whose matchers and `mask` column are read; returns at once when it
+ *   has no matchers.
+ * @param rows - Dense row indices to re-test; only `rows[0..rowCount)` are read, so a longer
+ *   scratch buffer is fine.
+ * @param rowCount - Number of leading entries of `rows` that are valid.
+ * @param changedBits - Union of every bit the batch set or cleared; a matcher is visited only
+ *   when this overlaps its `filterMask`.
  */
 export function refreshMatchersRows(
   storage: Storage,
@@ -243,7 +293,15 @@ interface RowRefreshCtx {
   rowCount: number;
 }
 
-/** One matcher's flags over pre-resolved dense rows, with the masks hoisted. */
+/**
+ * One matcher's flags over pre-resolved dense rows, with the masks hoisted out of the loop.
+ *
+ * @param ctx - The mask column and row list shared by every matcher in the batch, built once per
+ *   {@link refreshMatchersRows} call.
+ * @param matcher - Matcher whose three masks are tested.
+ * @param matched - Flag array written at each listed row; the caller passes
+ *   `storage.matcherMatched[mi]`, the same object as `matcher.matched`.
+ */
 function refreshOneMatcherRows(ctx: RowRefreshCtx, matcher: Matcher, matched: Uint8Array): void {
   const { entityMask, rows, rowCount } = ctx;
   const allMask = matcher.allMask;
@@ -259,8 +317,13 @@ function refreshOneMatcherRows(ctx: RowRefreshCtx, matcher: Matcher, matched: Ui
 
 /**
  * Rebuild every matcher's `matched` array at the new capacity, keeping
- * `storage.matcherMatched[i]` the same object as `storage.matchers[i].matched`
- * (the flatColumns pattern: both views rebuilt together on growth).
+ * `storage.matcherMatched[i]` the same object as `storage.matchers[i].matched` (the flatColumns
+ * pattern: both views rebuilt together on growth).
+ *
+ * @param storage - Storage being grown; each of its matchers gets a fresh `Uint8Array` with the
+ *   old flags copied in, and `matcherMatched` is rewritten in place to alias them.
+ * @param capacity - New row capacity (the grown `entities.length`); never smaller than the
+ *   current `matched` length, or `TypedArray.set` throws.
  */
 export function growMatcherArrays(storage: Storage, capacity: number): void {
   const matchers = storage.matchers;

@@ -111,12 +111,14 @@ function budgetedResult(
 /**
  * Judge a measurement run against a budget table.
  *
- * Returns one result per op in the union of both key sets: the budgeted ops in
- * budget-table order first, then the measured-but-unbudgeted ops in measurement
- * order. A measurement exactly `epsilon` away from its budget on either side is
- * still `ok`.
- *
- * `measurements` and `budgets` are both in bytes per operation.
+ * @param measurements - Bytes per operation keyed by op name, as the gate measured them; a
+ * budgeted op missing here is reported `unmeasured`.
+ * @param budgets - Allowed bytes per operation keyed by op name; a measured op missing here is
+ * reported `unbudgeted`.
+ * @param epsilon - Half-width in bytes of the band around each budget that still counts as `ok`;
+ * a measurement exactly `epsilon` away from its budget on either side is still `ok`.
+ * @returns One result per op in the union of both key sets: the budgeted ops in budget-table
+ * order first, then the measured-but-unbudgeted ops in measurement order.
  */
 export function evaluateAlloc(
   measurements: Readonly<Record<string, number>>,
@@ -138,7 +140,13 @@ export function evaluateAlloc(
   return results;
 }
 
-/** Whether every op landed inside its budget band — an empty run passes. */
+/**
+ * Decide the gate's overall verdict.
+ *
+ * @param results - Per-op verdicts from `evaluateAlloc`.
+ * @returns `true` only when every verdict is `ok`, so `unbudgeted` and `unmeasured` fail too;
+ * an empty run passes.
+ */
 export function allocGatePasses(results: readonly AllocResult[]): boolean {
   return results.every((result) => result.verdict === "ok");
 }
@@ -158,7 +166,9 @@ function columnWidth(cells: readonly string[]): number {
  * verdict — closed by a line stating the gate outcome and, on failure, naming
  * every non-`ok` op.
  *
- * The returned string carries no trailing newline; the caller prints it.
+ * @param results - Per-op verdicts from `evaluateAlloc`, rendered in the order given.
+ * @returns The report text with columns padded to the widest cell, `-` for a missing measurement
+ * or budget, and no trailing newline; the caller prints it.
  */
 export function formatAllocReport(results: readonly AllocResult[]): string {
   const nameWidth = columnWidth(results.map((result) => result.name));

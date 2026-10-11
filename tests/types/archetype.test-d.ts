@@ -41,7 +41,6 @@ describe("spread component set in archetype", () => {
     const world = createWorld();
     const storage = register(world, archetype([...Transform, Health]));
 
-    // All three components are spawnable override keys
     spawn(storage, { Position: { x: 1 }, Velocity: { vx: 2 }, Health: { hp: 3 } });
     expectTypeOf(storage.archetype.components).toEqualTypeOf<
       readonly [typeof Position, typeof Velocity, typeof Health]

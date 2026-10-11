@@ -68,7 +68,16 @@ function median(values: readonly number[]): number {
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
 }
 
-/** Bytes per entity-operation for one op, measured in this process. */
+/**
+ * Measure one op's bytes per entity-operation in this process.
+ *
+ * @param build - Builder for the op; called exactly once, and the world it makes is never
+ * destroyed, since the process exits after measuring.
+ * @param collect - Forces a full garbage collection; called before every measured round so each
+ * delta starts from a settled heap.
+ * @returns The median `heapUsed` delta over `ROUNDS` measured rounds divided by `DEFAULT_N`, in
+ * bytes; not clamped, so a collection landing mid-body can make it negative.
+ */
 function measureOp(build: OpBuilder, collect: () => void): number {
   const op = build();
   for (let round = 0; round < WARMUP_ROUNDS; round++) op.body();
@@ -84,7 +93,13 @@ function measureOp(build: OpBuilder, collect: () => void): number {
   return median(deltas) / DEFAULT_N;
 }
 
-/** Child mode: measure one op and print its bytes/op as the only stdout line. */
+/**
+ * Child mode: measure one op and print its bytes/op as the only stdout line.
+ *
+ * @param name - Key into `ALLOC_OPS` naming the op to measure.
+ * @returns Process exit code: 0 after printing, `FAILURE_EXIT` when no `gc` is exposed or `name`
+ * is unknown, with the reason on stderr and nothing on stdout.
+ */
 function runChild(name: string): number {
   const gc = globalThis.gc;
   if (gc === undefined) {
@@ -106,7 +121,16 @@ function runChild(name: string): number {
   return 0;
 }
 
-/** The bytes/op a child printed, or the reason its output is unusable. */
+/**
+ * Read the number a child printed.
+ *
+ * @param name - Op the child measured; used only in the error message.
+ * @param stdout - The child's whole stdout, expected to be one numeric line; trimmed before
+ * parsing.
+ * @returns The printed value as bytes/op.
+ * @throws Error when the trimmed output is not a finite number; an empty stdout is not caught
+ * here, since `Number("")` is `0`.
+ */
 function parseChildValue(name: string, stdout: string): number {
   const value = Number(stdout.trim());
   if (!Number.isFinite(value)) {
@@ -115,7 +139,17 @@ function parseChildValue(name: string, stdout: string): number {
   return value;
 }
 
-/** Run one op in a fresh child and return its bytes/op; throws when the child fails. */
+/**
+ * Run one op in a fresh child process.
+ *
+ * The child is always Node with `--expose-gc`; the gate has no engine switch.
+ *
+ * @param name - Key into `ALLOC_OPS`, passed to the child as `--child <name>`.
+ * @param mainPath - Filesystem path of this script, which the child re-executes.
+ * @returns The child's bytes/op.
+ * @throws Error when the child cannot be spawned (the `spawnSync` error itself), exits with a
+ * non-zero status or a signal, or prints something other than a number.
+ */
 function measureInChild(name: string, mainPath: string): number {
   const spec = childSpawnSpec("node", { execPath: process.execPath, mainPath, benchName: name });
   const child = spawnSync(spec.command, [...spec.args], {
@@ -130,7 +164,14 @@ function measureInChild(name: string, mainPath: string): number {
   return parseChildValue(name, child.stdout);
 }
 
-/** Parent mode: one child per op, then the report and the verdict. */
+/**
+ * Parent mode: one child per op, then the report and the verdict.
+ *
+ * @returns Process exit code: 0 when every op is `ok`, otherwise `FAILURE_EXIT`; the report
+ * reaches stdout either way.
+ * @throws Error when any child fails, before the report is printed — the first failure aborts the
+ * run.
+ */
 function runParent(): number {
   const mainPath = fileURLToPath(import.meta.url);
   const measurements: Record<string, number> = {};

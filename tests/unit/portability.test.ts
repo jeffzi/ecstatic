@@ -69,9 +69,9 @@ describe("portability", () => {
 
       const visited: number[] = [];
       ecs.each(storage, (e) => {
-        visited.push(e.id as unknown as number);
-        expect(e.PortVmPosition?.x).toBe(10);
-        expect(e.PortVmPosition?.y).toBe(20);
+        visited.push(e["id"] as unknown as number);
+        expect(e["PortVmPosition"]?.["x"]).toBe(10);
+        expect(e["PortVmPosition"]?.["y"]).toBe(20);
       });
 
       expect(visited).toStrictEqual([id]);
@@ -100,7 +100,7 @@ describe("portability", () => {
       ecs.despawn(storage, id);
 
       expect(() => {
-        ecs.get(storage, id, (Position as Record<string, unknown>).x);
+        ecs.get(storage, id, (Position as Record<string, unknown>)["x"]);
       }).toThrow("stale entity ID");
     });
   });
@@ -129,7 +129,7 @@ describe("portability", () => {
       ecs.despawn(storage, id);
 
       expect(() => {
-        ecs.get(storage, id, (Position as Record<string, unknown>).x);
+        ecs.get(storage, id, (Position as Record<string, unknown>)["x"]);
       }).not.toThrow();
     });
   });

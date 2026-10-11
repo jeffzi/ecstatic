@@ -45,11 +45,11 @@ describe("despawn", () => {
 
     assert(pos != null);
     // Dense row 0: original entity (10,20)
-    expect(pos.x?.[0]).toBe(10);
-    expect(pos.y?.[0]).toBe(20);
+    expect(pos["x"]?.[0]).toBe(10);
+    expect(pos["y"]?.[0]).toBe(20);
     // Dense row 1: swapped-in entity (50,60)
-    expect(pos.x?.[1]).toBe(50);
-    expect(pos.y?.[1]).toBe(60);
+    expect(pos["x"]?.[1]).toBe(50);
+    expect(pos["y"]?.[1]).toBe(60);
     expect(storage.n).toBe(2);
   });
 
@@ -267,7 +267,7 @@ describe("despawn safety checks", () => {
 
     assert(col != null);
     // After swap-pop, tail slot (index 1) must be cleared to release the ref
-    expect(col.handle?.[1]).toBeUndefined();
+    expect(col["handle"]?.[1]).toBeUndefined();
   });
 
   it("world-form despawn is a no-op when entityArch[index] is unset", () => {

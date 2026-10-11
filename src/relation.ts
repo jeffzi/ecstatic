@@ -52,7 +52,7 @@ export type Relation<
   readonly target: RelationTargetFieldDescriptor;
 };
 
-/** Extracts the constraint tuple from a `Relation`. */
+/** Component tuple a relation's targets must carry; `never` when `R` is not a `Relation`. */
 export type RelationConstraints<R> = R extends {
   readonly __ecstatic_relation_meta: { constraints: infer C extends readonly Component[] };
 }
@@ -77,13 +77,20 @@ export type CheckRelationTarget<T> = "target" extends keyof T
   : object;
 
 /** Empty data-fields shape for pure links (intersects cleanly with the target slot). */
+// oxlint-disable-next-line typescript/no-generated-empty-object-type -- {} is the intent: it must add no keys when intersected with the target slot
 type NoFields = NonNullable<unknown>;
 
 /**
- * Returns the relation descriptor if `value` is a relation, `undefined` otherwise.
+ * Narrow an unknown value to a relation descriptor.
  *
  * Use this at runtime to distinguish relations from plain components when the
  * static type is unknown (e.g. registration wiring, reverse-map traversal).
+ *
+ * @param value - Any value, typically a component descriptor whose
+ *   relation-ness is not known statically.
+ * @returns The same object typed as a relation descriptor when it carries the
+ *   `isRelation` flag that `relation()` sets, `undefined` for anything else,
+ *   plain components included.
  */
 export function getRelationMeta(value: unknown): RelationDescriptor | undefined {
   if (typeof value !== "object" || value === null) {
@@ -104,10 +111,21 @@ export function getRelationMeta(value: unknown): RelationDescriptor | undefined 
  * - `relation("Name", { offsetX: 0 })` — data-carrying relation with no constraints (two-arg shorthand).
  * - `relation("Name", [Comp], { offsetX: 0 })` — data-carrying relation with constraints.
  *
- * `target` is a reserved field name; declaring it in `defaults` is rejected at
- * compile time and causes a runtime error. Relation names share the component
- * name namespace — re-declaring with equal shape returns the existing descriptor;
- * different shape throws.
+ * `target` is a reserved field name: a `defaults` key named `target` is
+ * rejected at compile time.
+ *
+ * @param name - Relation name, shared with the component name namespace; its
+ *   literal type becomes the descriptor's `N`.
+ * @param constraints - Components the target entity must have; omit for an
+ *   unconstrained relation.
+ * @param defaults - Data-field defaults for the relation; the key `target` is
+ *   reserved and rejected.
+ * @returns A relation descriptor that slots into archetype tuples; re-declaring
+ *   an identical shape returns the already-registered object.
+ * @throws If `defaults` names a `target` field (reachable only past the
+ *   compile-time check).
+ * @throws If `name` is already registered with a different shape.
+ * @throws Whatever {@link createDescriptor} throws for malformed `defaults`.
  */
 export function relation<N extends string>(name: N): Relation<N, NoFields, []>;
 export function relation<N extends string, T extends Record<string, FieldDefault>>(
@@ -148,7 +166,7 @@ export function relation(
 
   // Idempotent path: descriptor already has target from a prior registration
   if (!("target" in descriptor)) {
-    descriptor.target = {
+    descriptor["target"] = {
       __ecstatic_component: descriptor,
       __ecstatic_field: "target",
     };

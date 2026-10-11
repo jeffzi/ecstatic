@@ -35,7 +35,6 @@ describe("spawnMany", () => {
   it("resolves an EntityId[] argument to the out form, not overrides", () => {
     const buf = spawnMany(storage, 2);
 
-    // Reusing the returned array as an out buffer type-checks
     spawnMany(storage, 2, buf);
   });
 

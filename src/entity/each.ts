@@ -167,6 +167,11 @@ export interface BoundView {
  *
  * All accessor objects are built eagerly here; the per-row bind swaps only
  * the closed-over row index, so binding allocates nothing.
+ *
+ * @param storage - Storage whose archetype and SoA record the accessors close
+ *   over; the view is tied to this one storage for its whole lifetime.
+ * @returns A newly allocated view and its rebinder, owned by the per-storage
+ *   pool; the view reads an arbitrary row until `bind` has been called.
  */
 function buildView(storage: Storage): BoundView {
   let row = 0;
@@ -178,7 +183,16 @@ function buildView(storage: Storage): BoundView {
     },
   });
 
-  /** Getter/setter record over a data component's columns, sharing `row`. */
+  /**
+   * Getter/setter record over a data component's columns, sharing `row`.
+   *
+   * @param comp - Data component whose declared fields become accessors;
+   *   boolean fields are decoded from their 0/1 Uint8Array encoding.
+   * @param soa - The storage's column record for `comp`, read through on every
+   *   access rather than captured, so the accessors survive column growth.
+   * @returns One accessor per field, reading and writing whichever row the
+   *   enclosing view is currently bound to.
+   */
   const fieldAccessorsFor = (
     comp: ComponentDescriptor,
     soa: SoAColumns,
@@ -252,6 +266,12 @@ const viewPools = new WeakMap<Storage, { depth: number; views: BoundView[] }>();
  * building it on first use. Every acquire must be paired with a
  * {@link releaseView} (in a `finally`, so a throwing callback unwinds the
  * depth) — nested iterations over the same storage get distinct views.
+ *
+ * @param storage - Storage to iterate; its pool is created on first use and
+ *   keyed by storage identity.
+ * @returns The pooled view for the current nesting depth, shared with every
+ *   other iteration at that depth, so it must not be retained past the
+ *   matching release.
  */
 export function acquireView(storage: Storage): BoundView {
   let pool = viewPools.get(storage);
@@ -268,7 +288,12 @@ export function acquireView(storage: Storage): BoundView {
   return bound;
 }
 
-/** Return a view checked out by {@link acquireView} to the storage's pool. */
+/**
+ * Return a view checked out by {@link acquireView} to the storage's pool.
+ *
+ * @param storage - The same storage passed to the paired acquire; only that
+ *   storage's nesting depth is decremented.
+ */
 export function releaseView(storage: Storage): void {
   const pool = viewPools.get(storage);
   /* istanbul ignore next */
@@ -298,9 +323,17 @@ export function releaseView(storage: Storage): void {
  * accessible, and with a filter promotion/removal distributes over the
  * union, pruning members whose archetype cannot match the filter.
  *
- * @param storageOrStorages - The storage (or array of storages) to iterate
- * @param filterOrFn - A component filter, or the callback for the unfiltered form
- * @param maybeFn - Callback invoked per entity with the rebound view (filtered form)
+ * @param storage - A storage, union-typed storage, or array of storages; each
+ *   storage is walked from its last row down to row 0 through its own pooled
+ *   view.
+ * @param filter - Optional second argument of the filtered overloads: a bare
+ *   component array (shorthand for {all}) or an {all}/{any}/{none} filter;
+ *   only rows whose mask satisfies it are visited.
+ * @param fn - Called once per visited entity with the storage's pooled view
+ *   rebound in place; the same object is passed on every call, so keep the
+ *   `id` rather than the view for anything outliving the callback.
+ * @throws If the filtered form is called without a callback (reachable only
+ *   past the overload types).
  */
 export function each<S extends Storage>(storage: S, fn: (view: EachViewOf<S>) => void): void;
 export function each<
@@ -369,15 +402,24 @@ function eachStorage(
 
 /**
  * Iterate one storage against an already-resolved matcher (`null` or the
- * trivial matcher iterate unfiltered). Shared by `each` and `query` — query
- * passes matchers from its per-world resolution cache.
+ * trivial matcher iterate unfiltered).
+ *
+ * @param storage - Storage to walk; an empty storage returns before any view
+ *   is acquired.
+ * @param matcher - Resolved matcher whose per-row `matched` flags gate each
+ *   visit, read live so a same-pass enable or disable changes which
+ *   not-yet-visited rows are seen; `null` or an all-zero-mask matcher visits
+ *   every row.
+ * @param fn - Called once per visited row, from the last row down to row 0,
+ *   with the storage's pooled view rebound in place; the same object is
+ *   reused across calls and must not be retained.
+ * @throws Whatever `fn` throws; the pooled view is released first.
  */
 export function eachStorageMatched(
   storage: Storage,
   matcher: Matcher | null,
   fn: (view: EachView) => void,
 ): void {
-  // A trivial matcher (all masks zero) iterates unfiltered.
   const activeMatcher =
     matcher !== null && (matcher.allMask !== 0 || matcher.anyMask !== 0 || matcher.noneMask !== 0)
       ? matcher

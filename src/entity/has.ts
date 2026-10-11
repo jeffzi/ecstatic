@@ -19,7 +19,19 @@ import type {
   PromoteOptionals,
 } from "./optional-types.js";
 
-/** Builds the bitmask for `componentIds`; errors if any component is not optional on the storage. */
+/**
+ * Build the combined presence bitmask for a list of optional components.
+ *
+ * @param storage - Storage whose archetype assigns the presence bits; every
+ *   listed component must be declared optional on it.
+ * @param componentIds - Components to combine; order is irrelevant and
+ *   duplicates collapse into one bit.
+ * @returns The OR of each component's presence bit, ready to mask a row's
+ *   `storage.mask` entry.
+ * @throws If `componentIds` is empty.
+ * @throws If a listed component is not optional on the storage's archetype,
+ *   whether required there or absent.
+ */
 function buildOptionalMask(storage: Storage, componentIds: readonly ComponentDescriptor[]): number {
   if (componentIds.length === 0) {
     throw new Error(ERROR_OPTIONAL_CHECK_EMPTY);
@@ -56,6 +68,15 @@ function checkOptionalMask(
  * recording the proven components (phantom promotion) — and stays usable as a
  * plain boolean. The world form dispatches by id to the owning storage.
  *
+ * @param storage - Storage the entity lives in, or in the world form the
+ *   world to resolve it from; on success the storage guard narrows this
+ *   value's type to record the proven components.
+ * @param id - Generational entity id, validated for staleness only under
+ *   DEBUG.
+ * @param comp - One component declared optional on the storage's archetype;
+ *   the array form takes a non-empty list and requires all of them.
+ * @returns `true` when the component's presence bit is set on the entity's
+ *   row (every listed component's bit, in the array form).
  * @throws If any component is not optional on the archetype
  * @throws If the array form is given an empty list
  * @throws If DEBUG and the entity ID is stale
@@ -106,6 +127,14 @@ export function has(
  * components enabled (OR). Takes a component array — use `has()` for a
  * single component. The world form dispatches by id to the owning storage.
  *
+ * @param storage - Storage the entity lives in, or in the world form the
+ *   world to resolve it from.
+ * @param id - Generational entity id, validated for staleness only under
+ *   DEBUG.
+ * @param comps - Non-empty list of components declared optional on the
+ *   storage's archetype.
+ * @returns `true` when at least one listed component's presence bit is set on
+ *   the entity's row.
  * @throws If any component is not optional on the archetype
  * @throws If given an empty list
  * @throws If DEBUG and the entity ID is stale

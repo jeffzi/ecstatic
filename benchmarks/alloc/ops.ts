@@ -69,7 +69,14 @@ export type OpBuilder = () => AllocOp;
  */
 let sink = 0;
 
-/** N optional-relation sources plus one shared target; `linked` links every source in setup. */
+/**
+ * Build a world of `DEFAULT_N` optional-relation sources plus one shared target.
+ *
+ * @param linked - When `true`, every source is linked to the target through `Owner` during setup,
+ * so bodies that read relations have links to read.
+ * @returns The world, the source ids in spawn order, and the target id; the target is spawned
+ * first, from the same storage.
+ */
 function linkedWorld(linked: boolean): { world: World; sources: EntityId[]; target: EntityId } {
   const world = createWorld();
   const storage = register(world, linkArch);
@@ -167,7 +174,12 @@ const accessOps: Record<string, OpBuilder> = {
   },
 };
 
-/** `enable` and `disable` share one toggle body: neither can be steady-state alone. */
+/**
+ * `enable` and `disable` share one toggle body: neither can be steady-state alone.
+ *
+ * @returns A fresh op on a default world whose body enables `Alive` on every tracked entity, then
+ * disables it again; the measured bytes cover both halves.
+ */
 function toggleOp(): AllocOp {
   const { world, trackedStorage: storage, tracked } = benchCreateWorld();
   const body = (): void => {
@@ -252,7 +264,12 @@ const resourceOps: Record<string, OpBuilder> = {
   },
 };
 
-/** `link` and `unlink` share one pair body: neither can be steady-state alone. */
+/**
+ * `link` and `unlink` share one pair body: neither can be steady-state alone.
+ *
+ * @returns A fresh op on an unlinked `linkedWorld` whose body links every source to the target
+ * through `Owner`, then unlinks it again; the measured bytes cover both halves.
+ */
 function linkUnlinkOp(): AllocOp {
   const { world, sources, target } = linkedWorld(false);
   const body = (): void => {

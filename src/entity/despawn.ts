@@ -36,6 +36,10 @@ const DESPAWN_WORLD_BUCKETS: Map<Storage, number[]> = new Map();
  * Must run before swap-and-pop while the row's relation data is still at
  * `row`. Reads the pre-computed parallel arrays (no per-component lookups);
  * a 0 target means "never linked / unlinked" and needs no removal.
+ *
+ * @param storage - Storage owning the dying row; its relation target columns are read.
+ * @param row - Dense row of the dying entity, still holding its relation data.
+ * @param index - Entity index of the dying entity, the key removed from each target's bucket.
  */
 function relationSourceCleanup(storage: Storage, row: number, index: number): void {
   const relCols = storage.relationTargetColumns;
@@ -57,6 +61,10 @@ function relationSourceCleanup(storage: Storage, row: number, index: number): vo
  * Target cleanup: drop every reverse bucket keyed by a dying entity's index.
  * The watermark test rejects most entities (anything never targeted, and
  * every entity in relation-free worlds) before touching the relation list.
+ *
+ * @param world - World whose reverse map is pruned; nothing is read when it has no relations.
+ * @param index - Entity index of the dying entity; above `world.maxTargetIndex` it was never a
+ *   target and nothing is touched.
  */
 function relationTargetCleanup(world: WorldState, index: number): void {
   if (index <= world.maxTargetIndex) {
@@ -70,8 +78,13 @@ function relationTargetCleanup(world: WorldState, index: number): void {
 
 /**
  * Bulk target cleanup: for each world relation, delete every dying entity's
- * index from the reverse map. `getIndex` resolves the k-th entity's index;
- * the `maxTarget` watermark skips entities above the target range.
+ * index from the reverse map. Indices above the `world.maxTargetIndex`
+ * watermark were never targeted and are skipped without a map lookup.
+ *
+ * @param world - World whose reverse map is pruned; returns immediately when it has no relations.
+ * @param count - Number of dying entities, i.e. the range `[0, count)` passed to `getIndex`.
+ * @param getIndex - Resolves the k-th dying entity's entity index; called once per entity per
+ *   relation, so it must be cheap and side-effect free.
  */
 function bulkTargetCleanup(
   world: WorldState,
@@ -92,8 +105,11 @@ function bulkTargetCleanup(
 }
 
 /**
- * Advance a slot's generation by one (add MAX_INDEX to the packed ID),
- * wrapping to generation 1 when it would reach MAX_GEN.
+ * Advance a slot's generation by one, wrapping to generation 1 when it would reach MAX_GEN.
+ *
+ * @param packedId - The slot's current packed entity id (`index + generation × MAX_INDEX`).
+ * @param index - The slot's entity index, used to rebuild the id when the generation wraps.
+ * @returns The packed id of the slot's next generation; never equal to `packedId`.
  */
 function nextGeneration(packedId: number, index: number): number {
   const nextGen = packedId + MAX_INDEX;
@@ -112,6 +128,11 @@ function nextGeneration(packedId: number, index: number): number {
  * survivor sits above the boundary, so the pop scan stops at it and never
  * walks onto an already-filled slot — reaching the boundary means the
  * invariant is broken, and erroring beats an unbounded scan.
+ *
+ * @param storage - Storage being compacted; `n` drops by `count` and its freed tail is cleared.
+ * @param indices - Scratch array of marked entity indices; only `[0, count)` is read.
+ * @param count - Number of marked indices; at most `storage.n`.
+ * @throws If the compaction invariant is violated (a fill finds no survivor above the boundary)
  */
 function compactAndFreeMarked(storage: Storage, indices: number[], count: number): void {
   const world = storage.world;
@@ -158,6 +179,12 @@ function compactAndFreeMarked(storage: Storage, indices: number[], count: number
  * Freed-slot fill: each marked slot at or below the final boundary receives a
  * survivor popped off the tail (a slot is freed iff its entity's back-pointer
  * was cleared in phase 1).
+ *
+ * @param storage - Storage being compacted; rows, mask, columns, and matched flags move in place.
+ * @param indices - Scratch array of freed entity indices; only `[0, count)` is read.
+ * @param count - Number of freed indices.
+ * @param boundary - Final row count after compaction; freed rows below it receive a survivor.
+ * @throws If the survivor scan reaches the boundary, meaning the compaction invariant is broken
  */
 // Compaction hot path: the survivor scan, column copies, and matched-flag
 // carry must stay in one loop body — extracting them would split the
@@ -211,6 +238,10 @@ function fillFreedSlots(
 /**
  * Clears ref-marked columns over [compactedN, oldN) so despawned rows stop
  * pinning their referents.
+ *
+ * @param storage - Storage whose `despawnClear` columns are cleared; a no-op when it has none.
+ * @param oldN - Row count before despawning (exclusive end of the cleared range).
+ * @param compactedN - Row count after despawning (start of the cleared range).
  */
 function clearFreedTail(storage: Storage, oldN: number, compactedN: number): void {
   if (storage.hasDespawnClear) {
@@ -225,24 +256,19 @@ function clearFreedTail(storage: Storage, oldN: number, compactedN: number): voi
 /**
  * Despawn from storage (direct form).
  *
- * Stale entities (generation mismatch) are silently ignored — a defined no-op.
- * Under DEBUG, checks that the entity belongs to this storage.
- *
- * @param storage - The archetype storage
- * @param id - The entity ID to despawn
- *
- * @throws If DEBUG and entity does not belong to this storage
+ * @param storage - Storage the entity was spawned into; its row is removed by swap-and-pop.
+ * @param id - Generational entity id; a stale id (already despawned or reused) is a no-op,
+ *   never an error.
+ * @throws If DEBUG and the live entity belongs to another storage of the same world
  */
 export function despawn(storage: Storage, id: EntityId): void;
 
 /**
  * Despawn from world (world form).
  *
- * Resolves the storage from entityArch[index]. If the entity is stale or
- * does not exist, this is a no-op. Otherwise, delegates to despawn(storage, id).
- *
- * @param world - The world (has generation and entityArch)
- * @param id - The entity ID to despawn
+ * @param world - World that owns the entity; the storage is resolved from its `entityArch`.
+ * @param id - Generational entity id; a stale id (already despawned or reused) is a no-op,
+ *   never an error.
  */
 export function despawn(world: WorldState, id: EntityId): void;
 
@@ -257,12 +283,11 @@ export function despawn(storageOrWorld: Storage | WorldState, id: EntityId): voi
 
   const storage = isStorage(storageOrWorld) ? storageOrWorld : storageOrWorld.entityArch[index];
 
-  if (!storage) {
+  if (storage === undefined) {
     // World form: stale or no storage at index — already no-op'd by generation check above.
     return;
   }
 
-  // DEBUG check: entity must belong to this storage (direct form only)
   if (DEBUG && isStorage(storageOrWorld) && storageOrWorld.world.entityArch[index] !== storage) {
     throw new Error(ERROR_WRONG_STORAGE);
   }
@@ -282,51 +307,57 @@ function isStorage(obj: unknown): obj is Storage {
 }
 
 /**
- * Despawn all entities from storage.
+ * Despawn all entities from storage (storage form, no ids).
  *
- * @param storage - The archetype storage
+ * @param storage - Storage emptied in one pass: every row is freed, `n` drops to 0, and the
+ *   generation of every freed index advances so outstanding ids go stale.
  */
 export function despawnMany(storage: Storage): void;
 
 /**
- * Despawn specific entities from storage.
+ * Despawn specific entities from storage (storage form, with ids).
  *
- * Errors if a live entity ID appears more than once in the list (before despawning),
- * leaving the world intact. Silently skips stale IDs.
+ * The whole list is validated before any row is despawned: on a duplicate the world is left
+ * intact and a retry with a corrected list succeeds.
  *
- * @param storage - The archetype storage
- * @param ids - Array of entity IDs to despawn
- *
- * @throws If a duplicate live entity ID is found in the list
+ * @param storage - Storage every listed live entity must belong to.
+ * @param ids - Entity ids to despawn; a stale id (already despawned or reused) is skipped as a
+ *   no-op, never an error, but a live id listed twice throws. Must be a plain array, not a Set,
+ *   so duplicates are visible.
+ * @throws If a live entity id appears more than once in `ids`
+ * @throws If DEBUG and a live entity belongs to another storage
+ * @throws If the compaction invariant is violated (a fill finds no survivor above the boundary)
  */
 export function despawnMany(storage: Storage, ids: EntityId[]): void;
 
 /**
- * Despawn all entities from all storages in a world.
+ * Despawn all entities from all storages in a world (world form, no ids).
  *
- * @param world - The world
+ * @param world - World emptied storage by storage; its relation reverse map is rebuilt empty
+ *   and `maxTargetIndex` reset.
  */
 export function despawnMany(world: WorldState): void;
 
 /**
- * Despawn specific entities across all storages in a world.
+ * Despawn specific entities across all storages in a world (world form, with ids).
  *
- * Silently skips stale IDs and duplicate IDs (world form contract differs from storage form).
- *
- * @param world - The world
- * @param ids - Array of entity IDs to despawn
+ * @param world - World the ids belong to; each live id is routed to its owning storage.
+ * @param ids - Entity ids to despawn; a stale id (already despawned or reused) is skipped as a
+ *   no-op, never an error, and — unlike the storage form — a live id listed twice is silently
+ *   skipped too.
+ * @throws If the compaction invariant is violated (a fill finds no survivor above the boundary)
  */
 export function despawnMany(world: WorldState, ids: EntityId[]): void;
 
 export function despawnMany(storageOrWorld: Storage | WorldState, ids?: EntityId[]): void {
   if (isStorage(storageOrWorld)) {
-    if (!ids) {
+    if (ids === undefined) {
       despawnManyStorageNoIds(storageOrWorld);
     } else {
       despawnManyStorageWithIds(storageOrWorld, ids);
     }
   } else {
-    if (!ids) {
+    if (ids === undefined) {
       despawnManyWorldNoIds(storageOrWorld);
     } else {
       despawnManyWorldWithIds(storageOrWorld, ids);
@@ -337,6 +368,8 @@ export function despawnMany(storageOrWorld: Storage | WorldState, ids?: EntityId
 /**
  * Despawn all entities from storage (no ids form).
  * Clears storage.n to 0, advances generations for all entities, and releases despawnClear columns.
+ *
+ * @param storage - Storage to empty; its rows are pushed onto the world freelist in row order.
  */
 function despawnManyStorageNoIds(storage: Storage): void {
   const oldN = storage.n;
@@ -378,7 +411,11 @@ function despawnManyStorageNoIds(storage: Storage): void {
  *
  * On error (duplicate live id), restores all back-pointers so a retry can succeed.
  *
- * @throws If a duplicate live entity ID is found
+ * @param storage - Storage every listed live entity must belong to.
+ * @param ids - Entity ids to despawn; a stale id is skipped, a live id listed twice throws.
+ * @throws If a live entity id appears more than once in `ids`
+ * @throws If DEBUG and a live entity belongs to another storage
+ * @throws If the compaction invariant is violated (propagated from compaction)
  */
 function despawnManyStorageWithIds(storage: Storage, ids: EntityId[]): void {
   const world = storage.world;
@@ -421,6 +458,9 @@ function despawnManyStorageWithIds(storage: Storage, ids: EntityId[]): void {
 
 /**
  * Despawn all entities from all storages in a world.
+ *
+ * @param world - World to empty; every storage is cleared and the relation reverse map is
+ *   rebuilt with an empty bucket map per registered relation.
  */
 function despawnManyWorldNoIds(world: WorldState): void {
   for (const storage of world.storages.values()) {
@@ -440,7 +480,11 @@ function despawnManyWorldNoIds(world: WorldState): void {
 
 /**
  * Despawn specific entities across all storages in a world.
- * Silently skips stale IDs and duplicate IDs.
+ *
+ * @param world - World the ids belong to; live ids are bucketed per owning storage, then each
+ *   bucket is compacted in one pass.
+ * @param ids - Entity ids to despawn; stale ids and duplicate live ids are skipped without error.
+ * @throws If the compaction invariant is violated (propagated from compaction)
  */
 function despawnManyWorldWithIds(world: WorldState, ids: EntityId[]): void {
   // Partition pass: group live entity indices into per-storage buckets,

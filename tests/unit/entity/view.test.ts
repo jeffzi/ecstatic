@@ -101,12 +101,10 @@ describe("view — field access", () => {
       ViewTestVelocity: { vx: 3, vy: 0 },
     });
 
-    // Compound form
     each(s1, (e) => {
       e.ViewTestPosition.x += e.ViewTestVelocity.vx;
     });
 
-    // Expanded form
     each(s2, (e) => {
       e.ViewTestPosition.x = e.ViewTestPosition.x + e.ViewTestVelocity.vx;
     });
@@ -183,7 +181,6 @@ describe("view — nested each", () => {
     spawn(storage, { ViewTestPosition: { x: 1, y: 0 } });
     spawn(storage, { ViewTestPosition: { x: 2, y: 0 } });
 
-    // Sum of all other entities' x into own y (pairwise)
     each(storage, (outer) => {
       each(storage, (inner) => {
         if (outer.id !== inner.id) {

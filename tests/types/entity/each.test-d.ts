@@ -44,7 +44,6 @@ describe("each", () => {
     const posVelShield = register(world, archetype([Position, Velocity, Shield]));
 
     it("provides concrete types for common components only", () => {
-      // Directly pass union to each without intermediate variable
       const testFn = (storage: typeof posVel | typeof posVelHealth | typeof posVelShield) => {
         each(storage, (e) => {
           expectTypeOf(e.Position).toEqualTypeOf<{ x: number; y: number }>();

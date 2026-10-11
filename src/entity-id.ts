@@ -81,7 +81,12 @@ export const NO_FREE_SLOT = -1;
 
 /**
  * Assert that an entity index is within valid bounds.
- * Throws if index >= MAX_INDEX.
+ *
+ * @param index - Candidate index for a never-used slot, i.e. the world's `nextIndex` before it is
+ *   claimed; recycled freelist indices were checked when first issued and need no re-check.
+ *
+ * @throws If `index >= MAX_INDEX`, with {@link OVERFLOW_MSG}; nothing has been mutated yet, so the
+ *   world stays consistent after the throw
  */
 export function assertEntityIndex(index: number): void {
   if (index >= MAX_INDEX) {
@@ -89,7 +94,13 @@ export function assertEntityIndex(index: number): void {
   }
 }
 
-/** Hot-path extraction used throughout storage indexing. */
+/**
+ * Hot-path extraction used throughout storage indexing.
+ *
+ * @param id - Packed entity id; typed as a raw number so generation-table entries can be passed
+ *   without a brand.
+ * @returns The slot index in `[0, MAX_INDEX)`, independent of the id's generation.
+ */
 export function entityIndex(id: number): number {
   return id % MAX_INDEX;
 }
@@ -97,8 +108,13 @@ export function entityIndex(id: number): number {
 /**
  * Pack a fresh entity ID for a new index slot (gen=1, skipping gen=0 sentinel).
  *
- * Only used when a fresh (never-used) index slot is initialized. Reused slots
- * read the pre-computed ID directly from their generation table entry.
+ * Used when a fresh (never-used) index slot is initialized and when a slot's
+ * generation counter wraps at `MAX_GEN`. Otherwise reused slots read the
+ * pre-computed ID directly from their generation table entry.
+ *
+ * @param index - Slot index in `[0, MAX_INDEX)`; not range-checked here, `assertEntityIndex` runs
+ *   before a fresh slot is claimed.
+ * @returns The packed id `MAX_INDEX + index`, i.e. generation 1 for that slot.
  */
 export function initialEntityId(index: number): EntityId {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
@@ -108,6 +124,11 @@ export function initialEntityId(index: number): EntityId {
 /**
  * Extract the generation counter from a packed ID (cold path: debug/display only).
  * Hot paths use full-ID comparison (`generations[index] === id`) instead.
+ *
+ * @param id - Packed entity id; typed as a raw number so generation-table entries can be passed
+ *   without a brand.
+ * @returns The generation in `[0, MAX_GEN)`; issued ids start at 1, so 0 identifies the
+ *   "no entity" sentinel.
  */
 export function entityGen(id: number): number {
   return Math.floor(id / MAX_INDEX);
