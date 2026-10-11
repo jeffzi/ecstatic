@@ -150,7 +150,7 @@ collect-then-flush alternative, where systems mark the dead into a reused buffer
 flushes them after the loop. The buffer is emptied after each flush rather than replaced, which is
 required for correctness: IDs left behind would be handed to the next iteration's `despawnMany` as
 already-dead entities. The flush input is also what distinguishes this from
-[`many.despawn_half`](batch.md#despawn_half). That benchmark shuffles its ID list to defeat
+[`many/despawn_half`](batch.md#despawn_half). That benchmark shuffles its ID list to defeat
 sequential access, while IDs collected during `each()` arrive in descending dense order, so the
 flush's generation checks and freelist pushes walk the entity arrays sequentially — the input shape
 this idiom actually produces in a frame.

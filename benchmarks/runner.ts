@@ -15,8 +15,17 @@ export type Engine = "node" | "bun";
 
 const ENGINES: ReadonlySet<string> = new Set(["node", "bun"]);
 
+const DEFAULT_ENGINES: readonly Engine[] = ["node"];
+
 function isEngine(value: string): value is Engine {
   return ENGINES.has(value);
+}
+
+/** True when `engines` is exactly the default list (`["node"]`). */
+export function isDefaultEngines(engines: readonly Engine[]): boolean {
+  return (
+    engines.length === DEFAULT_ENGINES.length && DEFAULT_ENGINES.every((e, i) => e === engines[i])
+  );
 }
 
 /** Thrown for a malformed command line; the caller maps it to exit code 2. */
@@ -29,16 +38,20 @@ export class UsageError extends Error {}
  * spawning one child per benchmark; child mode runs the single named benchmark.
  */
 export type ParsedArgs =
-  | { mode: "parent"; filter?: string; engine: Engine }
+  | { mode: "parent"; filter?: string; engines: readonly Engine[] }
   | { mode: "child"; benchName: string };
 
 /**
- * Parse `[<filter>] [--engine node|bun]`, or `--child <name>`.
+ * Parse `[<filter>] [--engine node,bun]`, or `--child <name>`.
  *
  * `argv` is the argument list after the executable and script, i.e.
  * `process.argv.slice(2)`. The positional argument is a regex matched against
  * benchmark names and may appear before or after `--engine`; `--child` takes an
  * exact name and combines with nothing else.
+ *
+ * `--engine` accepts a comma-separated list of engines (e.g. `node,bun`). The
+ * flag may appear at most once; a repeated flag is a `UsageError` so a typo
+ * cannot silently drop an engine.
  *
  * Known limitation: a filter regex cannot begin with `-`, since it would parse
  * as a flag.
@@ -47,7 +60,7 @@ export type ParsedArgs =
  */
 export function parseArgs(argv: readonly string[]): ParsedArgs {
   let filter: string | undefined;
-  let engine: Engine | undefined;
+  let engines: readonly Engine[] | undefined;
   let benchName: string | undefined;
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -55,8 +68,11 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     const arg = argv[i]!;
 
     if (arg === "--engine") {
+      if (engines !== undefined) {
+        throw new UsageError("--engine may only appear once; list engines comma-separated");
+      }
       i += 1;
-      engine = toEngine(flagValue(argv, i, "--engine", "a value: node or bun"));
+      engines = toEngines(flagValue(argv, i, "--engine", "a value: node or bun"));
     } else if (arg === "--child") {
       i += 1;
       benchName = flagValue(argv, i, "--child", "a benchmark name");
@@ -70,13 +86,13 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   }
 
   if (benchName !== undefined) {
-    return childOnly(benchName, filter, engine);
+    return childOnly(benchName, filter, engines);
   }
 
-  const parentEngine = engine ?? "node";
+  const parentEngines = engines ?? DEFAULT_ENGINES;
   return filter === undefined
-    ? { mode: "parent", engine: parentEngine }
-    : { mode: "parent", filter, engine: parentEngine };
+    ? { mode: "parent", engines: parentEngines }
+    : { mode: "parent", filter, engines: parentEngines };
 }
 
 /** The argument at `index`, or a UsageError naming what `flag` expected. */
@@ -88,23 +104,42 @@ function flagValue(argv: readonly string[], index: number, flag: string, what: s
   return value;
 }
 
-function toEngine(value: string): Engine {
-  if (!isEngine(value)) {
-    throw new UsageError(`unknown engine '${value}': expected node or bun`);
+/** Parse a comma-separated engine list, rejecting empty items, unknowns, and duplicates. */
+function toEngines(value: string): readonly Engine[] {
+  const items = value.split(",");
+  const seen = new Set<string>();
+  const engines: Engine[] = [];
+
+  for (const item of items) {
+    if (item === "") {
+      throw new UsageError(`empty engine name in '${value}': expected ${engineList()}`);
+    }
+    if (!isEngine(item)) {
+      throw new UsageError(`unknown engine '${item}': expected ${engineList()}`);
+    }
+    if (seen.has(item)) {
+      throw new UsageError(`duplicate engine '${item}' in '${value}'`);
+    }
+    seen.add(item);
+    engines.push(item);
   }
-  return value;
+  return engines;
+}
+
+function engineList(): string {
+  return [...ENGINES].join(" or ");
 }
 
 /** Child mode is the parent's own invocation, so it tolerates no other argument. */
 function childOnly(
   benchName: string,
   filter: string | undefined,
-  engine: Engine | undefined,
+  engines: readonly Engine[] | undefined,
 ): ParsedArgs {
   if (filter !== undefined) {
     throw new UsageError("--child takes an exact benchmark name and accepts no filter");
   }
-  if (engine !== undefined) {
+  if (engines !== undefined) {
     throw new UsageError("--child is set by the parent, which picks the engine itself");
   }
   return { mode: "child", benchName };
@@ -114,6 +149,16 @@ function childOnly(
 export interface ChildSpawnSpec {
   command: string;
   args: readonly string[];
+}
+
+/**
+ * Describe why a child process exited abnormally, for an error message.
+ *
+ * A `null` signal means the process ran to completion and reports its exit
+ * code; a non-null signal means it was killed and the code is meaningless.
+ */
+export function describeAbnormalExit(code: number | null, signal: NodeJS.Signals | null): string {
+  return signal === null ? `exit code ${String(code)}` : `signal ${signal}`;
 }
 
 /**
@@ -175,9 +220,9 @@ const REGEX_METACHARACTERS = /[\\^$.*+?()[\]{}|]/g;
 /**
  * A regex source matching exactly `name` and nothing else.
  *
- * Benchmark names contain `.`, so the name is escaped as well as anchored:
- * unescaped, the filter for `access.get_1field` would also match
- * `access:get_1field`.
+ * The name is escaped as well as anchored — keep the escape even though
+ * current names carry no regex metacharacters: a future name that does must
+ * still select only itself.
  */
 export function anchoredFilter(name: string): string {
   return `^${name.replace(REGEX_METACHARACTERS, String.raw`\$&`)}$`;
@@ -343,9 +388,22 @@ export function parseChildReport(stdout: string): BenchReport {
       );
     }
   }
-  const entries = [entry];
+  return { layout: document["layout"], benchmarks: [entry], context: document["context"] };
+}
 
-  return { layout: document["layout"], benchmarks: entries, context: document["context"] };
+/**
+ * Prefix every benchmark alias in `report` with `engine/`, producing a new
+ * report without mutating the input.
+ *
+ * The parent calls this after `parseChildReport` so that benchmarks from
+ * different engines carry distinct aliases before `mergeReports`.
+ */
+export function namespaceReport(report: BenchReport, engine: Engine): BenchReport {
+  const benchmarks = report.benchmarks.map((entry) => ({
+    ...entry,
+    alias: `${engine}/${entry.alias}`,
+  }));
+  return { layout: report.layout, benchmarks, context: report.context };
 }
 
 /**

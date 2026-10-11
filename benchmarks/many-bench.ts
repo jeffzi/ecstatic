@@ -21,7 +21,7 @@ export function sinkValue(): number {
   return sink;
 }
 
-registerBench("many.spawn_empty", function* () {
+registerBench("many/spawn_empty", function* () {
   yield manualBench(
     () => {
       const ctx = benchCreateWorld();
@@ -33,7 +33,7 @@ registerBench("many.spawn_empty", function* () {
   );
 });
 
-registerBench("many.spawn_with_data", function* () {
+registerBench("many/spawn_with_data", function* () {
   yield manualBench(
     () => {
       const ctx = benchCreateWorld();
@@ -48,7 +48,7 @@ registerBench("many.spawn_with_data", function* () {
 // Writes into a caller-owned array instead of returning a fresh one. Setup runs
 // a full spawn/despawn cycle first so the buffer is already grown to N and the
 // timed call measures reuse, not the growth it would otherwise pay for once.
-registerBench("many.spawn_out_reuse", function* () {
+registerBench("many/spawn_out_reuse", function* () {
   yield manualBench(
     () => {
       const ctx = benchCreateWorld();
@@ -64,7 +64,7 @@ registerBench("many.spawn_out_reuse", function* () {
   );
 });
 
-registerBench("many.despawn", function* () {
+registerBench("many/despawn", function* () {
   yield manualBench(
     () => benchCreateWorld(),
     ({ trackedStorage, tracked }) => {
@@ -73,7 +73,7 @@ registerBench("many.despawn", function* () {
   );
 });
 
-registerBench("many.despawn_half", function* () {
+registerBench("many/despawn_half", function* () {
   yield manualBench(
     () => {
       const ctx = benchCreateWorld();
@@ -87,7 +87,7 @@ registerBench("many.despawn_half", function* () {
 
 // The all-entities overload: no ID list to walk, so the storage can clear its
 // rows wholesale instead of swap-and-popping each one.
-registerBench("many.despawn_all", function* () {
+registerBench("many/despawn_all", function* () {
   yield manualBench(
     () => benchCreateWorld(),
     ({ trackedStorage }) => {
@@ -98,7 +98,7 @@ registerBench("many.despawn_all", function* () {
 
 // IDs from two archetypes, shuffled together, despawned through the world
 // rather than a storage — each ID has to be routed to its own storage first.
-registerBench("many.despawn_world", function* () {
+registerBench("many/despawn_world", function* () {
   yield manualBench(
     () => {
       const ctx = benchCreateWorld();
