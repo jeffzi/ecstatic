@@ -15,9 +15,13 @@
  */
 
 import { validateFieldName } from "./component.js";
+import { isPlainRecord, structurallyEqual } from "./structural-equality.js";
 import type { World } from "./world.js";
 
-/** Metadata stored for each registered resource type. */
+/**
+ * Registry entry per resource: `fields` is the sorted field-name list, and
+ * `defaults` is the deep-cloned snapshot worlds initialize from.
+ */
 export interface ResourceMeta {
   readonly name: string;
   readonly fields: string[];
@@ -34,18 +38,12 @@ export type Resource<N extends string = string, T extends object = object> = num
   readonly __ecstatic_resource_meta: { name: N; fields: T };
 };
 
-/** Field value record of a resource. */
+/** Field-value shape (the `T` brand) of a resource ID; `never` when `R` is not a `Resource`. */
 export type ResourceFields<R> = R extends Resource<string, infer T> ? T : never;
 
 let nextResourceId = 0;
 const resourceRegistry = new Map<number, ResourceMeta>();
 const resourceNames = new Map<string, number>();
-
-/** True for objects whose prototype is `Object.prototype` or `null` — i.e. records, not instances. */
-function isPlainRecord(v: object): v is Record<string, unknown> {
-  const proto: unknown = Object.getPrototypeOf(v);
-  return proto === Object.prototype || proto === null;
-}
 
 /**
  * Recursively copies records, arrays, `Date`s, `Map`s, and `Set`s.
@@ -55,6 +53,9 @@ function isPlainRecord(v: object): v is Record<string, unknown> {
  * copying it would need semantics only its owner knows. `Map` keys and `Set`
  * members are likewise kept by reference, so identity-based membership survives
  * the copy; only the containers themselves and their values are fresh.
+ *
+ * @param value - Any value, including `null` and `undefined`; containers are copied, everything else is shared.
+ * @returns A fresh container when `value` is one of the copied kinds, otherwise `value` itself.
  */
 function cloneUnknown(value: unknown): unknown {
   if (typeof value !== "object" || value === null) {
@@ -86,87 +87,34 @@ function cloneUnknown(value: unknown): unknown {
   return copy;
 }
 
-function arraysEqual(a: unknown[], b: unknown[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (!structurallyEqual(a[i], b[i])) return false;
-  }
-  return true;
-}
-
-function mapsEqual(a: Map<unknown, unknown>, b: Map<unknown, unknown>): boolean {
-  if (a.size !== b.size) return false;
-  for (const [key, val] of a) {
-    if (!b.has(key) || !structurallyEqual(val, b.get(key))) return false;
-  }
-  return true;
-}
-
-function setsEqual(a: Set<unknown>, b: Set<unknown>): boolean {
-  if (a.size !== b.size) return false;
-  for (const member of a) {
-    if (!b.has(member)) return false;
-  }
-  return true;
-}
-
-function recordsEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
-  const keysA = Object.keys(a);
-  if (keysA.length !== Object.keys(b).length) return false;
-  for (const key of keysA) {
-    if (!Object.hasOwn(b, key) || !structurallyEqual(a[key], b[key])) return false;
-  }
-  return true;
-}
-
 /**
- * Type-dispatch comparison for two non-null objects. Falls through to identity
- * for class instances and functions (they reach `isPlainRecord` which returns
- * false, so `structurallyEqual`'s `a === b` at the top is the only match).
- */
-function objectsEqual(a: object, b: object): boolean {
-  if (Array.isArray(a)) return Array.isArray(b) && arraysEqual(a, b);
-  if (Array.isArray(b)) return false;
-  if (a instanceof Date) return b instanceof Date && a.getTime() === b.getTime();
-  if (b instanceof Date) return false;
-  if (a instanceof Map) return b instanceof Map && mapsEqual(a, b);
-  if (b instanceof Map) return false;
-  if (a instanceof Set) return b instanceof Set && setsEqual(a, b);
-  if (b instanceof Set) return false;
-  if (!isPlainRecord(a) || !isPlainRecord(b)) return false;
-  return recordsEqual(a, b);
-}
-
-/**
- * Mirrors `cloneUnknown`'s type dispatch for equality instead of copying.
+ * Deep copy of a resource field value. See `cloneUnknown` for what is copied and what is shared.
  *
- * Primitives compare by value, records/arrays/`Date`/`Map`/`Set` compare by
- * content (recursing into values), and everything else — functions and class
- * instances — compares by identity (`===`).
+ * @param value - Field value to copy; its declared type is preserved because the copy mirrors the input's shape.
+ * @returns The copy, typed as the input so it can be stored or returned in its place.
  */
-function structurallyEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== "object" || a === null || typeof b !== "object" || b === null) return false;
-  return objectsEqual(a, b);
-}
-
-/** Deep copy of a resource field value. See `cloneUnknown` for what is copied and what is shared. */
 function cloneValue<T>(value: T): T {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the clone preserves the input's shape
   return cloneUnknown(value) as T;
 }
 
 /**
- * Registers a new resource type and returns its numeric ID.
- *
- * Field names must be ASCII identifiers, the same rule `component()` applies.
- * `defaults` is deep-copied here, so mutating the caller's object afterwards
- * cannot reach any world: the registered snapshot is what worlds initialize
- * from. See `cloneUnknown` for which values are copied and which are shared.
+ * Registers a new resource type.
  *
  * Re-declaring an already-registered name is idempotent: if `defaults` is
  * structurally equal to the existing registration, the existing ID is
- * returned; if the shape differs, this throws.
+ * returned.
+ *
+ * @param name - Registry key, unique across resources but independent of the component namespace.
+ * @param defaults - Initial field values. Field names must be ASCII identifiers, the same rule
+ *   `component()` applies. The object is deep-copied here, so mutating it afterwards cannot reach
+ *   any world: the registered snapshot is what worlds initialize from. See `cloneUnknown` for
+ *   which values are copied and which are shared.
+ * @returns The numeric ID, branded with `name` and the field shape; a structurally equal
+ *   re-declaration returns the same ID.
+ *
+ * @throws If a key of `defaults` is not an ASCII identifier (`^[A-Za-z_][A-Za-z0-9_]*$`)
+ * @throws If `name` is already registered with structurally different defaults
  */
 export function resource<N extends string, T extends object>(name: N, defaults: T): Resource<N, T> {
   const existingId = resourceNames.get(name);
@@ -200,7 +148,16 @@ export function resource<N extends string, T extends object>(name: N, defaults: 
   return id as Resource<N, T>;
 }
 
-/** Returns the metadata for a registered resource ID. */
+/**
+ * Registry lookup for a resource ID.
+ *
+ * @param id - Resource ID as returned by `resource()`; typed as a raw number so internal callers
+ *   can pass map keys without a brand.
+ * @returns The live registry entry — the same object on every call, not a copy, so callers must
+ *   not mutate it.
+ *
+ * @throws If `id` was never returned by `resource()`
+ */
 export function getResourceMeta(id: number): ResourceMeta {
   const meta = resourceRegistry.get(id);
   if (meta === undefined) {
@@ -209,7 +166,16 @@ export function getResourceMeta(id: number): ResourceMeta {
   return meta;
 }
 
-/** Overwrites every declared field of `data` with a fresh clone of its registered default. */
+/**
+ * Overwrites every declared field of `data` with a fresh clone of its registered default.
+ *
+ * @param data - A world's live resource record, mutated in place so references handed out by
+ *   `getResource` stay valid.
+ * @param meta - Registry entry whose `fields` list drives the write; keys of `data` outside that
+ *   list are left alone.
+ *
+ * @throws If `meta.fields` contains a hole — an invariant violation the registry never produces
+ */
 function fillFromDefaults(data: Record<string, unknown>, meta: ResourceMeta): void {
   const fields = meta.fields;
   const defaults = meta.defaults;
@@ -226,6 +192,13 @@ function fillFromDefaults(data: Record<string, unknown>, meta: ResourceMeta): vo
  *
  * Callers own the fast path: every one of them looks the resource up first, so
  * this runs only when the world has no record for `resId` yet.
+ *
+ * @param world - World whose `resources` map receives the record; a record already stored for
+ *   `resId` would be replaced, which is why callers check first.
+ * @param resId - Resource ID to initialize.
+ * @returns The record just stored, the same reference `world.resources` now holds.
+ *
+ * @throws If `resId` is not a registered resource ID
  */
 function initResource(world: World, resId: number): Record<string, unknown> {
   const data: Record<string, unknown> = {};
@@ -234,14 +207,33 @@ function initResource(world: World, resId: number): Record<string, unknown> {
   return data;
 }
 
-/** Lazy-initializes from defaults on first access; returns the world's live resource record. */
+/**
+ * Reads a world's resource record, lazy-initializing it from defaults on first access.
+ *
+ * @param world - World that owns the record; each world has its own, never shared with another.
+ * @param res - Resource ID from `resource()`; its brand types the returned fields.
+ * @returns The live record — the same object on every call for this world, so writes through it
+ *   are visible to the next read without `setResource`.
+ *
+ * @throws If `res` is not a registered resource ID
+ */
 export function getResource<R extends Resource>(world: World, res: R): ResourceFields<R> {
   const data = world.resources.get(res) ?? initResource(world, res);
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- data record matches the resource's declared fields
   return data as ResourceFields<R>;
 }
 
-/** Partial-merges values into a resource. Lazy-initializes if not yet accessed. */
+/**
+ * Partial-merges values into a resource. Lazy-initializes if not yet accessed.
+ *
+ * @param world - World whose record is written; other worlds holding the same resource are unaffected.
+ * @param res - Resource ID from `resource()`.
+ * @param values - Fields to overwrite. Only own keys are written, and a key set to `undefined` is
+ *   skipped rather than clearing the field; each value is deep-cloned (see `cloneUnknown`), so
+ *   later mutation of `values` does not reach the record.
+ *
+ * @throws If `res` is not a registered resource ID
+ */
 export function setResource<R extends Resource>(
   world: World,
   res: R,
@@ -271,6 +263,11 @@ export function setResource<R extends Resource>(
  * registered default, so `getResource` returns the same reference before and
  * after the reset. Object-typed defaults are deep-cloned, so resetting two
  * worlds with the same resource does not alias their data.
+ *
+ * @param world - World whose record is reset; other worlds keep their data.
+ * @param res - Resource ID from `resource()`.
+ *
+ * @throws If `res` is not a registered resource ID
  */
 export function resetResource(world: World, res: Resource): void {
   const data = world.resources.get(res);

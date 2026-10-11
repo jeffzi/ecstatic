@@ -44,9 +44,9 @@ describe("component", () => {
     expect(asMutableDescriptor(Sprite).__ecstatic_fields[0]).toBe("flip");
     expect(asMutableDescriptor(Sprite).__ecstatic_fields[1]).toBe("frame");
     expect(asMutableDescriptor(Sprite).__ecstatic_fields[2]).toBe("image");
-    expect(asMutableDescriptor(Sprite).__ecstatic_defaults.image).toBe("");
-    expect(asMutableDescriptor(Sprite).__ecstatic_defaults.frame).toBe(0);
-    expect(asMutableDescriptor(Sprite).__ecstatic_defaults.flip).toBe(false);
+    expect(asMutableDescriptor(Sprite).__ecstatic_defaults["image"]).toBe("");
+    expect(asMutableDescriptor(Sprite).__ecstatic_defaults["frame"]).toBe(0);
+    expect(asMutableDescriptor(Sprite).__ecstatic_defaults["flip"]).toBe(false);
   });
 
   it("tags are 0-field descriptors", () => {
@@ -211,6 +211,91 @@ describe("component", () => {
       expect(desc.__ecstatic_fields).toStrictEqual(fieldsBefore);
       expect(desc.__ecstatic_defaults).toStrictEqual(defaultsBefore);
     });
+
+    describe("with array defaults", () => {
+      /** Registers a component whose defaults include arrays, which `FieldDefault` excludes. */
+      function componentWithArrayDefaults(name: string, fields: object): unknown {
+        // @ts-expect-error array defaults sit outside FieldDefault but are accepted at runtime
+        return component(name, fields);
+      }
+
+      it.each([
+        {
+          label: "an empty array",
+          name: "IdempotentSpec_EmptyArray",
+          freshShape: () => ({ tags: [] }),
+        },
+        {
+          label: "a numeric array",
+          name: "IdempotentSpec_NumericArray",
+          freshShape: () => ({ tags: [1, 2] }),
+        },
+        {
+          label: "a nested array",
+          name: "IdempotentSpec_NestedArray",
+          freshShape: () => ({ grid: [[1, 2], [3]] }),
+        },
+        {
+          label: "an array of records",
+          name: "IdempotentSpec_RecordArray",
+          freshShape: () => ({ points: [{ x: 1, y: [2] }] }),
+        },
+      ])(
+        "returns the identical descriptor when $label is re-declared as a fresh equal literal",
+        ({ name, freshShape }) => {
+          const original = componentWithArrayDefaults(name, freshShape());
+
+          const redeclared = componentWithArrayDefaults(name, freshShape());
+
+          expect(redeclared).toBe(original);
+        },
+      );
+
+      it.each([
+        {
+          label: "an array gains an element",
+          name: "IdempotentSpec_ArrayLength",
+          first: { tags: [1] },
+          second: { tags: [1, 2] },
+        },
+        {
+          label: "an empty array becomes non-empty",
+          name: "IdempotentSpec_ArrayEmptyToFilled",
+          first: { tags: [] },
+          second: { tags: [0] },
+        },
+        {
+          label: "a nested element differs",
+          name: "IdempotentSpec_NestedArrayValue",
+          first: { grid: [[1, 2], [3]] },
+          second: { grid: [[1, 2], [4]] },
+        },
+        {
+          label: "a record element value differs",
+          name: "IdempotentSpec_RecordArrayValue",
+          first: { points: [{ x: 1 }] },
+          second: { points: [{ x: 2 }] },
+        },
+        {
+          label: "a record element gains a key",
+          name: "IdempotentSpec_RecordArrayKey",
+          first: { points: [{ x: 1 }] },
+          second: { points: [{ x: 1, y: 2 }] },
+        },
+        {
+          label: "an empty array element becomes an empty record",
+          name: "IdempotentSpec_ArrayVersusRecord",
+          first: { slots: [[]] },
+          second: { slots: [{}] },
+        },
+      ])("throws on shape conflict when $label", ({ name, first, second }) => {
+        componentWithArrayDefaults(name, first);
+
+        expect(() => {
+          componentWithArrayDefaults(name, second);
+        }).toThrow(`component shape conflict: ${name}`);
+      });
+    });
   });
 });
 
@@ -229,7 +314,7 @@ describe("width markers", () => {
     const { [name]: Comp } = components({
       [name]: { value: widthFn(value) },
     });
-    expect(asMutableDescriptor(Comp).__ecstatic_defaults.value).toBe(value);
+    expect(asMutableDescriptor(Comp).__ecstatic_defaults["value"]).toBe(value);
   });
 
   it.each([

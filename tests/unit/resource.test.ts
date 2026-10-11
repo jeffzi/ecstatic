@@ -415,7 +415,7 @@ describe("getResource", () => {
 
     getResource(world, Bag).items.push(2);
 
-    expect(getResourceMeta(Bag).defaults.items).toStrictEqual([1]);
+    expect(getResourceMeta(Bag).defaults["items"]).toStrictEqual([1]);
   });
 });
 

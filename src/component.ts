@@ -8,6 +8,8 @@
  * Width markers (f32, i32, etc.) select TypedArray constructors for storage.
  */
 
+import { structurallyEqual } from "./structural-equality.js";
+
 /** Module-level name registry: name → descriptor. Returns existing on equal shape, throws on conflict. */
 const seenNames = new Map<string, Record<string, unknown>>();
 
@@ -40,7 +42,13 @@ export interface WidthMarker {
   readonly value: number;
 }
 
-/** True if a value has the shape of a WidthMarker, i.e. was produced by a width constructor. */
+/**
+ * Shape check for WidthMarker, the object a width constructor returns.
+ *
+ * @param v - Candidate field default. Only the two marker keys are checked; the sentinel
+ *   behind `__ecstatic_width_marker` is not verified here.
+ * @returns Whether `v` is an object carrying a `__ecstatic_width_marker` key and a numeric `value`.
+ */
 function isWidthMarker(v: unknown): v is WidthMarker {
   return (
     v !== null &&
@@ -51,42 +59,90 @@ function isWidthMarker(v: unknown): v is WidthMarker {
   );
 }
 
-/** Wrap a numeric default to use Float32Array storage in SoA columns. */
+/**
+ * Wrap a numeric default to use Float32Array storage in SoA columns.
+ *
+ * @param value - Default every spawned entity starts with. Kept as written, with no range or
+ *   precision check; the Float32Array column coerces it on write.
+ * @returns A fresh marker object; `component()` unwraps it to `value` and records the column width.
+ */
 export function f32(value: number): WidthMarker {
   return { __ecstatic_width_marker: F32_MARKER, value };
 }
 
-/** Wrap a numeric default to use Float64Array storage in SoA columns. */
+/**
+ * Wrap a numeric default to use Float64Array storage in SoA columns.
+ *
+ * @param value - Default every spawned entity starts with. Kept as written, with no range or
+ *   precision check; the Float64Array column coerces it on write.
+ * @returns A fresh marker object; `component()` unwraps it to `value` and records the column width.
+ */
 export function f64(value: number): WidthMarker {
   return { __ecstatic_width_marker: F64_MARKER, value };
 }
 
-/** Wrap a numeric default to use Int32Array storage in SoA columns. */
+/**
+ * Wrap a numeric default to use Int32Array storage in SoA columns.
+ *
+ * @param value - Default every spawned entity starts with. Kept as written, with no range or
+ *   precision check; the Int32Array column coerces it on write.
+ * @returns A fresh marker object; `component()` unwraps it to `value` and records the column width.
+ */
 export function i32(value: number): WidthMarker {
   return { __ecstatic_width_marker: I32_MARKER, value };
 }
 
-/** Wrap a numeric default to use Int16Array storage in SoA columns. */
+/**
+ * Wrap a numeric default to use Int16Array storage in SoA columns.
+ *
+ * @param value - Default every spawned entity starts with. Kept as written, with no range or
+ *   precision check; the Int16Array column coerces it on write.
+ * @returns A fresh marker object; `component()` unwraps it to `value` and records the column width.
+ */
 export function i16(value: number): WidthMarker {
   return { __ecstatic_width_marker: I16_MARKER, value };
 }
 
-/** Wrap a numeric default to use Int8Array storage in SoA columns. */
+/**
+ * Wrap a numeric default to use Int8Array storage in SoA columns.
+ *
+ * @param value - Default every spawned entity starts with. Kept as written, with no range or
+ *   precision check; the Int8Array column coerces it on write.
+ * @returns A fresh marker object; `component()` unwraps it to `value` and records the column width.
+ */
 export function i8(value: number): WidthMarker {
   return { __ecstatic_width_marker: I8_MARKER, value };
 }
 
-/** Wrap a numeric default to use Uint32Array storage in SoA columns. */
+/**
+ * Wrap a numeric default to use Uint32Array storage in SoA columns.
+ *
+ * @param value - Default every spawned entity starts with. Kept as written, with no range or
+ *   precision check; the Uint32Array column coerces it on write.
+ * @returns A fresh marker object; `component()` unwraps it to `value` and records the column width.
+ */
 export function u32(value: number): WidthMarker {
   return { __ecstatic_width_marker: U32_MARKER, value };
 }
 
-/** Wrap a numeric default to use Uint16Array storage in SoA columns. */
+/**
+ * Wrap a numeric default to use Uint16Array storage in SoA columns.
+ *
+ * @param value - Default every spawned entity starts with. Kept as written, with no range or
+ *   precision check; the Uint16Array column coerces it on write.
+ * @returns A fresh marker object; `component()` unwraps it to `value` and records the column width.
+ */
 export function u16(value: number): WidthMarker {
   return { __ecstatic_width_marker: U16_MARKER, value };
 }
 
-/** Wrap a numeric default to use Uint8Array storage in SoA columns. */
+/**
+ * Wrap a numeric default to use Uint8Array storage in SoA columns.
+ *
+ * @param value - Default every spawned entity starts with. Kept as written, with no range or
+ *   precision check; the Uint8Array column coerces it on write.
+ * @returns A fresh marker object; `component()` unwraps it to `value` and records the column width.
+ */
 export function u8(value: number): WidthMarker {
   return { __ecstatic_width_marker: U8_MARKER, value };
 }
@@ -102,7 +158,15 @@ export type NumericColumnCtor =
   | typeof Uint16Array
   | typeof Uint8Array;
 
-/** Throws if the marker is not one of the eight known width sentinels. */
+/**
+ * Map a width sentinel to the TypedArray constructor of its column.
+ *
+ * @param marker - Sentinel read from a WidthMarker's `__ecstatic_width_marker` key.
+ * @returns The constructor the world instantiates for that field's column; the same constructor
+ *   reference on every call.
+ * @throws If the sentinel is none of the eight module symbols. Only a forged marker object reaches
+ *   this, since `isWidthMarker` does not verify the sentinel.
+ */
 function getColumnCtorForMarker(marker: WidthMarkerType): NumericColumnCtor {
   switch (marker) {
     case F32_MARKER:
@@ -126,7 +190,13 @@ function getColumnCtorForMarker(marker: WidthMarkerType): NumericColumnCtor {
   }
 }
 
-/** Select the default TypedArray column constructor for an unmarked scalar default. */
+/**
+ * Select the default TypedArray column constructor for an unmarked scalar default.
+ *
+ * @param value - Field default that is neither a ref marker nor a width marker.
+ * @returns `Float64Array` for numbers, `Uint8Array` for booleans, or `undefined` for strings,
+ *   arrays, and anything else, meaning the column is a plain array.
+ */
 function defaultColumnCtor(value: unknown): NumericColumnCtor | undefined {
   if (typeof value === "number") {
     return Float64Array;
@@ -134,7 +204,7 @@ function defaultColumnCtor(value: unknown): NumericColumnCtor | undefined {
   if (typeof value === "boolean") {
     return Uint8Array;
   }
-  return undefined; // strings and others use plain arrays
+  return undefined;
 }
 
 const FIELD_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -148,6 +218,8 @@ const FIELD_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * @param kind - Declaration kind naming the field group.
  * @param ownerName - Name of the component or resource declaring the field.
  * @param fieldName - Candidate field name.
+ * @throws If `fieldName` is not a string.
+ * @throws If `fieldName` does not match the ASCII identifier pattern.
  */
 export function validateFieldName(
   kind: "component" | "resource",
@@ -165,7 +237,13 @@ export function validateFieldName(
   }
 }
 
-/** True for non-null, non-array, non-Date/Map/Set objects. */
+/**
+ * Narrow a value to a record for field-default and descriptor checks.
+ *
+ * @param v - Any value.
+ * @returns Whether `v` is a non-null object that is not an array, `Date`, `Map`, or `Set`.
+ *   Instances of other classes pass.
+ */
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return (
     typeof v === "object" &&
@@ -177,7 +255,15 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   );
 }
 
-/** Throws unless fields is a plain object with all-valid field names; returns it unchanged otherwise. */
+/**
+ * Check a raw `fields` argument before it is turned into a descriptor.
+ *
+ * @param componentName - Component being declared; used in error messages only.
+ * @param fields - Raw value from the caller, before any typing.
+ * @returns The same `fields` object, not a copy, narrowed to a record.
+ * @throws If `fields` is not a plain object.
+ * @throws Whatever {@link validateFieldName} throws for a key that is not an ASCII identifier.
+ */
 function validateFields(componentName: string, fields: unknown): Record<string, unknown> {
   if (!isPlainObject(fields)) {
     throw new Error(`component fields must be an object: ${componentName}`);
@@ -198,7 +284,18 @@ interface FieldPlan {
   readonly columnCtor: NumericColumnCtor | undefined;
 }
 
-/** Classifies a single field default into its normalized value, reference flag, and column constructor. */
+/**
+ * Normalize a single field default into its per-field storage plan.
+ *
+ * @param defaultValue - Raw default as written in the declaration: a scalar, an array, a `ref()`
+ *   marker, or a width marker.
+ * @returns A fresh plan. A ref marker yields `value: undefined` and no column constructor; a width
+ *   marker yields the wrapped number and the TypedArray it selects; any other value is kept as-is
+ *   with the constructor {@link defaultColumnCtor} picks.
+ * @throws If `defaultValue` is a non-array object other than a marker: object defaults are not
+ *   supported, the field has to be declared with `ref<T>()` and initialized per entity.
+ * @throws Whatever {@link getColumnCtorForMarker} throws for a forged width marker.
+ */
 function classifyFieldDefault(defaultValue: unknown): FieldPlan {
   if (defaultValue === REF_SENTINEL) {
     return { value: undefined, isReference: true, columnCtor: undefined };
@@ -222,7 +319,17 @@ function classifyFieldDefault(defaultValue: unknown): FieldPlan {
   return { value: defaultValue, isReference: false, columnCtor: defaultColumnCtor(defaultValue) };
 }
 
-/** Assumes defaults was already produced by validateFields — does not re-validate field names. */
+/**
+ * Build an unregistered descriptor from validated defaults.
+ *
+ * @param name - Component name; also the tail of `__ecstatic_component_key`, which is
+ *   `"<length>:<name>"`.
+ * @param defaults - Field defaults already checked by {@link validateFields}; field names are not
+ *   re-validated here. Declaration order is irrelevant, fields are sorted by UTF-16 code unit.
+ * @returns A fresh descriptor that is not in the registry; the caller decides whether to keep it
+ *   ({@link resolveExisting} discards it after comparing shapes).
+ * @throws Whatever {@link classifyFieldDefault} throws for an unsupported default.
+ */
 function descriptorFromDefaults(
   name: string,
   defaults: Record<string, unknown>,
@@ -270,6 +377,10 @@ function descriptorFromDefaults(
  * Create a reference-type marker for use in component field defaults.
  * Reference fields are optional by nature — they unwrap to T | undefined in all APIs.
  * Used for fields that hold entity IDs, handles, or other typed references.
+ *
+ * @typeParam T - Value type the field unwraps to; phantom only, never checked at runtime.
+ * @returns The single module-level sentinel, identical across calls. `component()` recognizes it
+ *   by identity, so a copy (spread or clone) is rejected as an object default.
  */
 export function ref<T = unknown>(): RefMarker<T> {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
@@ -303,7 +414,9 @@ function shapeArraysMatch(
       if (a !== b) return false;
       continue;
     }
-    if (!arraysIdentical(a, b)) return false;
+    const equal =
+      key === "__ecstatic_default_values" ? structurallyEqual(a, b) : arraysIdentical(a, b);
+    if (!equal) return false;
   }
   return true;
 }
@@ -312,20 +425,26 @@ function relationMetadataMatch(
   existing: Record<string, unknown>,
   options?: CreateDescriptorOptions,
 ): boolean {
-  const existingIsRelation = existing.isRelation === true;
+  const existingIsRelation = existing["isRelation"] === true;
   const incomingIsRelation = options?.isRelation === true;
   if (existingIsRelation !== incomingIsRelation) return false;
   if (!existingIsRelation) return true;
-  const ec = existing.constraints;
-  const ic = options?.constraints ?? [];
-  if (!Array.isArray(ec)) return false;
-  return arraysIdentical(ec, ic);
+  const existingConstraints = existing["constraints"];
+  const incomingConstraints = options?.constraints ?? [];
+  if (!Array.isArray(existingConstraints)) return false;
+  return arraysIdentical(existingConstraints, incomingConstraints);
 }
 
 /**
- * Two descriptors have equal shape when their field names, default values,
- * reference flags, column constructors, and relation metadata all match
- * element-wise.
+ * Decide whether a re-declaration may reuse an already registered descriptor.
+ *
+ * @param existing - Descriptor currently in the registry.
+ * @param incoming - Throwaway descriptor built from the new declaration.
+ * @param options - Relation metadata of the new declaration; `undefined` means a plain component.
+ * @returns Whether field names, default values, reference flags, column constructors, relation
+ *   flag, and constraints all match element-wise. Default values compare by content through
+ *   {@link structurallyEqual}, so a fresh but equal array literal matches; everything else,
+ *   constraints included, compares by `===`.
  */
 function shapesEqual(
   existing: Record<string, unknown>,
@@ -342,9 +461,17 @@ export interface CreateDescriptorOptions {
 }
 
 /**
- * Looks up `name` in the idempotent registry. Returns the existing descriptor
- * when its shape matches `defaults`/`options`, throws on a shape conflict,
- * and returns `undefined` when the name is unregistered.
+ * Look up `name` in the idempotent registry.
+ *
+ * @param name - Component name to look up.
+ * @param defaults - Validated field defaults of the new declaration; a throwaway descriptor is
+ *   built from them for the shape comparison.
+ * @param options - Relation metadata of the new declaration; `undefined` means a plain component.
+ * @returns The registered descriptor when its shape matches, or `undefined` when the name is
+ *   unregistered. The registry is never modified.
+ * @throws If the name is registered with a different shape.
+ * @throws Whatever {@link descriptorFromDefaults} throws for an unsupported default; only reached
+ *   when the name is already registered.
  */
 function resolveExisting(
   name: string,
@@ -364,9 +491,17 @@ function resolveExisting(
 }
 
 /**
- * Shared descriptor-construction path for component() and relation():
- * validates the name and fields, checks the idempotent registry (returns
- * existing on equal shape, throws on conflict), and builds the descriptor.
+ * Shared descriptor-construction path for component() and relation().
+ *
+ * @param name - Registry key; any string is accepted, it is not validated.
+ * @param rawFields - Field defaults as passed by the caller; validated here.
+ * @param options - Present for relations only. `isRelation` and `constraints` are copied onto a
+ *   newly built descriptor and compared against an already registered one.
+ * @returns The registered descriptor for `name`: the existing one on an equal-shape
+ *   re-declaration, otherwise the newly built one, registered before it is returned.
+ * @throws Whatever {@link validateFields} throws for a malformed `rawFields`.
+ * @throws Whatever {@link resolveExisting} throws for a shape conflict.
+ * @throws Whatever {@link descriptorFromDefaults} throws for an unsupported default.
  */
 export function createDescriptor(
   name: string,
@@ -383,8 +518,8 @@ export function createDescriptor(
   const descriptor = descriptorFromDefaults(name, defaults);
 
   if (options?.isRelation === true) {
-    descriptor.isRelation = true;
-    descriptor.constraints = options.constraints ?? [];
+    descriptor["isRelation"] = true;
+    descriptor["constraints"] = options.constraints ?? [];
   }
 
   seenNames.set(name, descriptor);
@@ -392,11 +527,30 @@ export function createDescriptor(
 }
 
 /**
- * Register a single component descriptor from a name and optional field defaults.
- * If fields is omitted, the result is a tag (0-field component).
- * Re-declaring with equal shape returns the existing descriptor; different shape throws.
+ * Register a tag: a zero-field component used as a marker.
+ *
+ * @typeParam N - Literal component name.
+ * @param name - Registry key, unique per process; the same name declared from several modules
+ *   yields one shared descriptor.
+ * @returns The registered tag descriptor, shared by every caller that declares this name.
+ * @throws If `name` is already registered with a different shape (fields or relation metadata).
  */
 export function component<N extends string>(name: N): Tag<N>;
+/**
+ * Register a component from a name and its field defaults.
+ *
+ * @typeParam N - Literal component name.
+ * @typeParam T - Declared defaults; each value type is mapped through {@link InferFieldValue}.
+ * @param name - Registry key, unique per process; the same name declared from several modules
+ *   yields one shared descriptor.
+ * @param fields - Default per field: a scalar, `ref()`, or a width marker. Names must be ASCII
+ *   identifiers; declaration order does not matter, fields are sorted by UTF-16 code unit. An
+ *   empty object declares a tag.
+ * @returns The registered descriptor with one typed field descriptor per field, shared by every
+ *   caller that declares this name.
+ * @throws If a field name is not an ASCII identifier, a default is an object other than a marker,
+ *   or `name` is already registered with a different shape.
+ */
 export function component<N extends string, T extends Record<string, FieldDefault>>(
   name: N,
   fields: T,
@@ -407,9 +561,16 @@ export function component(name: string, fields?: Record<string, unknown>): unkno
 
 /**
  * Register multiple component types from a single name-keyed declaration object.
- * Validates all components before registering any names (atomic validation).
- * Already-registered names with equal shape return existing descriptors;
- * shape conflicts throw before any new name is registered.
+ *
+ * Validation is atomic: every entry is checked before any new name is registered, so a throw
+ * leaves the registry untouched.
+ *
+ * @typeParam T - Declaration object; keys become component names, values their field defaults.
+ * @param defs - Name to field defaults. An empty defaults object declares a tag.
+ * @returns A fresh object with the same keys mapping to registered descriptors; a name already
+ *   registered with equal shape maps to the existing descriptor rather than a new one.
+ * @throws If any field name is not an ASCII identifier, any default is an object other than a
+ *   marker, or any name is already registered with a different shape.
  */
 export function components<T extends Record<string, Record<string, FieldDefault>>>(
   defs: T,
@@ -448,28 +609,44 @@ export function components<T extends Record<string, Record<string, FieldDefault>
   };
 }
 
-/** Duck-type predicate: check if value has the shape of a ComponentDescriptor */
+/**
+ * Duck-type predicate for ComponentDescriptor.
+ *
+ * @param value - Any value, typically an unknown argument at a public API boundary.
+ * @returns Whether `value` is a plain object with the name, fields, default-values, and
+ *   reference-flags keys. Array element types are not checked, and the optional
+ *   `__ecstatic_column_ctor` is not required.
+ */
 export function isComponentDescriptor(value: unknown): value is ComponentDescriptor {
   if (!isPlainObject(value)) {
     return false;
   }
 
   return (
-    typeof value.__ecstatic_name === "string" &&
-    Array.isArray(value.__ecstatic_fields) &&
-    Array.isArray(value.__ecstatic_default_values) &&
-    Array.isArray(value.__ecstatic_is_reference)
+    typeof value["__ecstatic_name"] === "string" &&
+    Array.isArray(value["__ecstatic_fields"]) &&
+    Array.isArray(value["__ecstatic_default_values"]) &&
+    Array.isArray(value["__ecstatic_is_reference"])
   );
 }
 
-/** Duck-type predicate: check if value has the shape of a FieldDescriptor */
+/**
+ * Duck-type predicate for FieldDescriptor.
+ *
+ * @param value - Any value, typically an accessor or query argument that may be a field or a
+ *   whole component.
+ * @returns Whether `value` is a plain object whose `__ecstatic_component` passes
+ *   {@link isComponentDescriptor} and whose `__ecstatic_field` is a string. The field is not
+ *   checked against that component's field list.
+ */
 export function isFieldDescriptor(value: unknown): value is FieldDescriptor {
   if (!isPlainObject(value)) {
     return false;
   }
 
   return (
-    isComponentDescriptor(value.__ecstatic_component) && typeof value.__ecstatic_field === "string"
+    isComponentDescriptor(value["__ecstatic_component"]) &&
+    typeof value["__ecstatic_field"] === "string"
   );
 }
 
@@ -523,9 +700,6 @@ export type InferFieldValue<D> =
           : D extends string
             ? string
             : D;
-
-/** Extract the value type carried by a field descriptor. */
-export type FieldValue<D> = D extends FieldDescriptor<infer V> ? V : never;
 
 /**
  * Fields value record of a component. Falls back to `Record<string, unknown>`
