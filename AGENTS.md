@@ -22,12 +22,59 @@ Package manager is **npm** (`package-lock.json`).
   and untested `src/` files count against them
 - `npm run test:types` — type-only tests (`tests/types/*.test-d.ts`)
 - `npm run examples` — build, then run each `examples/*.ts` with tsx
-- `npm run check` — all static checks: lint, markdown, formatting, workflow lint/audit, type-aware
-  lint, dead code, spelling, types. Run before committing.
-- `npm run fix` — auto-fix: lint, markdown, formatting
-- `npm run fix:quality` — remove unused exports, dependencies, and enum members (`fallow fix`).
-  Deletes code — review the diff before committing.
+- `npm run check` — every pre-commit hook over all tracked and untracked files: lint, markdown,
+  formatting, workflow lint/audit, type-aware lint, dead code, spelling, types, then publish hygiene
+  (`publint` + `@arethetypeswrong/cli`); then the build, examples, and benchmarks type checks, the
+  version sync check, and the allocation gate. The lint, markdown, and formatting hooks rewrite
+  files in place. The dead-code hook scores complexity against the coverage `npm test` writes and
+  refuses to run when a `src/` file is newer than that report, so run `npm test` first after
+  editing `src/`. Run before committing.
+- `npm run check:type` — type-check the build, examples, and benchmarks tsconfigs
+- `npm run check:version` — fail when `src/version.ts` is out of sync with `package.json`
+- `npm run check:alloc` — build, then run the allocation gate (`benchmarks/alloc/gate.ts`)
+- `npm run fix` — auto-fix lint, markdown, and formatting, then remove unused exports, dependencies,
+  and enum members (`fallow fix`). Deletes code — review the diff before committing.
 - `npm run check:security` — surface security candidates (`fallow security`). Candidates need
   verification; they are not confirmed vulnerabilities. Not part of `check`.
-- `npm run check:package` — publish hygiene (`publint` + `@arethetypeswrong/cli`) for packages that
-  ship to npm. Not part of `check`.
+- `npm run check:package` — publish hygiene alone (`publint` + `@arethetypeswrong/cli`).
+
+## Git hygiene
+
+- Never run `git commit --no-verify`, `git commit -n`, or anything else that skips the lefthook
+  hooks — the hooks are the gate, not an obstacle.
+- Fix a failing check at its source. Never weaken a test to make it pass; never widen a lint ignore
+  to silence a real finding. A test whose assertion is right but whose input is wrong (a sample
+  value that collides with a fixture, a typo, a bad import) is a test bug: fix the input and say so
+  in one line.
+
+## Linter and type-checker configuration
+
+Treat lint and type-check config as fixed. Never add to an ignore list, disable a rule, lower a
+severity, or exclude a file to get a check passing — fix the code instead. A suppression is
+warranted only when the finding is a genuine false positive or the rule cannot apply (e.g. a
+generated file, a documented upstream bug); then suppress at the narrowest scope — an inline
+directive with a reason — not in the shared config. When the same inline directive keeps recurring
+for the same rule, that is a signal the rule may deserve a config-level ignore — propose it to the
+user and wait for explicit approval; never promote a suppression into config on your own.
+
+## Doc comments
+
+TSDoc. None is required on private functions, parameterless void functions, or non-function symbols.
+A one-line doc comment is complete on its own — no `@param`, `@returns`, or `@throws` tags — when
+the signature says the rest. When a function needs more than one line (a side effect, an invariant,
+a precondition, what `undefined` means, or behavior the name does not convey), use a multi-line doc
+comment with tags: `@param` for every parameter, however obvious its name, `@returns`, and `@throws`
+for every error thrown or propagated. Parameters, return values, and errors are described only in
+their tags, never in prose. A function you edit gets its doc comment brought to this shape even if
+you did not write it; deadlines and reviewer preference do not change that. Tests: no doc comments
+on test cases, the title carries the intent; shared helpers get a one-line summary.
+
+## Spelling (cspell)
+
+Treat a cspell failure as a prompt to reword, not to grow the dictionary. Prefer plain words in
+prose and identifiers. A word earns a `cspell.json` entry only when it comes from outside the
+project and cannot be renamed — command names, API identifiers, file formats, proper nouns, domain
+vocabulary (e.g. `taskkill`, `unref`, `tsbuildinfo`). In tests, never invent gibberish that needs a
+suppression — any real word works for an unknown command, a bogus flag, or filler data, so pick one
+(`banana`, not an invented pseudo-word). `// cspell:disable-line` is reserved for fixtures where the
+gibberish itself is the behavior under test, never a dictionary entry.

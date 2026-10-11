@@ -171,3 +171,10 @@ CLAUDE.local.md
 
 # Profiling scratch scripts
 benchmarks/tmp/
+
+# Fallow cache
+.fallow/
+
+# Agents
+.mcp.json
+AGENTS.local.md

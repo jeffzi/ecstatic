@@ -9,11 +9,15 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types:
+          - "version-update:semver-minor"
           - "version-update:semver-patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: monday
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "build(deps)"

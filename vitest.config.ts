@@ -2,9 +2,17 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    allowOnly: false,
+    expect: { requireAssertions: true },
     restoreMocks: true,
     unstubEnvs: true,
     unstubGlobals: true,
+    sequence: {
+      shuffle: {
+        files: true,
+        tests: true,
+      },
+    },
     coverage: {
       provider: "istanbul",
       include: ["src/**/*.ts"],

@@ -2,9 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix-ci/**, plan/**, "v[0-9]*"]
+    paths-ignore:
+      - "**.md"
+      - LICENSE
+      - .fallowrc.json
+      - .gitignore
   pull_request:
     branches: [main]
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -14,6 +20,7 @@ permissions: {}
 
 jobs:
   ci:
+    name: CI
     permissions:
       contents: read
     timeout-minutes: 15
@@ -56,4 +63,4 @@ jobs:
 
       - name: Check
         if: runner.os == 'Linux'
-        run: npm run check
+        run: npm run check && git diff --exit-code
