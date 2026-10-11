@@ -29,7 +29,7 @@ export default defineConfig({
       {
         test: {
           name: "unit",
-          include: ["tests/**/*.test.ts"],
+          include: ["tests/unit/**/*.test.ts", "tests/benchmarks/**/*.test.ts"],
         },
       },
     ],

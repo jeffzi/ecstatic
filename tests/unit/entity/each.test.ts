@@ -1,0 +1,388 @@
+import { assert, describe, expect, it } from "vitest";
+
+import {
+  archetype,
+  components,
+  createWorld,
+  despawn,
+  each,
+  get,
+  register,
+  set,
+  spawn,
+  spawnMany,
+} from "../../../src/index.js";
+
+const { EachTestPosition: Position } = components({
+  EachTestPosition: { x: 0, y: 0 },
+});
+const { EachTestVelocity: Velocity } = components({
+  EachTestVelocity: { vx: 0, vy: 0 },
+});
+const { EachTestHealth: Health } = components({
+  EachTestHealth: { hp: 100, maxHp: 100 },
+});
+
+describe("each — single archetype", () => {
+  it("calls callback once per entity with correct args", () => {
+    const world = createWorld();
+    const Arch = archetype([Position, Velocity]);
+    const storage = register(world, Arch);
+
+    const id1 = spawn(storage);
+    const id2 = spawn(storage);
+
+    const visitedIds: number[] = [];
+    each(storage, (e) => {
+      visitedIds.push(e.id);
+    });
+
+    // Backward iteration: id2 first (higher index), then id1
+    expect(visitedIds).toHaveLength(2);
+    expect(visitedIds[0]).toBe(id2);
+    expect(visitedIds[1]).toBe(id1);
+  });
+
+  it("provides read/write access to SOA arrays via named view", () => {
+    const world = createWorld();
+    const Arch = archetype([Position]);
+    const storage = register(world, Arch);
+
+    spawn(storage, {
+      EachTestPosition: { x: 10, y: 20 },
+    });
+
+    let readX = 0;
+    let readY = 0;
+    each(storage, (e) => {
+      readX = e.EachTestPosition.x;
+      readY = e.EachTestPosition.y;
+      e.EachTestPosition.x = 99;
+    });
+
+    expect(readX).toBe(10);
+    expect(readY).toBe(20);
+    expect(storage.columns.get(Position)?.x?.[0]).toBe(99);
+  });
+
+  it("skips callback if archetype is empty", () => {
+    const world = createWorld();
+    const Arch = archetype([Position]);
+    const storage = register(world, Arch);
+
+    let called = false;
+    each(storage, () => {
+      called = true;
+    });
+
+    expect(called).toBe(false);
+  });
+});
+
+describe("each — edge cases", () => {
+  it("despawn during iteration is safe (backward iteration built-in)", () => {
+    const world = createWorld();
+    const Arch = archetype([Position]);
+    const storage = register(world, Arch);
+
+    spawn(storage);
+    spawn(storage);
+    spawn(storage);
+
+    each(storage, (e) => {
+      despawn(storage, e.id);
+    });
+
+    expect(storage.n).toBe(0);
+  });
+
+  it("view accessors survive column growth during iteration", () => {
+    const world = createWorld();
+    const Arch = archetype([Position]);
+    const storage = register(world, Arch);
+
+    // Create initial entities to reach initial capacity (8)
+    const initialIds: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      initialIds.push(spawn(storage, { EachTestPosition: { x: i, y: 0 } }));
+    }
+
+    let spawnedMidPass: number | null = null;
+    let colGrew = false;
+    each(storage, (e) => {
+      // On the first iteration (last entity due to backward), spawn entities to trigger growth
+      if (spawnedMidPass === null) {
+        for (let i = 0; i < 10; i++) {
+          spawn(storage, { EachTestPosition: { x: 100 + i, y: 0 } });
+        }
+        spawnedMidPass = 1;
+        colGrew = true;
+      }
+      // Write through the view — must work even after column growth
+      e.EachTestPosition.x = e.EachTestPosition.x + 1000;
+    });
+
+    // After iteration, all initially-present entities should have their values incremented
+    expect(colGrew).toBe(true);
+    for (let i = 0; i < 8; i++) {
+      const pos = storage.columns.get(Position);
+      assert(pos != null);
+      // Entities are stored at indices 0-7; backward iteration means we wrote to indices 7,6,5...0
+      expect(pos.x?.[i]).toBe(i + 1000);
+    }
+    // Spawned-mid-pass entities should not have been visited/incremented
+    expect(storage.n).toBe(18); // 8 original + 10 spawned
+  });
+
+  it("spawned entities mid-pass are not visited in current pass", () => {
+    const world = createWorld();
+    const Arch = archetype([Position]);
+    const storage = register(world, Arch);
+
+    const id1 = spawn(storage, { EachTestPosition: { x: 1, y: 0 } });
+    const id2 = spawn(storage, { EachTestPosition: { x: 2, y: 0 } });
+
+    const visitedIds: number[] = [];
+    each(storage, (e) => {
+      visitedIds.push(e.id);
+      // Backward iteration passes the append point first
+      spawn(storage, { EachTestPosition: { x: 99, y: 0 } });
+    });
+
+    // Only the 2 entities that existed before each() started should be visited
+    expect(visitedIds).toHaveLength(2);
+    expect(visitedIds).toContain(id1);
+    expect(visitedIds).toContain(id2);
+    expect(storage.n).toBe(4);
+  });
+
+  it("boolean fields read/write through the view", () => {
+    const world = createWorld();
+    const { EachTestFlag: Flag } = components({
+      EachTestFlag: { enabled: false },
+    });
+    const Arch = archetype([Position, Flag]);
+    const storage = register(world, Arch);
+
+    spawn(storage, {
+      EachTestPosition: { x: 0, y: 0 },
+      EachTestFlag: { enabled: true },
+    });
+
+    let readEnabled = false;
+    each(storage, (e) => {
+      readEnabled = e.EachTestFlag.enabled;
+      e.EachTestFlag.enabled = false;
+    });
+
+    expect(readEnabled).toBe(true);
+    const flagCol = storage.columns.get(Flag);
+    assert(flagCol != null);
+    // Boolean false should be stored as 0 in Uint8Array
+    expect(flagCol.enabled?.[0]).toBe(0);
+  });
+
+  it("boolean view setter stores 1 when writing true", () => {
+    const world = createWorld();
+    const { EachBoolSet: BoolComp } = components({
+      EachBoolSet: { active: false },
+    });
+    const Arch = archetype([Position, BoolComp]);
+    const storage = register(world, Arch);
+
+    spawn(storage);
+
+    each(storage, (e) => {
+      e.EachBoolSet.active = true;
+    });
+
+    const col = storage.columns.get(BoolComp);
+
+    assert(col != null);
+    expect(col.active?.[0]).toBe(1);
+  });
+});
+
+describe("component set — archetype declared via spread", () => {
+  const Transform = [Position, Velocity] as const;
+
+  it("spawns an entity and reads default field values", () => {
+    const world = createWorld();
+    const storage = register(world, archetype([...Transform, Health]));
+    const id = spawn(storage);
+
+    expect(get(storage, id, Position.x)).toBe(0);
+    expect(get(storage, id, Position.y)).toBe(0);
+    expect(get(storage, id, Health.hp)).toBe(100);
+  });
+
+  it("writes and reads back field values", () => {
+    const world = createWorld();
+    const storage = register(world, archetype([...Transform, Health]));
+    const id = spawn(storage);
+
+    set(storage, id, Position.x, 42);
+    expect(get(storage, id, Position.x)).toBe(42);
+  });
+
+  it("iterates all entities via each()", () => {
+    const world = createWorld();
+    const storage = register(world, archetype([...Transform, Health]));
+    spawn(storage);
+    spawn(storage);
+    spawn(storage);
+
+    let count = 0;
+    each(storage, (e) => {
+      count++;
+      expect(e.EachTestPosition.x).toBeDefined();
+    });
+    expect(count).toBe(3);
+  });
+
+  it("produces identical results to inline-declared archetype", () => {
+    const world = createWorld();
+    const spread = register(world, archetype([...Transform, Health]));
+    const inline = register(world, archetype([Position, Velocity, Health]));
+
+    const sid = spawn(spread, { EachTestPosition: { x: 10, y: 20 } });
+    const iid = spawn(inline, { EachTestPosition: { x: 10, y: 20 } });
+
+    expect(get(spread, sid, Position.x)).toBe(get(inline, iid, Position.x));
+    expect(get(spread, sid, Position.y)).toBe(get(inline, iid, Position.y));
+    expect(get(spread, sid, Health.hp)).toBe(get(inline, iid, Health.hp));
+  });
+});
+
+describe("each — created via spawnMany", () => {
+  it("spawned entities are accessible via each() with correct storage.n", () => {
+    const world = createWorld();
+    const Arch = archetype([Position]);
+    const storage = register(world, Arch);
+
+    const ids = spawnMany(storage, 3);
+
+    const visited: number[] = [];
+    each(storage, (e) => {
+      visited.push(e.id);
+    });
+
+    expect(visited).toHaveLength(3);
+    for (const id of ids) {
+      expect(visited).toContain(id);
+    }
+    expect(storage.n).toBe(3);
+  });
+});
+
+describe("each — multi-storage", () => {
+  const { EachMultiStunned: Stunned } = components({ EachMultiStunned: {} });
+
+  function createTwoStorages() {
+    const world = createWorld();
+    const posOnly = register(world, archetype([Position], [Stunned]));
+    const posVel = register(world, archetype([Position, Velocity], [Stunned]));
+    return { world, posOnly, posVel };
+  }
+
+  it("visits every row of each storage in turn", () => {
+    const { posOnly, posVel } = createTwoStorages();
+    const a1 = spawn(posOnly);
+    const a2 = spawn(posOnly);
+    const b1 = spawn(posVel);
+
+    const visited: number[] = [];
+    each([posOnly, posVel], (e) => {
+      visited.push(e.id);
+    });
+
+    expect(visited).toStrictEqual([a2, a1, b1]);
+  });
+
+  it("applies per-storage filter resolution across storages", () => {
+    const { posOnly, posVel } = createTwoStorages();
+    const a1 = spawn(posOnly, { EachMultiStunned: true });
+    spawn(posOnly);
+    const b1 = spawn(posVel, { EachMultiStunned: true });
+    spawn(posVel);
+
+    const visited: number[] = [];
+    each([posOnly, posVel], { all: [Stunned] }, (e) => {
+      visited.push(e.id);
+    });
+
+    expect(new Set(visited)).toStrictEqual(new Set([a1, b1]));
+  });
+
+  it("skips a storage that can never match the filter", () => {
+    const { posOnly, posVel } = createTwoStorages();
+    spawn(posOnly);
+    const b1 = spawn(posVel);
+
+    // Velocity is absent from posOnly: that whole storage is skipped.
+    const visited: number[] = [];
+    each([posOnly, posVel], { all: [Velocity] }, (e) => {
+      visited.push(e.id);
+    });
+
+    expect(visited).toStrictEqual([b1]);
+  });
+
+  it("supports nested multi-storage iteration", () => {
+    const { posOnly, posVel } = createTwoStorages();
+    const a1 = spawn(posOnly);
+    const b1 = spawn(posVel);
+
+    const pairs: [number, number][] = [];
+    each([posOnly, posVel], (outer) => {
+      each([posOnly, posVel], (inner) => {
+        pairs.push([outer.id, inner.id]);
+      });
+    });
+
+    expect(pairs).toStrictEqual([
+      [a1, a1],
+      [a1, b1],
+      [b1, a1],
+      [b1, b1],
+    ]);
+  });
+
+  it("accepts a component-set spread as the all-filter", () => {
+    const { posOnly, posVel } = createTwoStorages();
+    spawn(posOnly);
+    const b1 = spawn(posVel);
+
+    const Movable = [Position, Velocity] as const;
+    const visited: number[] = [];
+    each([posOnly, posVel], [...Movable], (e) => {
+      visited.push(e.id);
+    });
+
+    expect(visited).toStrictEqual([b1]);
+  });
+});
+
+describe("each — argument validation", () => {
+  it("errors on a filter with a missing callback", () => {
+    const world = createWorld();
+    const storage = register(world, archetype([Position]));
+    spawn(storage);
+
+    expect(() => {
+      // @ts-expect-error the callback is required — runtime validates too
+      each(storage, [Position]);
+    }).toThrow("invalid each arguments");
+  });
+
+  it("errors on a non-object second argument", () => {
+    const world = createWorld();
+    const storage = register(world, archetype([Position]));
+    spawn(storage);
+
+    expect(() => {
+      // @ts-expect-error a number is neither a filter nor a callback
+      each(storage, 42, () => {});
+    }).toThrow("invalid each arguments");
+  });
+});
