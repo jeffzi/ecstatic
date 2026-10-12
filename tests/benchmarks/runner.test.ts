@@ -15,6 +15,7 @@ import {
   type ParsedArgs,
   parseArgs,
   parseChildReport,
+  parseGeneration,
   registerBench,
   selectBenchmarks,
   UsageError,
@@ -103,6 +104,48 @@ describe("parseArgs", () => {
 
     it.each(usageCases)("throws UsageError for $label", ({ argv }) => {
       expect(() => parseArgs(argv)).toThrow(UsageError);
+    });
+  });
+});
+
+describe("parseGeneration", () => {
+  it("returns generation 1 when the variable is unset", () => {
+    const generation = parseGeneration(undefined);
+
+    expect(generation).toBe(1);
+  });
+
+  const validCases: { raw: string; expected: number }[] = [
+    { raw: "1", expected: 1 },
+    { raw: "2", expected: 2 },
+    { raw: "131", expected: 131 },
+  ];
+
+  it.each(validCases)("reads $raw as generation $expected", ({ raw, expected }) => {
+    const generation = parseGeneration(raw);
+
+    expect(generation).toBe(expected);
+  });
+
+  describe("when the value is not an integer of at least 1", () => {
+    const invalidCases: { label: string; raw: string }[] = [
+      { label: "an empty string", raw: "" },
+      { label: "zero", raw: "0" },
+      { label: "a negative integer", raw: "-3" },
+      { label: "a non-integer", raw: "1.5" },
+      { label: "non-numeric text", raw: "banana" },
+      { label: "digits with trailing junk", raw: "131x" },
+    ];
+
+    it.each(invalidCases)("throws UsageError for $label", ({ raw }) => {
+      expect(() => parseGeneration(raw)).toThrow(UsageError);
+    });
+
+    it.each(invalidCases)("names the variable and the value for $label", ({ raw }) => {
+      const parse = (): number => parseGeneration(raw);
+
+      expect(parse).toThrow("BENCH_GENERATION");
+      expect(parse).toThrow(`"${raw}"`);
     });
   });
 });

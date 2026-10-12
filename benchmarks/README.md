@@ -28,6 +28,12 @@ Bare `"ecstatic"` imports resolve through the package's own `exports` map to `di
 suite and the allocation gate measure the last compiled output; build before running the suite by
 hand.
 
+Set `BENCH_GENERATION=<n>` to measure worlds whose tracked entity ids sit at generation `n`: the
+world builder recycles the tracked slots until every tracked id is at that generation and leaves
+`DEFAULT_N` free slots on the freelist, so benchmarks that spawn draw recycled slots too. Background
+entities stay at generation 1. Unset, every id is at generation 1 and the freelist is empty; a value
+that is not an integer of at least 1 is a usage error.
+
 The pattern is an unanchored regular expression matched against benchmark names. A pattern that
 matches nothing is an error, not an empty report. A pattern cannot begin with `-`, which would parse
 as a flag.

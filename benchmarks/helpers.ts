@@ -4,16 +4,19 @@
 
 import {
   createWorld,
+  despawnMany,
   destroyWorld,
   type EntityId,
   register,
   type Storage,
   spawn,
+  spawnMany,
   type World,
 } from "ecstatic";
 
 import { bgArch, trackedArch } from "./archetypes.js";
 import { mulberry32, shuffle } from "./random.js";
+import { parseGeneration } from "./runner.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -74,15 +77,24 @@ export interface CreateOpts {
  * entity-count sweeps, and taking the count as a parameter would let one
  * benchmark quietly measure a different world than the rest.
  *
+ * The `BENCH_GENERATION` environment variable selects the generation of the
+ * tracked ids. Unset or `1`, every slot is fresh and the freelist is empty.
+ * Above `1`, the tracked slots are recycled until every tracked id sits at
+ * that generation, and `DEFAULT_N` free slots at the same generation stay on
+ * the freelist, so a benchmark that spawns into the tracked storage draws
+ * recycled slots too. Background entities stay at generation 1 either way.
+ *
  * @param opts - `noBackground: true` skips the 4N background entities, isolating the tracked
  * archetype; the default builds them.
  * @returns The world, its tracked storage, and `n` (always `DEFAULT_N`); the caller owns the
  * world and nothing here releases it. `tracked` holds the N ids shuffled so index order does not
  * match row order — random-access benchmarks would otherwise walk the storage front to back and
  * measure a prefetch-friendly pattern no real workload has.
+ * @throws UsageError when `BENCH_GENERATION` is set to anything but an integer of at least 1.
  */
 export function benchCreateWorld(opts: CreateOpts = {}): BenchCtx<typeof trackedArch> {
   const n = DEFAULT_N;
+  const generation = parseGeneration(process.env["BENCH_GENERATION"]);
   const rand = benchRandom();
 
   const world = createWorld();
@@ -95,6 +107,8 @@ export function benchCreateWorld(opts: CreateOpts = {}): BenchCtx<typeof tracked
       spawn(bgStorage);
     }
   }
+
+  ageTrackedSlots(trackedStorage, generation);
 
   const tracked: EntityId[] = [];
   for (let i = 1; i <= n; i++) {
@@ -109,6 +123,25 @@ export function benchCreateWorld(opts: CreateOpts = {}): BenchCtx<typeof tracked
   shuffle(tracked, rand);
 
   return { world, tracked, trackedStorage, n };
+}
+
+/**
+ * Make the next spawns into the storage come out at `generation`.
+ *
+ * A slot's generation advances on despawn and a first spawn yields generation
+ * 1, so `2 * DEFAULT_N` slots are spawned and despawned `generation - 1`
+ * times and left on the freelist. Generation 1 takes no rounds: the storage
+ * and the freelist are untouched, and the next spawns claim fresh slots.
+ *
+ * @param storage - Tracked storage, holding no entities yet; it is left empty again.
+ * @param generation - Generation the next spawns into `storage` must come out at; at least 1.
+ */
+function ageTrackedSlots(storage: Storage<typeof trackedArch>, generation: number): void {
+  const ids: EntityId[] = [];
+  for (let round = 1; round < generation; round++) {
+    spawnMany(storage, 2 * DEFAULT_N, ids);
+    despawnMany(storage, ids);
+  }
 }
 
 export interface BareCtx<A extends AnyArchetype> {

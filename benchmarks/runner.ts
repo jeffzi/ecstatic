@@ -41,6 +41,31 @@ export function isDefaultEngines(engines: readonly Engine[]): boolean {
 /** Thrown for a malformed command line; the caller maps it to exit code 2. */
 export class UsageError extends Error {}
 
+const GENERATION_PATTERN = /^[1-9]\d*$/;
+
+/**
+ * Parse the `BENCH_GENERATION` environment switch.
+ *
+ * The switch selects the generation every tracked entity id of a benchmark
+ * world sits at, so the suite can time ids whose generation bits are set
+ * rather than only freshly allocated ones.
+ *
+ * @param raw - Value of `BENCH_GENERATION` as the environment holds it; `undefined` when unset.
+ * @returns The requested generation, or `1` — a world of never-recycled slots — when `raw` is
+ * `undefined`.
+ * @throws UsageError when `raw` is anything but a base-10 integer of at least 1; the empty
+ * string, a sign, a fraction, and trailing characters are all rejected.
+ */
+export function parseGeneration(raw: string | undefined): number {
+  if (raw === undefined) {
+    return 1;
+  }
+  if (!GENERATION_PATTERN.test(raw)) {
+    throw new UsageError(`BENCH_GENERATION must be an integer of at least 1, got "${raw}"`);
+  }
+  return Number(raw);
+}
+
 /**
  * Outcome of parsing the command line.
  *
