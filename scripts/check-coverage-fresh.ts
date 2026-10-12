@@ -1,5 +1,5 @@
 import { readdirSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const COVERAGE_REPORT = "coverage/coverage-final.json";
@@ -17,9 +17,9 @@ function isSourceFile(name: string): boolean {
  * runs.
  *
  * @param projectRoot - Directory holding `src/` and `coverage/`; the CLI passes `process.cwd()`.
- * @throws Error naming every source file modified after the coverage report was written; a
- * missing `src/` directory or any other filesystem failure propagates as the filesystem error
- * itself.
+ * @throws Error naming every source file modified after the coverage report was written, each as
+ * a path relative to `projectRoot` with forward slashes on every platform; a missing `src/`
+ * directory or any other filesystem failure propagates as the filesystem error itself.
  */
 export function checkCoverageFresh(projectRoot: string): void {
   const coverage = statSync(join(projectRoot, COVERAGE_REPORT), { throwIfNoEntry: false });
@@ -35,7 +35,7 @@ export function checkCoverageFresh(projectRoot: string): void {
     }
     const path = join(entry.parentPath, entry.name);
     if (statSync(path).mtimeMs > coverage.mtimeMs) {
-      stale.push(relative(projectRoot, path));
+      stale.push(relative(projectRoot, path).replaceAll(sep, "/"));
     }
   }
 
