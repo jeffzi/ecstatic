@@ -30,5 +30,6 @@ jobs:
         with:
           node-version: "lts/*"
           cache: "npm"
-      - name: Audit dependencies for known vulnerabilities
-        run: npm audit
+      # Dev dependencies are left out: the audit gates what a consumer installs.
+      - name: Audit runtime dependencies for known vulnerabilities
+        run: npm audit --omit=dev
