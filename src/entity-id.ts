@@ -2,7 +2,7 @@
  * Entity ID encoding (gen-high layout):
  * ```
  * id    = gen * MAX_INDEX + index
- * index = id % MAX_INDEX         (one modulo, no Math.floor)
+ * index = id & INDEX_MASK        (low bits; exact for any safe integer)
  * gen   = floor(id / MAX_INDEX)  (cold path only: debug, display)
  * ```
  *
@@ -73,6 +73,12 @@ export const MAX_INDEX = 2 ** INDEX_BITS;
  */
 export const MAX_GEN = 2 ** (53 - INDEX_BITS);
 
+/**
+ * Selects the index bits of a packed id. The bitwise AND truncates its operand modulo 2^32, which
+ * keeps the low `INDEX_BITS` bits of any safe integer intact, so it holds for ids above 2^32 too.
+ */
+const INDEX_MASK = MAX_INDEX - 1;
+
 /** Error message used by assertEntityIndex when an index exceeds MAX_INDEX. */
 export const OVERFLOW_MSG = `entity index overflow (max ${MAX_INDEX - 1} per world)`;
 
@@ -97,12 +103,15 @@ export function assertEntityIndex(index: number): void {
 /**
  * Hot-path extraction used throughout storage indexing.
  *
+ * A mask rather than `id % MAX_INDEX`: ids are read from float-typed tables, and a float modulo
+ * costs more the more bits are set in the id's generation, while the mask is constant time.
+ *
  * @param id - Packed entity id; typed as a raw number so generation-table entries can be passed
  *   without a brand.
  * @returns The slot index in `[0, MAX_INDEX)`, independent of the id's generation.
  */
 export function entityIndex(id: number): number {
-  return id % MAX_INDEX;
+  return id & INDEX_MASK;
 }
 
 /**
