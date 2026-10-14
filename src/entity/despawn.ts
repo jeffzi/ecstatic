@@ -105,20 +105,27 @@ function bulkTargetCleanup(
 }
 
 /**
- * Advance a slot's generation by one, wrapping to generation 1 when it would reach MAX_GEN.
+ * Compute the generation-table entry of a slot being freed.
  *
- * @param packedId - The slot's current packed entity id (`index + generation × MAX_INDEX`).
+ * The entry is the slot's next id, which no caller holds yet, so no held id matches the free
+ * slot. The one exception is the wrap: generation 1 was issued before, so that entry is stored
+ * negated, and no entity id is negative. Spawn negates it back when it takes the slot.
+ *
+ * @param packedId - The packed id of the entity leaving the slot
+ *   (`index + generation × MAX_INDEX`); positive.
  * @param index - The slot's entity index, used to rebuild the id when the generation wraps.
- * @returns The packed id of the slot's next generation; never equal to `packedId`.
+ * @returns The packed id of the slot's next generation, negated when that generation wrapped
+ *   to 1; never equal to `packedId`.
  */
-function nextGeneration(packedId: number, index: number): number {
+function freeSlotEntry(packedId: number, index: number): number {
   const nextGen = packedId + MAX_INDEX;
-  return nextGen >= MAX_GEN * MAX_INDEX ? initialEntityId(index) : nextGen;
+  return nextGen >= MAX_GEN * MAX_INDEX ? -(initialEntityId(index) as number) : nextGen;
 }
 
 /**
  * Phases 2–3 of the ids-form despawn: freed-slot fill compaction, tail clear,
- * then generation bump + freelist push for every marked index.
+ * then generation advance + freelist push for every marked index (each freed
+ * slot's generation-table entry becomes its next id, negated at the wrap).
  *
  * Requires phase 1 to have cleared `entityArch` for each marked index (the
  * "freed" mark) while `sparse` still holds each freed entity's dense row.
@@ -168,7 +175,7 @@ function compactAndFreeMarked(storage: Storage, indices: number[], count: number
     // oxlint-disable-next-line typescript/no-non-null-assertion -- k < count ≤ indices.length
     const index = indices[k]!;
     // oxlint-disable-next-line typescript/no-non-null-assertion -- index is a live entity index
-    generation[index] = nextGeneration(generation[index]!, index);
+    generation[index] = freeSlotEntry(generation[index]!, index);
     sparse[index] = freeHead;
     freeHead = index;
   }
@@ -367,7 +374,9 @@ export function despawnMany(storageOrWorld: Storage | WorldState, ids?: EntityId
 
 /**
  * Despawn all entities from storage (no ids form).
- * Clears storage.n to 0, advances generations for all entities, and releases despawnClear columns.
+ * Clears storage.n to 0, advances generations for all entities (each freed slot's
+ * generation-table entry becomes its next id, negated at the wrap), and releases despawnClear
+ * columns.
  *
  * @param storage - Storage to empty; its rows are pushed onto the world freelist in row order.
  */
@@ -395,7 +404,7 @@ function despawnManyStorageNoIds(storage: Storage): void {
     // oxlint-disable-next-line typescript/no-non-null-assertion -- row < oldN ≤ entities.length
     const index = entityIndex(storage.entities[row]!);
     // oxlint-disable-next-line typescript/no-non-null-assertion -- index is a live entity index
-    generation[index] = nextGeneration(generation[index]!, index);
+    generation[index] = freeSlotEntry(generation[index]!, index);
     storage.sparse[index] = freeHead;
     freeHead = index;
     world.entityArch[index] = undefined;
@@ -565,7 +574,7 @@ function despawnEntity(storage: Storage, index: number): void {
   storage.world.entityArch[index] = undefined;
 
   // oxlint-disable-next-line typescript/no-non-null-assertion -- index is a live entity index
-  storage.generation[index] = nextGeneration(storage.generation[index]!, index);
+  storage.generation[index] = freeSlotEntry(storage.generation[index]!, index);
 
   // Push the index onto the LIFO freelist: the dead sparse slot holds the next pointer
   const world = storage.world;

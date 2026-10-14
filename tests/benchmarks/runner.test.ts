@@ -119,6 +119,7 @@ describe("parseGeneration", () => {
     { raw: "1", expected: 1 },
     { raw: "2", expected: 2 },
     { raw: "131", expected: 131 },
+    { raw: "1023", expected: 1023 },
   ];
 
   it.each(validCases)("reads $raw as generation $expected", ({ raw, expected }) => {
@@ -127,11 +128,12 @@ describe("parseGeneration", () => {
     expect(generation).toBe(expected);
   });
 
-  describe("when the value is not an integer of at least 1", () => {
+  describe("when the value is not an integer from 1 to 1023", () => {
     const invalidCases: { label: string; raw: string }[] = [
       { label: "an empty string", raw: "" },
       { label: "zero", raw: "0" },
       { label: "a negative integer", raw: "-3" },
+      { label: "an integer above 1023", raw: "1024" },
       { label: "a non-integer", raw: "1.5" },
       { label: "non-numeric text", raw: "banana" },
       { label: "digits with trailing junk", raw: "131x" },

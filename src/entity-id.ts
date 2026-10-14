@@ -2,9 +2,12 @@
  * Entity ID encoding (gen-high layout):
  * ```
  * id    = gen * MAX_INDEX + index
- * index = id & INDEX_MASK        (low bits; exact for any safe integer)
+ * index = id & INDEX_MASK        (low bits)
  * gen   = floor(id / MAX_INDEX)  (cold path only: debug, display)
  * ```
+ *
+ * Every id stays below 2^30, the small-integer range of every V8 build, so an id is never boxed
+ * as a heap number.
  *
  * Worlds store the full packed ID of each entity in a generation table.
  * Staleness check: `generations[index] === id` (no gen extraction needed).
@@ -62,24 +65,26 @@ export type With<C extends ComponentDescriptor | readonly ComponentDescriptor[]>
 };
 
 /** Number of bits used for the entity index (low bits). */
-const INDEX_BITS = 24;
+const INDEX_BITS = 20;
 
 /** Maximum entity index (exclusive) per world. Also the gen stride. */
 export const MAX_INDEX = 2 ** INDEX_BITS;
 
 /**
  * Maximum generation value (exclusive).
- * Remaining safe integer budget after index bits: 2^(53-24) = 2^29.
+ *
+ * Index and generation bits together total 30, which keeps every id below 2^30 — the
+ * small-integer range of every V8 build.
  */
-export const MAX_GEN = 2 ** (53 - INDEX_BITS);
+export const MAX_GEN = 2 ** (30 - INDEX_BITS);
 
 /**
- * Selects the index bits of a packed id. The bitwise AND truncates its operand modulo 2^32, which
- * keeps the low `INDEX_BITS` bits of any safe integer intact, so it holds for ids above 2^32 too.
+ * Ids stay below 2^30, inside the 32-bit range the bitwise AND operates on, so the mask never
+ * truncates an id.
  */
 const INDEX_MASK = MAX_INDEX - 1;
 
-/** Error message used by assertEntityIndex when an index exceeds MAX_INDEX. */
+/** Error message used by assertEntityIndex when an index reaches MAX_INDEX. */
 export const OVERFLOW_MSG = `entity index overflow (max ${MAX_INDEX - 1} per world)`;
 
 /** Sentinel for `freeHead`/freelist links meaning "no free slot". */

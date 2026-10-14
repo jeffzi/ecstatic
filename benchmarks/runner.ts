@@ -43,6 +43,11 @@ export class UsageError extends Error {}
 
 const GENERATION_PATTERN = /^[1-9]\d*$/;
 
+// An entity id carries 10 generation bits, so a slot has generations 1 to 1023 and then wraps
+// back to 1. Keep this in step with the id layout: the compiled package does not export its own
+// bound.
+const MAX_GENERATION = 1023;
+
 /**
  * Parse the `BENCH_GENERATION` environment switch.
  *
@@ -53,15 +58,18 @@ const GENERATION_PATTERN = /^[1-9]\d*$/;
  * @param raw - Value of `BENCH_GENERATION` as the environment holds it; `undefined` when unset.
  * @returns The requested generation, or `1` — a world of never-recycled slots — when `raw` is
  * `undefined`.
- * @throws UsageError when `raw` is anything but a base-10 integer of at least 1; the empty
- * string, a sign, a fraction, and trailing characters are all rejected.
+ * @throws UsageError when `raw` is anything but a base-10 integer from 1 to 1023, the highest
+ * generation a slot reaches before it wraps; the empty string, a sign, a fraction, and trailing
+ * characters are all rejected.
  */
 export function parseGeneration(raw: string | undefined): number {
   if (raw === undefined) {
     return 1;
   }
-  if (!GENERATION_PATTERN.test(raw)) {
-    throw new UsageError(`BENCH_GENERATION must be an integer of at least 1, got "${raw}"`);
+  if (!GENERATION_PATTERN.test(raw) || Number(raw) > MAX_GENERATION) {
+    throw new UsageError(
+      `BENCH_GENERATION must be an integer from 1 to ${MAX_GENERATION}, got "${raw}"`,
+    );
   }
   return Number(raw);
 }

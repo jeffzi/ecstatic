@@ -31,8 +31,10 @@ hand.
 Set `BENCH_GENERATION=<n>` to measure worlds whose tracked entity ids sit at generation `n`: the
 world builder recycles the tracked slots until every tracked id is at that generation and leaves
 `DEFAULT_N` free slots on the freelist, so benchmarks that spawn draw recycled slots too. Background
-entities stay at generation 1. Unset, every id is at generation 1 and the freelist is empty; a value
-that is not an integer of at least 1 is a usage error.
+entities stay at generation 1. Unset, every id is at generation 1 and the freelist is empty. The
+accepted range is 1 to 1023: a slot has 1,023 generations, so a larger value would wrap and measure
+a lower generation than the one asked for. A value that is not an integer in that range is a usage
+error.
 
 The pattern is an unanchored regular expression matched against benchmark names. A pattern that
 matches nothing is an error, not an empty report. A pattern cannot begin with `-`, which would parse

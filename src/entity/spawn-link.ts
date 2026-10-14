@@ -14,7 +14,6 @@ import {
   errorStaleTarget,
 } from "../errors.js";
 import type { SoAColumns, Storage, WorldState } from "../world.js";
-import type { ReverseCtx } from "./reverse-map.js";
 import { reverseInsert } from "./reverse-map.js";
 import type { SpawnOverrides } from "./spawn.js";
 
@@ -103,51 +102,71 @@ function assertRelationTarget(
   }
 }
 
-export interface SpawnRange {
-  storage: Storage;
-  denseStart: number;
-  count: number;
-}
-
 /**
- * Birth-link an optional relation for a run of freshly spawned rows: write
- * the target column and record each source in the target's reverse bucket.
- * Targets are pre-validated by `assertRelationTargets`, so this write path
- * never throws — see that function before adding a check here.
+ * Write an optional relation's birth-link target into the target column for a
+ * run of freshly spawned rows. Targets are pre-validated by
+ * `assertRelationTargets`, so this write path never throws — see that function
+ * before adding a check here.
  *
- * @param range - Storage plus the rows to link, `count` dense rows starting
- *   at `denseStart`, all of which must already hold their entity ids.
- * @param comp - The optional relation being linked; also keys the reverse
- *   map.
  * @param soa - The relation's column record on the storage; only its `target`
  *   column is written.
  * @param rawTarget - Target entity id from the override; 0 (reachable only
- *   under NDEBUG, where it is unvalidated) leaves the rows unlinked with no
- *   reverse entry.
+ *   under NDEBUG, where it is unvalidated) writes nothing, leaving the sentinel
+ *   in place so the rows spawn unlinked.
+ * @param denseStart - Dense index of the first new row.
+ * @param count - Number of consecutive new rows from `denseStart`.
+ * @returns The target entity id written to every row of the run, or 0 when
+ *   the rows were left unlinked.
  */
-export function birthLinkOptional(
-  range: SpawnRange,
-  comp: ComponentDescriptor,
+export function writeBirthTargets(
   soa: SoAColumns,
   rawTarget: unknown,
-): void {
-  const { storage, denseStart, count } = range;
+  denseStart: number,
+  count: number,
+): number {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- override targets are EntityIds (branded numbers)
   const target = rawTarget as number;
-  // Only reachable under NDEBUG, where the 0 sentinel is unvalidated: leave the
-  // sentinel in place so the row spawns unlinked with no reverse entry.
   if (target === 0) {
-    return;
+    return 0;
   }
   // oxlint-disable-next-line typescript/no-non-null-assertion -- relation SoA always has a target column
   const targetCol = soa["target"]!;
-  const targetIdx = entityIndex(target);
-  const reverseCtx: ReverseCtx = { state: storage.world, rel: comp };
   for (let i = 0; i < count; i++) {
-    const di = denseStart + i;
-    targetCol[di] = target;
+    targetCol[denseStart + i] = target;
+  }
+  return target;
+}
+
+/**
+ * Record the reverse-map entries of an optional relation's birth link for the
+ * freshly spawned rows at the tail of a storage.
+ *
+ * Spawn appends rows, so the run being linked always ends at `storage.n`; the
+ * row count is read from there. A caller linking rows that are not the
+ * storage's tail must not use this function.
+ *
+ * @param storage - Storage the rows were spawned into, with `n` already
+ *   advanced past them and every row holding its entity id.
+ * @param rel - The optional relation being linked; keys the reverse map.
+ * @param target - Target entity id shared by the run, as returned by
+ *   {@link writeBirthTargets}; 0 records nothing.
+ * @param denseStart - Dense index of the first new row; rows from here up to
+ *   `storage.n` are recorded.
+ */
+export function insertOptionalRelationEntries(
+  storage: Storage,
+  rel: ComponentDescriptor,
+  target: number,
+  denseStart: number,
+): void {
+  if (target === 0) {
+    return;
+  }
+  const targetIdx = entityIndex(target);
+  const denseEnd = storage.n;
+  for (let di = denseStart; di < denseEnd; di++) {
     // oxlint-disable-next-line typescript/no-non-null-assertion -- di is a freshly spawned dense index
-    reverseInsert(reverseCtx, targetIdx, storage, entityIndex(storage.entities[di]!));
+    reverseInsert(rel, targetIdx, storage, entityIndex(storage.entities[di]!));
   }
 }
 
@@ -172,7 +191,6 @@ export function insertRequiredRelationEntries(
   denseStart: number,
   count: number,
 ): void {
-  const state = storage.world;
   const relCols = storage.relationTargetColumns;
   const relDescriptors = storage.relationDescriptors;
   const relBits = storage.relationOptionalBits;
@@ -186,36 +204,35 @@ export function insertRequiredRelationEntries(
     const col = relCols[ri]!;
     // oxlint-disable-next-line typescript/no-non-null-assertion -- ri < relN ≤ relDescriptors.length
     const relDesc = relDescriptors[ri]!;
-    const entryCtx: RequiredEntryCtx = { state, storage, rel: relDesc };
     for (let i = 0; i < count; i++) {
       const di = denseStart + i;
       // oxlint-disable-next-line typescript/no-non-null-assertion -- di is a freshly spawned dense index
-      insertRequiredEntry(entryCtx, col[di]!, di);
+      insertRequiredEntry(storage, relDesc, col[di]!, di);
     }
   }
-}
-
-interface RequiredEntryCtx {
-  state: WorldState;
-  storage: Storage;
-  rel: ComponentDescriptor;
 }
 
 /**
  * Record one required-relation birth entry in the reverse map.
  *
- * @param ctx - World state, the source's storage, and the relation being
- *   recorded.
+ * @param storage - Storage owning the source entity; its world's reverse map
+ *   receives the entry.
+ * @param rel - The required relation being recorded.
  * @param target - Target entity id read from the target column; 0 means "not
  *   provided", reachable only under NDEBUG, and leaves the entity unlinked
  *   with no reverse entry.
  * @param di - Dense row of the source entity; must already hold its entity
  *   id.
  */
-function insertRequiredEntry(ctx: RequiredEntryCtx, target: number, di: number): void {
+function insertRequiredEntry(
+  storage: Storage,
+  rel: ComponentDescriptor,
+  target: number,
+  di: number,
+): void {
   if (target === 0) {
     return;
   }
   // oxlint-disable-next-line typescript/no-non-null-assertion -- di is a freshly spawned dense index
-  reverseInsert(ctx, entityIndex(target), ctx.storage, entityIndex(ctx.storage.entities[di]!));
+  reverseInsert(rel, entityIndex(target), storage, entityIndex(storage.entities[di]!));
 }

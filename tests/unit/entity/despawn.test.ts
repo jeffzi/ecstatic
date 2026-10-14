@@ -1,7 +1,18 @@
 import { assert, describe, expect, it } from "vitest";
 
 import { entityIndex, initialEntityId, MAX_GEN, MAX_INDEX } from "../../../src/entity-id.js";
-import { alive, archetype, components, despawn, ref, spawn } from "../../../src/index.js";
+import { ERROR_STALE_ENTITY_ID } from "../../../src/errors.js";
+import {
+  alive,
+  archetype,
+  components,
+  despawn,
+  despawnMany,
+  get,
+  ref,
+  spawn,
+  spawnMany,
+} from "../../../src/index.js";
 import { createWorld, register } from "../../../src/world.js";
 
 const { DespawnTestPosition: Position } = components({
@@ -248,6 +259,23 @@ describe("despawn safety checks", () => {
     expect(spawn(storage)).toBe(initialEntityId(index));
   });
 
+  it("reissues a slot's first id after 1,023 distinct ids", () => {
+    const world = createWorld();
+    const storage = register(world, archetype([Position]));
+    const issued: number[] = [];
+
+    for (let i = 0; i < 1023; i++) {
+      const id = spawn(storage);
+      issued.push(id);
+      despawn(storage, id);
+    }
+    const reissued = spawn(storage);
+
+    expect(new Set(issued).size).toBe(1023);
+    expect(reissued).toBe(issued[0]);
+    expect(alive(storage, reissued)).toBe(true);
+  });
+
   it("clears ref-column tail slot on despawn (GC safety)", () => {
     const { DespawnRefComp: RefComp } = components({
       DespawnRefComp: { handle: ref() },
@@ -284,5 +312,142 @@ describe("despawn safety checks", () => {
       despawn(world, id);
     }).not.toThrow();
     expect(storage.n).toBe(1);
+  });
+});
+
+/** Number of distinct generations a slot hands out before its ids repeat. */
+const SLOT_GENERATIONS = MAX_GEN - 1;
+
+/**
+ * World with one bystander entity and a slot one despawn away from wrapping.
+ *
+ * `held` is the first id the slot issued. The slot has since been despawned and
+ * respawned until `occupant`, its live entity, carries the last generation:
+ * freeing `occupant` is the slot's 1,023rd despawn, after which the slot's next
+ * id is `held` again.
+ */
+function createWrappingSlot() {
+  const world = createWorld();
+  const storage = register(world, archetype([Position]));
+  const bystander = spawn(storage, { DespawnTestPosition: { x: 10, y: 20 } });
+  const held = spawn(storage);
+  let occupant = held;
+  for (let i = 1; i < SLOT_GENERATIONS; i++) {
+    despawn(storage, occupant);
+    occupant = spawn(storage);
+  }
+  return { bystander, held, occupant, storage, world };
+}
+
+type WrappingSlot = ReturnType<typeof createWrappingSlot>;
+
+/** {@link createWrappingSlot} with the slot freed, so no entity exists for `held`. */
+function createWrappedFreeSlot(): WrappingSlot {
+  const fixture = createWrappingSlot();
+  despawn(fixture.storage, fixture.occupant);
+  return fixture;
+}
+
+interface SlotCase {
+  readonly label: string;
+  readonly run: (fixture: WrappingSlot) => void;
+}
+
+describe("an id whose slot is free after the generation wraps", () => {
+  it.each<SlotCase>([
+    {
+      label: "despawn",
+      run: ({ occupant, storage }) => {
+        despawn(storage, occupant);
+      },
+    },
+    {
+      label: "despawnMany with ids",
+      run: ({ occupant, storage }) => {
+        despawnMany(storage, [occupant]);
+      },
+    },
+    {
+      label: "despawnMany over a storage",
+      run: ({ storage }) => {
+        despawnMany(storage);
+      },
+    },
+    {
+      label: "despawnMany over a world with ids",
+      run: ({ occupant, world }) => {
+        despawnMany(world, [occupant]);
+      },
+    },
+    {
+      label: "despawnMany over a world",
+      run: ({ world }) => {
+        despawnMany(world);
+      },
+    },
+  ])("is not alive once $label frees the slot", ({ run }) => {
+    const fixture = createWrappingSlot();
+
+    run(fixture);
+
+    expect(alive(fixture.world, fixture.held)).toBe(false);
+    expect(alive(fixture.storage, fixture.held)).toBe(false);
+  });
+
+  it.each<SlotCase>([
+    {
+      label: "storage",
+      run: ({ held, storage }) => {
+        despawn(storage, held);
+      },
+    },
+    {
+      label: "world",
+      run: ({ held, world }) => {
+        despawn(world, held);
+      },
+    },
+  ])("is a no-op to despawn through the $label", ({ run }) => {
+    const fixture = createWrappedFreeSlot();
+    const { bystander, storage } = fixture;
+
+    expect(() => {
+      run(fixture);
+    }).not.toThrow();
+    expect(storage.n).toBe(1);
+    expect(alive(storage, bystander)).toBe(true);
+    expect(get(storage, bystander, Position.x)).toBe(10);
+    expect(get(storage, bystander, Position.y)).toBe(20);
+    expect(spawn(storage)).not.toBe(spawn(storage));
+  });
+
+  it.each<SlotCase>([
+    {
+      label: "storage",
+      run: ({ held, storage }) => {
+        get(storage, held, Position.x);
+      },
+    },
+    {
+      label: "world",
+      run: ({ held, world }) => {
+        get(world, held, Position.x);
+      },
+    },
+  ])("is stale to get through the $label", ({ run }) => {
+    const fixture = createWrappedFreeSlot();
+
+    expect(() => {
+      run(fixture);
+    }).toThrow(ERROR_STALE_ENTITY_ID);
+  });
+
+  it("is reissued, alive, when spawnMany takes the slot", () => {
+    const { held, storage } = createWrappedFreeSlot();
+
+    const [reissued] = spawnMany(storage, 1);
+
+    expect(reissued).toBe(held);
+    expect(alive(storage, held)).toBe(true);
   });
 });

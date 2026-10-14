@@ -15,12 +15,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Return the existing registration from `component()`, `components()`, `relation()`, and
   `resource()` when re-declared with an equal shape instead of throwing
-- Read the debug opt-out from a bare `NDEBUG` global define (`define: { NDEBUG: "true" }` in
-  esbuild/Vite, or `globalThis.NDEBUG = true` without a bundler) instead of `process.env.NDEBUG`
+- **Breaking:** Read the debug opt-out from a bare `NDEBUG` global define
+  (`define: { NDEBUG: "true" }` in esbuild/Vite, or `globalThis.NDEBUG = true` without a bundler)
+  instead of `process.env.NDEBUG`
+- **Breaking:** Lower the entity ceiling to 1,048,576 entities per world (was 16,777,216) and the
+  generations per slot to 1,023 (was 536,870,911), so a dead ID matches a live entity again once its
+  slot has been recycled 1,023 times
 
 ### Fixed
 
 - Stop package imports from failing at load time in browsers and bundlers
+- Stop `spawn` and `despawn` from allocating on V8 after a slot has been recycled many times
+- Stop a dead ID from passing as alive, and `despawn` of it from throwing, removing another entity,
+  or handing its slot out twice, while the slot is free after its generation wraps
 
 ## [0.4.0] - 2026-08-10
 
@@ -45,21 +52,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Stop exporting the `ArchetypeDescriptor` type; `class Ship extends Archetype(…) {}` is the one way
   to name an archetype. Generic helpers constrain on `Storage` instead (`<S extends Storage>`,
   reading the archetype back via `S["archetype"]`)
-- Stop exporting internal types:
-  - `ComponentDescriptor`
-  - `ComponentFields`
-  - `FieldDescriptor`
-  - `FieldValue`
-  - `EachView`
-  - `ViewApplyFilter`
-  - `QueryView`
-  - `SpawnOverrides`
-  - `OptionalOverridesFor`
-  - `RelationConstraints`
-  - `RelationDescriptor`
-  - `RelationFields`
-  - `ResourceFields`
-  - `getRelationMeta` (accessor)
+- Stop exporting internal types (`ComponentDescriptor`, `ComponentFields`, `FieldDescriptor`,
+  `FieldValue`, `EachView`, `ViewApplyFilter`, `QueryView`, `SpawnOverrides`,
+  `OptionalOverridesFor`, `RelationConstraints`, `RelationDescriptor`, `RelationFields`,
+  `ResourceFields`) and the `getRelationMeta` accessor
 
 ## [0.3.0] - 2026-08-08
 

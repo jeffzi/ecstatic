@@ -34,14 +34,10 @@ export const ALLOC_BUDGETS: Readonly<Record<string, number>> = {
   enable: 0,
   disable: 0,
   enable_data: 0,
-  // Baseline: a spawn/despawn pair on a one-component archetype with one
-  // optional; source not yet isolated.
-  spawn_despawn: 48,
+  spawn_despawn: 0,
   // `spawnMany` without `out` returns a fresh id array — inherent to the call.
-  spawn_despawn_many: 45,
-  // Baseline: `spawnMany`/`despawnMany` with a caller-owned id array; source
-  // not yet isolated.
-  spawn_despawn_many_out: 32,
+  spawn_despawn_many: 29,
+  spawn_despawn_many_out: 0,
   resource_get: 0,
   resource_set: 0,
   resource_reset: 0,
@@ -57,9 +53,10 @@ export const ALLOC_BUDGETS: Readonly<Record<string, number>> = {
   // source; `getSources` skips the callback but not the entries.
   rel_query_sources: 80,
   rel_get_sources: 64,
-  // Baseline: a spawn/despawn pair on an archetype with a required relation
-  // (reverse-map insert plus the spawn path); source not yet isolated.
-  rel_spawn_despawn: 134,
+  // Spawning with a required relation inserts the source into the target's
+  // reverse-map bucket, a `Map` entry per link; the despawn deletes it, so
+  // the pair pays the insert.
+  rel_spawn_despawn: 86,
 };
 
 /**

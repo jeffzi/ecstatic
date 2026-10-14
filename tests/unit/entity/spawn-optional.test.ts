@@ -6,6 +6,8 @@ import {
   components,
   despawn,
   despawnMany,
+  get,
+  getSources,
   relation,
   spawn,
   spawnMany,
@@ -228,5 +230,18 @@ describe("spawn mixing optional relations with plain optionals", () => {
     const followsMeta = getRelationMeta(Follows);
     assert(followsMeta != null);
     expect(storage.columns.get(followsMeta)?.["target"]?.[row]).toBe(0);
+  });
+
+  it("spawnMany birth-links every row of the batch to the optional relation's target", () => {
+    const Owner = relation("SpawnOptRelation_BatchOwner");
+    const world = createWorld();
+    const storage = register(world, archetype([Position], [Owner]));
+    const target = spawn(register(world, archetype([Position])));
+    spawn(storage);
+
+    const ids = spawnMany(storage, 3, { SpawnOptRelation_BatchOwner: { target } });
+
+    expect(getSources(world, Owner, target)).toStrictEqual(ids);
+    expect(ids.map((id) => get(storage, id, Owner.target))).toStrictEqual([target, target, target]);
   });
 });

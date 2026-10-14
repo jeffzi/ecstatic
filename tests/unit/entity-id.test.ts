@@ -10,9 +10,20 @@ import {
 } from "../../src/entity-id.js";
 
 describe("generational IDs", () => {
-  it("uses 24 index bits and the remaining safe integer budget for generations", () => {
-    expect(MAX_INDEX).toBe(16777216);
-    expect(MAX_GEN).toBe(536870912);
+  it("uses 20 index bits and 10 generation bits", () => {
+    expect(MAX_INDEX).toBe(1048576);
+    expect(MAX_GEN).toBe(1024);
+  });
+
+  it("keeps the id at the highest index and generation below 2^30", () => {
+    const highestIndex = MAX_INDEX - 1;
+    const highestGen = MAX_GEN - 1;
+
+    const eid = highestGen * MAX_INDEX + highestIndex;
+
+    expect(eid).toBe(2 ** 30 - 1);
+    expect(entityIndex(eid)).toBe(highestIndex);
+    expect(entityGen(eid)).toBe(highestGen);
   });
 
   const roundTripCases: [number, number][] = [

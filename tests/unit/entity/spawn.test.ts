@@ -224,4 +224,15 @@ describe("hard limits", () => {
       spawn(storage);
     }).toThrow(new RegExp(String(MAX_INDEX - 1)));
   });
+
+  it("reports the per-world ceiling when spawning past 1,048,576 entities", () => {
+    const world = createWorld();
+    const storage = register(world, archetype([Position]));
+    world.nextIndex = 1048576;
+    world.freeHead = -1;
+
+    expect(() => {
+      spawn(storage);
+    }).toThrow(new Error("entity index overflow (max 1048575 per world)"));
+  });
 });

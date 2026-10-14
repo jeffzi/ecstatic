@@ -208,8 +208,8 @@ query(world, [Position, Velocity], (e) => {
 
 ### D. Entity links
 
-Store an EntityId in a component field to reference another entity. The generational ID system
-guarantees safe stale detection via `alive()`.
+Store an EntityId in a component field to reference another entity. `alive()` detects a stale link
+by comparing generations, up to the bound in [pillars.md](pillars.md), pillar 5.
 
 **When to use:** Persistent cross-entity relationships. Targeting, ownership, parent-child,
 follow/track behaviors.
@@ -248,7 +248,8 @@ documented perf alternative — a pure-scalar column (see
 **Tradeoffs:**
 
 - Direct reference, no global state
-- Generational IDs catch stale references (target despawned between frames)
+- The generation check catches stale references (target despawned between frames), up to the bound
+  in pillar 5
 - No automatic notification when the target is destroyed — must poll with `alive()`
 - Cross-archetype data lookup requires resolving the entity's archetype and dense index
 
@@ -347,7 +348,8 @@ each(enemies, (e) => {
 **Tradeoffs:**
 
 - Explicit and traceable — no hidden migration
-- Old entity ID is invalidated (detectable via `alive()`)
+- Old entity ID is invalidated (detectable via `alive()`, up to the bound in
+  [pillars.md](pillars.md), pillar 5)
 - Must manually copy shared data (Position in this example)
 - Not suitable for frequent transitions (spawn/despawn have per-call cost)
 
@@ -475,8 +477,8 @@ The view `e` parameter in `each()` callbacks is valid only for the current callb
 After the callback returns, despawns can reorder the storage via swap-and-pop, invalidating any
 stored view. This is a gap in ecstatic's safety model: the type system catches structural mistakes
 (wrong component on wrong archetype), and generational IDs catch temporal mistakes (using a
-despawned entity), but views are reused per-archetype objects with no branding or staleness
-detection.
+despawned entity, up to the bound in [pillars.md](pillars.md), pillar 5), but views are reused
+per-archetype objects with no branding or staleness detection.
 
 ```typescript
 // DANGEROUS: storing view across iterations
@@ -490,9 +492,10 @@ savedE.Health.hp -= 10; // silent corruption
 ```
 
 **Rule: never store `e` outside its callback.** If you need to reference an entity later, store
-`e.id` (an EntityId) — its generational check detects stale references. Views are the fast path for
-_immediate_ field access within a single callback; EntityIds are the safe path for _deferred_
-references.
+`e.id` (an EntityId) — its generational check detects stale references, up to the bound in
+[pillars.md](pillars.md), pillar 5. Views are the fast path for _immediate_ field access within a
+single callback; EntityIds are the path for _deferred_ references, checked with `alive()` before
+that bound is reached.
 
 ### Never `await` inside a callback
 
@@ -524,7 +527,10 @@ for (const id of pending) {
 ```
 
 Complete all `each()` callbacks synchronously — `await` _between_ `each()` calls, not inside them,
-and re-validate collected IDs with `alive()` after every suspension point.
+and re-validate collected IDs with `alive()` after every suspension point. That check has a bound
+([pillars.md](pillars.md), pillar 5): an ID held across a suspension long enough for its slot to be
+recycled 1,023 times reads alive again, so a long wait needs its own cancellation, not `alive()`
+alone.
 
 ## Why ecstatic has no public observers
 
@@ -588,4 +594,5 @@ each(enemies, fn);
 ### Async callbacks
 
 See [Never `await` inside a callback](#never-await-inside-a-callback). Complete all iteration
-synchronously; suspend only between passes, and re-validate IDs with `alive()` afterwards.
+synchronously; suspend only between passes, and re-validate IDs with `alive()` afterwards, within
+the bound that section states.

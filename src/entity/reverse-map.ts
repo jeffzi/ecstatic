@@ -8,7 +8,7 @@
  */
 
 import type { ComponentDescriptor } from "../component.js";
-import type { Storage, WorldState } from "../world.js";
+import type { Storage } from "../world.js";
 
 /**
  * Sentinel key inside a relation's reverse map holding the single-storage
@@ -63,21 +63,17 @@ export function soleStorage(relMap: RelationReverseMap): Storage | false | undef
   return flag instanceof Map ? undefined : flag;
 }
 
-export interface ReverseCtx {
-  state: WorldState;
-  rel: ComponentDescriptor;
-}
-
 /**
  * Insert a source entity index into the reverse map for a relation.
  * The per-target bucket is lazily created; the top-level `rel` entry is
  * pre-initialized at registration time.
  *
- * Raises `world.maxTargetIndex` when a target index gets its first reverse
- * entry. The update lives in the lazy-create branch, so the steady-state
- * insert path (bucket already exists) pays nothing. Despawn relies on the
- * invariant that any index above `maxTargetIndex` has no reverse entry: it
- * skips the target-side cleanup for such entities.
+ * Raises `maxTargetIndex` on the world that owns `storage` when a target
+ * index gets its first reverse entry. The update lives in the lazy-create
+ * branch, so the steady-state insert path (bucket already exists) pays
+ * nothing. Despawn relies on the invariant that any index above
+ * `maxTargetIndex` has no reverse entry: it skips the target-side cleanup for
+ * such entities.
  *
  * Single-storage flag: the {@link SINGLE_STORAGE_KEY} slot holds the sole
  * storage that has EVER sourced this relation in this world, degraded to
@@ -88,21 +84,24 @@ export interface ReverseCtx {
  * — target/source removal cannot make it lie), never cleaned up; a full
  * reverse-map reset drops it with the map.
  *
- * @param ctx - World state and the relation whose reverse map receives the
- *   entry; the relation must already be registered in that world.
+ * @param rel - Relation whose reverse map receives the entry; it must already
+ *   be registered in the world that owns `storage`.
  * @param targetIndex - Entity index of the link target.
  * @param storage - Storage owning the source entity, stored as the bucket
- *   value so reverse iteration skips an archetype lookup.
+ *   value so reverse iteration skips an archetype lookup; its world's reverse
+ *   map and watermark are the ones updated.
  * @param sourceIndex - Entity index of the source; an existing entry for it
  *   is overwritten, so re-linking to the same target is idempotent.
+ * @throws If `rel` is not registered in the world that owns `storage`
+ *   (invariant violation).
  */
 export function reverseInsert(
-  ctx: ReverseCtx,
+  rel: ComponentDescriptor,
   targetIndex: number,
   storage: Storage,
   sourceIndex: number,
 ): void {
-  const { state, rel } = ctx;
+  const state = storage.world;
   const relMap = state.reverseMap.get(rel);
   /* istanbul ignore next */
   if (relMap === undefined) throw new Error("invariant: relation not registered");

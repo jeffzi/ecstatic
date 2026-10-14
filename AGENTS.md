@@ -22,13 +22,14 @@ Package manager is **npm** (`package-lock.json`).
   and untested `src/` files count against them
 - `npm run test:types` — type-only tests (`tests/types/*.test-d.ts`)
 - `npm run examples` — build, then run each `examples/*.ts` with tsx
-- `npm run check` — every pre-commit hook over all tracked and untracked files: lint, markdown,
-  formatting, workflow lint/audit, type-aware lint, dead code, spelling, types, then publish hygiene
-  (`publint` + `@arethetypeswrong/cli`); then the build, examples, and benchmarks type checks, the
-  version sync check, and the allocation gate. The lint, markdown, and formatting hooks rewrite
-  files in place. The dead-code hook scores complexity against the coverage `npm test` writes and
-  refuses to run when a `src/` file is newer than that report, so run `npm test` first after
-  editing `src/`. Run before committing.
+- `npm run check` — every pre-commit hook over all tracked and untracked files (lint, markdown,
+  formatting, workflow lint/audit, type-aware lint, spelling, types), plus dead code and publish
+  hygiene (`publint` + `@arethetypeswrong/cli`); then the build, examples, and benchmarks type
+  checks, the version sync check, and the allocation gate. The lint, markdown, and formatting hooks
+  rewrite files in place. The dead-code hook scores complexity against the coverage `npm test`
+  writes and refuses to run when a `src/` file is newer than that report, so run `npm test` first
+  after editing `src/`. It runs in `check` and `pre-push` (right after `npm test`), never at
+  pre-commit. Run before committing.
 - `npm run check:type` — type-check the build, examples, and benchmarks tsconfigs
 - `npm run check:version` — fail when `src/version.ts` is out of sync with `package.json`
 - `npm run check:alloc` — build, then run the allocation gate (`benchmarks/alloc/gate.ts`)

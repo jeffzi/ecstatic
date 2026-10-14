@@ -36,7 +36,10 @@ export interface WorldState {
   /** Inverse lookup: entity index → storage (or undefined if unused) */
   entityArch: (Storage | undefined)[];
 
-  /** Entity ID table: stores the full packed ID per index for staleness checks */
+  /**
+   * Entity ID table for staleness checks: the occupant's full packed ID per index, or, while the
+   * slot is on the freelist, the slot's next ID — negated when that generation wrapped back to 1
+   */
   generation: Float64Array;
 
   /** Sparse table: entity index → dense row; dead slots hold the freelist next pointer */

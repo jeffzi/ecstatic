@@ -244,9 +244,11 @@ const enemy = getTarget(world, missileId, Targets); // EntityId | undefined
 ```
 
 `get(storage, id, Rel.target)` is the relation equivalent of reading a plain entity-link field —
-fast, unchecked, you call `alive()` yourself. `getTarget` adds the bitmask + generation check and
-never hands back a dead target. Keep `getTarget` for the common forward read where temporal safety
-matters; reach for `get` when you have already proven the target live in the same frame.
+fast, unchecked, you call `alive()` yourself. `getTarget` adds the bitmask + generation check, so a
+target whose generation has advanced comes back as `undefined` (the check is by generation; its
+bound is in `docs/pillars.md`, pillar 5). Keep `getTarget` for the common forward read where
+temporal safety matters; reach for `get` when you have already proven the target live in the same
+frame.
 
 The "no check" in `get` refers only to _target_ liveness. On an **optional** relation that is
 currently unlinked, `get(storage, id, Rel.target)` still follows the standard optional-component
@@ -270,9 +272,10 @@ querySources(world, Targets, enemyId, (e) => {
 ```
 
 Internally `querySources` first generation-checks `target`. A stale id — one whose slot has since
-been recycled by a later entity — visits nothing rather than aliasing onto the new occupant's
-bucket. For a live target it is a reverse-map lookup followed by an O(S) walk over the S sources
-that actually point at the target — not a scan of all sources.
+been recycled by a later entity — fails that check and visits nothing instead of the new occupant's
+bucket (the check is by generation; its bound is in `docs/pillars.md`, pillar 5). For a live target
+it is a reverse-map lookup followed by an O(S) walk over the S sources that actually point at the
+target — not a scan of all sources.
 
 The bucket iteration is safe under despawn/retarget mutations of the current source:
 
@@ -562,22 +565,22 @@ storing the storage in the bucket adds no extra lookup.
 
 ## Error behavior
 
-| Operation              | Stale/invalid source ID          | Stale/invalid target ID                                                 | Other                                                                                                       |
-| ---------------------- | -------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `relation`             | N/A                              | N/A                                                                     | errors if `target` declared in defaults                                                                     |
-| `spawn` (req relation) | N/A                              | **Errors** ¹ ("stale target ID")                                        | compile error if target omitted; constraint shape checked at compile time                                   |
-| `spawn` (opt relation) | N/A                              | **Errors** ¹ ("stale target ID") if target provided                     | birth-links when target provided; no-op when omitted                                                        |
-| `link`                 | **Errors** ¹ ("stale entity ID") | **Errors** ¹ ("stale target ID")                                        | `target` is a required parameter (compile-time); field values stored by reference                           |
-| `unlink`               | **Errors** ¹ ("stale entity ID") | N/A                                                                     | **Errors** if relation is required; **no-op** if already unlinked                                           |
-| `enable` (relation)    | **Errors** ¹                     | N/A                                                                     | **rejected** — compile error; runtime error in dynamic fallback ("relations toggled via link()/unlink()")   |
-| `disable` (relation)   | **Errors** ¹                     | N/A                                                                     | **rejected** — compile error; runtime error in dynamic fallback ("relations toggled via link()/unlink()")   |
-| `set` (`.target`)      | **Errors** ¹                     | N/A                                                                     | **rejected** — compile error; runtime error in dynamic fallback ("cannot write relation target — use link") |
-| `get` (`.target`)      | **Errors** ¹ ("stale entity ID") | returns the raw stored id (no check)                                    | **Errors** under `!NDEBUG` if the relation is optional and unlinked (standard optional-get gate)            |
-| `getTarget`            | returns `undefined`              | returns `undefined` (dead/unlinked)                                     | N/A                                                                                                         |
-| `querySources`         | N/A                              | no matches (generation-checked — a stale/recycled target never aliases) | empty results on unregistered relation                                                                      |
-| `getSources`           | N/A                              | empty list (generation-checked)                                         | empty list on unregistered relation                                                                         |
-| `hasSources`           | N/A                              | returns `false` (generation-checked)                                    | returns `false` on unregistered relation                                                                    |
-| `countSources`         | N/A                              | returns `0` (generation-checked)                                        | returns `0` on unregistered relation                                                                        |
+| Operation              | Stale/invalid source ID          | Stale/invalid target ID                             | Other                                                                                                       |
+| ---------------------- | -------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `relation`             | N/A                              | N/A                                                 | errors if `target` declared in defaults                                                                     |
+| `spawn` (req relation) | N/A                              | **Errors** ¹ ("stale target ID")                    | compile error if target omitted; constraint shape checked at compile time                                   |
+| `spawn` (opt relation) | N/A                              | **Errors** ¹ ("stale target ID") if target provided | birth-links when target provided; no-op when omitted                                                        |
+| `link`                 | **Errors** ¹ ("stale entity ID") | **Errors** ¹ ("stale target ID")                    | `target` is a required parameter (compile-time); field values stored by reference                           |
+| `unlink`               | **Errors** ¹ ("stale entity ID") | N/A                                                 | **Errors** if relation is required; **no-op** if already unlinked                                           |
+| `enable` (relation)    | **Errors** ¹                     | N/A                                                 | **rejected** — compile error; runtime error in dynamic fallback ("relations toggled via link()/unlink()")   |
+| `disable` (relation)   | **Errors** ¹                     | N/A                                                 | **rejected** — compile error; runtime error in dynamic fallback ("relations toggled via link()/unlink()")   |
+| `set` (`.target`)      | **Errors** ¹                     | N/A                                                 | **rejected** — compile error; runtime error in dynamic fallback ("cannot write relation target — use link") |
+| `get` (`.target`)      | **Errors** ¹ ("stale entity ID") | returns the raw stored id (no check)                | **Errors** under `!NDEBUG` if the relation is optional and unlinked (standard optional-get gate)            |
+| `getTarget`            | returns `undefined`              | returns `undefined` (dead/unlinked)                 | N/A                                                                                                         |
+| `querySources`         | N/A                              | no matches (generation-checked)                     | empty results on unregistered relation                                                                      |
+| `getSources`           | N/A                              | empty list (generation-checked)                     | empty list on unregistered relation                                                                         |
+| `hasSources`           | N/A                              | returns `false` (generation-checked)                | returns `false` on unregistered relation                                                                    |
+| `countSources`         | N/A                              | returns `0` (generation-checked)                    | returns `0` on unregistered relation                                                                        |
 
 ¹ Checked builds only: the stale-ID check is gated by `!NDEBUG` and stripped from NDEBUG builds (the
 entity-validation contract in `docs/pillars.md`, pillar 5). Unmarked checks — including

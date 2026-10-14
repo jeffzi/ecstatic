@@ -26,7 +26,7 @@ and query state.
 ```text
 Archetype
 ├── sparse: number[]                    // sparse index → dense index
-├── entities: Float64Array              // dense index → entity ID (53-bit safe integer)
+├── entities: Float64Array              // dense index → entity ID (30-bit packed integer)
 ├── n: number                           // current entity count
 ├── mask: Uint32Array                   // dense index → optional component bitmask
 ├── columns: Map<Descriptor, Column>    // descriptor → SoA column
@@ -41,7 +41,7 @@ Archetype
 
 **Parallel arrays**: `entities`, `mask`, and every column are indexed in parallel. Index `i` refers
 to the same entity across all of them. There is no dense→sparse array: the sparse index of row `i`
-is recovered arithmetically as `entities[i] % 2^24`.
+is recovered arithmetically as `entities[i] % 2^20`.
 
 | row [i]  | 0 (sparse 3) | 1 (sparse 0) | 2 (sparse 7) |
 | -------- | ------------ | ------------ | ------------ |
@@ -115,39 +115,83 @@ never recomputes masks — it only reads the precomputed boolean.
 
 ### Generational Entity IDs
 
-Entity IDs pack a **24-bit sparse index** and a **29-bit generation** into a single safe integer,
-using arithmetic packing (not bitwise, which truncates to 32 bits in JavaScript):
+Entity IDs pack a **20-bit sparse index** and a **10-bit generation** into a single 30-bit integer,
+which stays inside the small-integer range that JavaScript engines store without allocating:
 
 ```text
-id = generation * (2^24) + index
-   = generation * 16777216 + index
+id = generation * (2^20) + index
+   = generation * 1048576 + index
 ```
 
-The world's `generation` array stores the current occupant's **full packed ID** at each index, so
-the hot-path operations are single reads and comparisons:
+The world's `generation` array stores the current occupant's **full packed ID** at each index, and
+the slot's next ID while the slot is free, so the hot-path operations are single reads and
+comparisons:
 
-**Packing**: on spawn, `id = generation[index]` — a plain read; the slot's next ID is precomputed
+**Packing**: on spawn, `id = generation[index]` — a plain read; the slot's next ID is precomputed. A
+free slot whose generation wrapped holds that ID negated, and spawn negates it back.
 
-**Unpacking**: `index = id % 2^24`; the ID is live iff `generation[index] === id`
+**Unpacking**: `index = id % 2^20`; the ID is live iff `generation[index] === id`. A free slot's
+entry is an ID that has not been issued yet, or a negative number after a wrap, so no issued ID
+matches a free slot.
 
-**Fresh slot init**: `generation[index] = 2^24 + index` (generation 1)
+**Fresh slot init**: `generation[index] = 2^20 + index` (generation 1)
 
-**Generation advance** (on despawn): `generation[index] += 2^24`, wrapping back to generation 1
-(`2^24 + index`) when the generation would reach 2^29.
+**Generation advance** (on despawn): `generation[index] += 2^20`. When the generation would reach
+2^10 it wraps back to generation 1, and despawn stores that ID negated (`-(2^20 + index)`): it was
+issued before, and a negative entry keeps the old ID from matching the free slot.
 
 **Limits**:
 
-- Max index: 2^24 = 16,777,216 entities (usable: 0..16,777,215)
-- Generations per index: 2^29 − 1 = 536,870,911 cycles before repeat
+- Max index: 2^20 = 1,048,576 entities (usable: 0..1,048,575)
+- Generations per index: 2^10 − 1 = 1,023 cycles before repeat
 
 Fresh indices start at generation 1 (generation 0 is a "never allocated" sentinel). When an index is
-recycled, its generation advances, preventing stale IDs from colliding with live ones.
+recycled, its generation advances, so a stale ID fails the comparison until the generation repeats.
+
+**The bound on stale detection**: a dead ID matches a live entity again once its slot has been
+recycled (despawned, then respawned) 1,023 times since the ID was issued. Reuse is last-freed-first,
+so a slot that is despawned and respawned every frame gets there in about 17 seconds at 60 frames
+per second. Code that checks `alive()` on a held ID every frame sees the death and never reaches the
+repeat. The exposed case is an ID held unchecked for longer than that: a delayed callback, a save
+file, a late network message.
 
 Every public entity operation validates that the entity ID's generation matches the current
 generation at that index. These checks compile out under a build-time `NDEBUG` define.
 
 **Exception**: `despawn` of a stale ID is a defined no-op, always. This pattern is common in
 deferred cleanup and multi-system teardown where IDs may outlive their entities.
+
+#### Why an ID is 30 bits wide
+
+V8 stores a number inline only inside its small-integer range: 31 bits on Node, and 30 bits on
+builds with pointer compression such as Chrome. Any other number is a 16-byte heap object, allocated
+each time an ID crosses a call the engine did not inline.
+
+With 24 index bits an ID left that range at generation 128 (64 on Chrome), so a slot recycled once
+per frame started allocating on every spawn after about two seconds, for the rest of the world's
+life. That broke the allocation pillar ([pillars.md](../pillars.md), pillar 9) on a warm world. The
+allocation gate reads these bytes per spawn and despawn pair:
+
+| Operation                                   | 24 index bits | 20 index bits |
+| ------------------------------------------- | ------------- | ------------- |
+| `spawn` and `despawn`                       | 48            | 0             |
+| `spawnMany` and `despawnMany`               | 45            | 29            |
+| The same with a caller-owned ID array       | 32            | 0             |
+| `spawn` with a required relation, `despawn` | 134           | 86            |
+
+Keeping every ID below 2^30 removes that allocation on every engine. JavaScriptCore never allocated
+for a number, so nothing changes there.
+
+**What it costs**: a world holds 1,048,576 entities, a sixteenth of what 24 index bits allowed, and
+a slot has 1,023 generations where the wider ID had hundreds of millions.
+
+**Why 20 and 10**: each bit moved from the index to the generation halves the entity ceiling and
+doubles the generations. 20 index bits keep a one-million-entity world.
+
+**Why reuse order did not change with it**: a reserve of free slots, or retiring a slot when its
+generations run out, would lengthen the distance before an ID repeats, each at a cost on spawn or
+despawn. Last-freed-first reuse is also the order the determinism pillar specifies
+([pillars.md](../pillars.md), pillar 12).
 
 ### Component Descriptors
 
@@ -170,7 +214,7 @@ data-carrying optionals.
 interface WorldState {
   archetypes: Archetype[]; // all registered archetypes
   entityArch: (Archetype | undefined)[]; // sparse entity index → archetype
-  generation: Float64Array; // full packed ID of the current occupant per index
+  generation: Float64Array; // occupant's full packed ID per index; next ID while free
   sparse: Int32Array; // index → dense row; dead slots hold the freelist next pointer
   freeHead: number; // LIFO freelist head (−1 = empty)
   nextIndex: number; // next fresh sparse index
@@ -190,7 +234,8 @@ Allocates a new entity in the archetype.
 ```text
 spawn(storage, overrides?)
   1. Allocate sparse index (from freelist or fresh)
-  2. Read entity ID: id = generation[index] (the slot's packed ID is precomputed)
+  2. Read entity ID: id = generation[index] (the slot's packed ID is precomputed; negated back
+     first if the freed slot's generation had wrapped)
   3. Append dense row
   4. Write entity ID and initialize all columns from defaults or overrides
   5. Initialize mask from overrides (optionals may be enabled at spawn; otherwise 0)
@@ -205,15 +250,16 @@ Removes an entity using swap-and-pop deletion.
 
 ```text
 despawn(world, id)
-  1. Unpack: index = id % 2^24
+  1. Unpack: index = id % 2^20
   2. Validate: generation[index] === id (stale ID → no-op)
   3. Resolve archetype and dense row index
   4. If not the last row, swap-and-pop:
      - Copy last row into the hole (entities, all columns, mask, matched)
-     - Update sparse mapping for the swapped entity (its sparse index = entities[hole] % 2^24)
+     - Update sparse mapping for the swapped entity (its sparse index = entities[hole] % 2^20)
   5. Decrement archetype.n
   6. Free the sparse index:
-     - generation[index] += 2^24 (wrap to generation 1 when the generation would reach 2^29)
+     - generation[index] += 2^20 (when the generation would reach 2^10: wrap to generation 1,
+       stored negated so the ID issued before does not match the free slot)
      - Push index onto freelist
      - Clear entityArch[index]
 ```
@@ -253,8 +299,8 @@ Bulk-removes all entities in an archetype without an explicit ID list.
 
 ```text
 despawnMany(storage)
-  1. For each dense row i in 0..n−1, with index = entities[i] % 2^24:
-     - Advance generation[index]
+  1. For each dense row i in 0..n−1, with index = entities[i] % 2^20:
+     - Advance generation[index], as in despawn
      - Push index onto freelist
      - Clear entityArch[index]
   2. Set archetype.n = 0
@@ -363,8 +409,8 @@ This means `each` reads one boolean per row — no mask computation in the hot l
 ### Generational IDs
 
 Static archetypes with dense sparse sets allow immediate, safe entity removal. Generational entity
-IDs provide temporal safety: a stale ID (old generation) never aliases with a live entity, even
-after the sparse index has been recycled.
+IDs provide temporal safety by comparing generations: a stale ID (old generation) fails the check
+after its sparse index has been recycled, up to the bound in [pillars.md](../pillars.md), pillar 5.
 
 Checks are gated by an `NDEBUG` build flag. When enabled (default), every public entity operation
 validates the generation. When disabled (production), checks compile out.

@@ -84,13 +84,16 @@ export interface CreateOpts {
  * the freelist, so a benchmark that spawns into the tracked storage draws
  * recycled slots too. Background entities stay at generation 1 either way.
  *
+ * The accepted range is 1 to 1023. A slot has 1,023 generations, so a larger
+ * value would wrap and measure a lower generation than the one asked for.
+ *
  * @param opts - `noBackground: true` skips the 4N background entities, isolating the tracked
  * archetype; the default builds them.
  * @returns The world, its tracked storage, and `n` (always `DEFAULT_N`); the caller owns the
  * world and nothing here releases it. `tracked` holds the N ids shuffled so index order does not
  * match row order — random-access benchmarks would otherwise walk the storage front to back and
  * measure a prefetch-friendly pattern no real workload has.
- * @throws UsageError when `BENCH_GENERATION` is set to anything but an integer of at least 1.
+ * @throws UsageError when `BENCH_GENERATION` is set to anything but an integer from 1 to 1023.
  */
 export function benchCreateWorld(opts: CreateOpts = {}): BenchCtx<typeof trackedArch> {
   const n = DEFAULT_N;

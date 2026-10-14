@@ -108,13 +108,20 @@ the transform simple (pillar 10) and the docs honest.
 ## 5. Generational entity IDs, always on
 
 Storage is a sparse set per archetype: dense rows, swap-and-pop deletion, LIFO index freelist, and a
-generation counter per index slot. An `EntityId` packs a 24-bit row index and a 29-bit generation
-into one safe integer (packed multiplicatively — JavaScript bitwise operators truncate to 32 bits,
-but 53 safe-integer bits hold the pair comfortably).
+generation counter per index slot. An `EntityId` packs a 20-bit row index and a 10-bit generation
+into one 30-bit number, which keeps every ID inside the small-integer range that JavaScript engines
+store without allocating (pillar 9).
 
-Every public entity operation validates the generation. There is no opt-in versioning and no
-bit-budget tuning — temporal safety is not the user's problem. The checks compile out under a single
-build-time `NDEBUG` define, which is the only opt-out; there are no per-call unchecked variants.
+Every public entity operation validates the generation. The check is always on: there is no opt-in
+versioning and no bit-budget tuning. The checks compile out under a single build-time `NDEBUG`
+define, which is the only opt-out; there are no per-call unchecked variants.
+
+The check has a bound. A slot has 1,023 generations, so a dead ID matches a live entity again once
+its slot has been recycled (despawned, then respawned) 1,023 times since the ID was issued. Reuse is
+last-freed-first (pillar 12), so a slot that is despawned and respawned every frame gets there in
+about 17 seconds at 60 frames per second. Code that checks `alive()` on a held ID every frame sees
+the death and never reaches the repeat. The exposed case is an ID held unchecked for longer than
+that: a delayed callback, a save file, a late network message.
 
 One deliberate exception: `despawn` of a stale ID is a defined no-op, always, not gated. Deferred
 cleanup and multi-system teardown despawn IDs they cannot know are still alive; that pattern is

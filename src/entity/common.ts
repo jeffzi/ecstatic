@@ -9,15 +9,22 @@ import { ERROR_STALE_ENTITY_ID, ERROR_WRONG_STORAGE } from "../errors.js";
 import type { Storage, WorldState } from "../world.js";
 
 /**
- * Test whether the packed generation in `id` matches the world's generation table — `true`
- * means the entity has not been despawned or had its index reused.
+ * Test whether the packed generation in `id` matches the world's generation table.
+ *
+ * A free slot's entry is its next id, which has not been issued yet, or that id negated when the
+ * slot's generation wrapped, so no issued id matches a slot that holds no entity.
+ *
+ * The comparison has a bound: a slot has 1,023 generations, so a despawned id matches again once
+ * its slot has been despawned 1,023 times since the id was issued, the id's own despawn included,
+ * and then taken by a new entity.
  *
  * Works across storages in the same world: the entity is alive in that world
  * regardless of which storage is queried (as long as the storage is from the same world).
  *
  * @param storageOrWorld - A Storage (or World with generation array alias)
  * @param id - The entity ID to check
- * @returns true if the entity ID is valid and matches the current generation, false otherwise
+ * @returns `true` when `id` matches its slot's current generation, which up to that bound means
+ *   the entity has not been despawned; `false` otherwise.
  */
 export function alive(
   storageOrWorld: Storage | { generation: Float64Array },
@@ -71,8 +78,10 @@ export function resolveEntityArch(storageOrWorld: Storage | WorldState, id: Enti
     throw new Error(ERROR_STALE_ENTITY_ID);
   }
 
-  // DEBUG's stale check guarantees the slot is occupied; under NDEBUG a
-  // stale ID is the caller's bug (same contract as the spawn/despawn hot paths)
+  // DEBUG's stale check guarantees the slot is occupied: a free slot's entry
+  // is an id not issued yet, negated when its generation wrapped, so it
+  // matches no issued id. Under NDEBUG a stale ID is the caller's bug (same
+  // contract as the spawn/despawn hot paths)
   // oxlint-disable-next-line typescript/no-non-null-assertion -- DEBUG guard above validates occupancy; NDEBUG treats stale access as caller error
   return storageOrWorld.entityArch[index]!;
 }

@@ -245,7 +245,8 @@ export function set(
  *
  * @param world - World that owns the entity; its generation table decides
  *   liveness, and that check is never stripped under NDEBUG.
- * @param id - Source entity id; a dead id yields `undefined`, not an error.
+ * @param id - Source entity id; a dead id yields `undefined`, not an error, up to the generation
+ *   bound `alive` documents.
  * @param rel - Relation to read; must be on the entity's archetype.
  * @returns The live target's id, branded with the relation's constraints, or
  *   `undefined` when the source is dead, the relation is an optional that is

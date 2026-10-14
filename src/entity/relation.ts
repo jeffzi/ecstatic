@@ -20,30 +20,30 @@ import { resolveEntityArch } from "./common.js";
 import { disableOne, enableOne, writeFieldOverrides } from "./optional.js";
 import { reverseInsert, reverseRemove } from "./reverse-map.js";
 
-interface LinkCtx {
-  world: World;
-  rel: ComponentDescriptor;
-  targetColumn: Float64Array;
-  di: number;
-}
-
 /**
- * Read the previous target from the relation's target column and, when it is
- * still alive, remove the source's entry from its reverse bucket. Sentinel 0
- * means "no target" and is skipped; a dead previous target needs no removal —
- * despawn already cleaned its bucket.
+ * Remove a source's entry from its previous target's reverse bucket, when that
+ * target is still alive. A dead previous target needs no removal — despawn
+ * already cleaned its bucket.
  *
- * @param ctx - Link context: the world, the relation, the source storage's
- *   target column, and the dense row.
+ * @param world - World that owns the source; its generation table decides the
+ *   previous target's liveness and its reverse map loses the entry.
+ * @param rel - Relation whose reverse map holds the entry.
+ * @param prevTarget - Target id read from the source's row of the relation's
+ *   target column before it is overwritten; the 0 sentinel ("no target") and
+ *   `undefined` are skipped.
  * @param sourceIndex - Entity index of the source whose reverse entry is
  *   removed.
  */
-function removePreviousTarget(ctx: LinkCtx, sourceIndex: number): void {
-  const prevTarget = ctx.targetColumn[ctx.di];
+function removePreviousTarget(
+  world: World,
+  rel: ComponentDescriptor,
+  prevTarget: number | undefined,
+  sourceIndex: number,
+): void {
   if (prevTarget !== undefined && prevTarget !== 0) {
     const prevTargetIndex = entityIndex(prevTarget);
-    if (ctx.world.generation[prevTargetIndex] === prevTarget) {
-      reverseRemove(ctx.world.reverseMap, ctx.rel, prevTargetIndex, sourceIndex);
+    if (world.generation[prevTargetIndex] === prevTarget) {
+      reverseRemove(world.reverseMap, rel, prevTargetIndex, sourceIndex);
     }
   }
 }
@@ -116,7 +116,7 @@ export function link(
   }
 
   const targetColumn = resolveTargetColumn(storage, rel);
-  removePreviousTarget({ world, rel, targetColumn, di }, sourceIndex);
+  removePreviousTarget(world, rel, targetColumn[di], sourceIndex);
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the public overload types values as the relation's partial field record
   const fieldValues = values as Record<string, unknown> | undefined;
@@ -133,7 +133,7 @@ export function link(
   }
 
   targetColumn[di] = target;
-  reverseInsert({ state: world, rel }, targetIndex, storage, sourceIndex);
+  reverseInsert(rel, targetIndex, storage, sourceIndex);
 }
 
 /**
@@ -166,7 +166,7 @@ export function unlink(world: World, id: EntityId, rel: ComponentDescriptor): vo
     throw new Error(errorUnlinkRequired(rel.__ecstatic_name));
   }
 
-  removePreviousTarget({ world, rel, targetColumn, di }, sourceIndex);
+  removePreviousTarget(world, rel, targetColumn[di], sourceIndex);
 
   targetColumn[di] = 0;
   disableOne(storage, di, rel);

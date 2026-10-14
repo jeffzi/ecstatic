@@ -642,7 +642,7 @@ describe("reverse map maintenance", () => {
 
     // Removing every source and re-inserting from one storage never re-promotes
     reverseRemove(world.reverseMap, meta, targetIndex, entityIndex(sourceA));
-    reverseInsert({ state: world, rel: meta }, targetIndex, storageA, entityIndex(sourceA));
+    reverseInsert(meta, targetIndex, storageA, entityIndex(sourceA));
     expect(relMap.get(-1)).toBe(false);
   });
 

@@ -18,11 +18,11 @@ import type { RelationFields } from "../relation.js";
 import { getRelationMeta } from "../relation.js";
 import { collectFlatColumns } from "../world.js";
 import type { SoAColumns, Storage, TypedArray, WorldState } from "../world.js";
-import type { SpawnRange } from "./spawn-link.js";
 import {
   assertRelationTargets,
-  birthLinkOptional,
+  insertOptionalRelationEntries,
   insertRequiredRelationEntries,
+  writeBirthTargets,
 } from "./spawn-link.js";
 
 // ---------------------------------------------------------------------------
@@ -180,9 +180,15 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
 
   const index = allocateOneIndex(state);
 
-  // The slot's packed ID is precomputed — spawn packs nothing
+  // The slot's packed ID is precomputed — spawn packs nothing. A slot freed at the generation
+  // wrap holds its ID negated, so the entry is stored back positive. Not `Math.abs`: V8 returns
+  // its result as a small integer while `spawnMany` ids stay doubles, and an id list mixing the
+  // two drops `despawnMany`'s id loop out of optimized code.
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- allocated index is inside the generation table
+  const entry = state.generation[index]!;
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
-  const eid = state.generation[index] as EntityId;
+  const eid = (entry < 0 ? -entry : entry) as EntityId;
+  state.generation[index] = eid;
 
   // Append dense row (grow first so the writes land in the live arrays)
   const di = storage.n;
@@ -223,9 +229,9 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
  * @param state - World whose freelist, `nextIndex`, and generation table are advanced; a fresh
  *   allocation may replace `generation` and `sparse` with grown arrays, so re-read them after
  *   the call.
- * @returns The allocated entity index. A recycled slot keeps the generation despawn already
- *   advanced; a fresh one is initialized to generation 1, so `state.generation[index]` is the
- *   packed id to hand out either way.
+ * @returns The allocated entity index. A recycled slot keeps the entry despawn stored: its next
+ *   packed id, negated when the slot's generation wrapped. A fresh slot is initialized to
+ *   generation 1. The caller hands out the entry's absolute value and stores it back.
  * @throws If every index below `MAX_INDEX` is in use and the freelist is empty.
  */
 function allocateOneIndex(state: WorldState): number {
@@ -470,7 +476,8 @@ function writeOptionalDefaults(storage: Storage, denseStart: number, count: numb
  * @param storage - Storage whose optional columns are patched and whose `optionalBitLookup`
  *   supplies each enabled component's bit.
  * @param denseStart - First dense row of the run.
- * @param count - Number of consecutive rows that receive the same patches and birth links.
+ * @param count - Number of consecutive rows that receive the same patches and birth links; the
+ *   run must end at `storage.n`, which is where birth-linking stops.
  * @param overrides - Spawn overrides keyed by component name; `undefined` short-circuits to an
  *   empty mask with no column writes. An optional relation record carrying a `target` also
  *   birth-links every row in the run.
@@ -491,7 +498,6 @@ function applyOptionalOverrides(
     return 0;
   }
 
-  const range: SpawnRange = { storage, denseStart, count };
   let bits = 0;
   for (const comp of storage.archetype.optionals) {
     const raw = overrides[comp.__ecstatic_name];
@@ -527,7 +533,8 @@ function applyOptionalOverrides(
     // data fields patched (the synthetic target column is not in
     // __ecstatic_fields); write the target and record the reverse entries.
     if (getRelationMeta(comp) !== undefined && raw["target"] !== undefined) {
-      birthLinkOptional(range, comp, soa, raw["target"]);
+      const target = writeBirthTargets(soa, raw["target"], denseStart, count);
+      insertOptionalRelationEntries(storage, comp, target, denseStart);
     }
   }
   return bits;
@@ -538,11 +545,38 @@ function applyOptionalOverrides(
 // ---------------------------------------------------------------------------
 
 /**
+ * Batch matcher refresh: the whole batch shares one mask, so each matcher's matched value is
+ * constant over the new range — computed once per matcher, filled per row. Unconditional for the
+ * same recycled-row reason as single spawn.
+ *
+ * @param storage - Storage whose matchers' `matched` flags are written for the batch rows.
+ * @param start - First row of the batch.
+ * @param count - Number of rows in the batch.
+ * @param mask - Optional-component mask every row of the batch shares.
+ */
+function refreshBatchMatchers(storage: Storage, start: number, count: number, mask: number): void {
+  const matchers = storage.matchers;
+  const matcherN = matchers.length;
+  for (let mi = 0; mi < matcherN; mi++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < matcherN ≤ matchers.length
+    const m = matchers[mi]!;
+    const matchedValue = maskSatisfies(mask, m.allMask, m.anyMask, m.noneMask) ? 1 : 0;
+    const matched = m.matched;
+    for (let i = 0; i < count; i++) {
+      matched[start + i] = matchedValue;
+    }
+  }
+}
+
+/**
  * Allocate entity indices and fill dense rows and SoA fields for a batch of entities.
  *
  * Allocation is fused into the fill loop so no intermediate index array is built. Safe because a
  * freelist pop never reads a sparse slot written earlier in the same batch: a popped slot leaves
  * the chain before its sparse entry is overwritten with a dense index.
+ *
+ * The loop stays in this function rather than a helper: V8 then optimizes it together with the
+ * allocator and the field initializers below, which a separately compiled loop measured slower.
  *
  * @param storage - Storage whose rows `[n - count, n)` are filled; `storage.n` must already have
  *   been advanced past the batch and the arrays grown to hold it.
@@ -568,8 +602,16 @@ function fillBatch(
 
   for (let i = 0; i < count; i++) {
     const index = allocateOneIndex(state);
+    // Positive again if the slot was freed at the generation wrap (see `spawn`). A sign test, not
+    // the unconditional store `spawn` uses: per-row stores measured slower in this loop.
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- allocated index is inside the generation table
+    let packedId = state.generation[index]!;
+    if (packedId < 0) {
+      packedId = -packedId;
+      state.generation[index] = packedId;
+    }
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- branded type boundary
-    const eid = state.generation[index] as EntityId;
+    const eid = packedId as EntityId;
     const di = denseStart + i;
 
     out[i] = eid;
@@ -591,23 +633,7 @@ function fillBatch(
     }
   }
 
-  // Batch matcher refresh: the whole batch shares one mask, so each
-  // matcher's matched value is constant over the new range — computed once
-  // per matcher, filled per row. Unconditional for the same recycled-row
-  // reason as single spawn.
-  const matcherN = storage.matchers.length;
-  if (matcherN !== 0) {
-    const matchers = storage.matchers;
-    for (let mi = 0; mi < matcherN; mi++) {
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- mi < matcherN ≤ matchers.length
-      const m = matchers[mi]!;
-      const matchedValue = maskSatisfies(optionalBits, m.allMask, m.anyMask, m.noneMask) ? 1 : 0;
-      const matched = m.matched;
-      for (let i = 0; i < count; i++) {
-        matched[denseStart + i] = matchedValue;
-      }
-    }
-  }
+  refreshBatchMatchers(storage, denseStart, count, optionalBits);
 
   if (storage.relationN > 0) {
     insertRequiredRelationEntries(storage, denseStart, count);

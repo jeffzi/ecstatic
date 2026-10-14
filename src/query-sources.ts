@@ -4,8 +4,10 @@
  * scanning storages.
  *
  * A stale target ID (one whose generation has advanced) visits nothing,
- * matching `getTarget` — no aliasing onto a recycled slot. An unregistered
- * relation (no reverse-map entry) also visits nothing.
+ * matching `getTarget`: the check compares generations, so a dead ID matches
+ * again only once its slot has been despawned 1,023 times since the ID was
+ * issued, the ID's own despawn included, and then taken by a new entity. An
+ * unregistered relation (no reverse-map entry) also visits nothing.
  *
  * On a warm world the unfiltered paths allocate no data structures of their
  * own: `hasSources`/`countSources` only probe the bucket, and unfiltered
@@ -43,7 +45,8 @@ function releaseIfAcquired(storage: Storage | undefined): void {
  *   holds the relation's buckets.
  * @param rel - Relation descriptor keying the reverse map.
  * @param target - Packed entity id of the link target; its generation is checked, not just its
- *   index, so a recycled slot never aliases.
+ *   index, so a dead id matches again only once its slot has been despawned 1,023 times since
+ *   the id was issued, the id's own despawn included, and then taken by a new entity.
  * @returns The bucket mapping source index to source storage — the world's own live `Map`, not a
  *   copy — or `undefined` when the target is stale, the relation is unregistered, or no source
  *   was ever linked to the target (buckets persist once created, so one may be empty).
