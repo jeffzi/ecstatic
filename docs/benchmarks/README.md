@@ -2,9 +2,10 @@
 
 Index for the documentation of ecstatic's entity component system (ECS) benchmark suite. Each
 specification file below covers one benchmark group, with one section per benchmark documenting its
-setup, measured operation, and the code path it targets for regression detection. For design
-rationale and omission justifications, see [rationale](rationale.md). Constants and the component
-palette shared by every group are in [parameters](specifications/parameters.md).
+setup, measured operation, and the code path it targets for regression detection; the reference
+group is the exception, a ceiling to read its twins against rather than a regression target. For
+design rationale and omission justifications, see [rationale](rationale.md). Constants and the
+component palette shared by every group are in [parameters](specifications/parameters.md).
 
 Run the suite with `npx tsx --expose-gc benchmarks/main.ts` after a build; pass a pattern to run a
 subset, for example `npx tsx --expose-gc benchmarks/main.ts '^iteration/'`. The runner requires an

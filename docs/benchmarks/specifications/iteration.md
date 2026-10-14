@@ -5,11 +5,13 @@ Source: [`benchmarks/iteration-bench.ts`](../../../benchmarks/iteration-bench.ts
 Shared constants (`N`, the 5x world, `DT`) are defined in [parameters](parameters.md); the `sink`
 accumulator is explained in [rationale](../rationale.md#conventions).
 
-Every iteration benchmark runs against a bare world — no background entities — so the numbers
-reflect per-entity throughput rather than world size. `each_with_despawn` and `deferred_despawn`
-consume the population they run against, so the suite's `manualBench` shim rebuilds their world
-before each iteration and destroys it after, both outside the clock. The rest are net-neutral and
-reuse one world. Every benchmark here ends with `destroyWorld()`.
+Every iteration benchmark runs against a bare world — no idle background population; every entity
+belongs to a storage the benchmark iterates — so the numbers reflect per-entity throughput rather
+than world size. [`frame`](#frame) iterates nine storages, one of them of the background archetype.
+`each_with_despawn` and `deferred_despawn` consume the population they run against, so the suite's
+`manualBench` shim rebuilds their world before each iteration and destroys it after, both outside
+the clock. The rest are net-neutral and reuse one world. Every benchmark here ends with
+`destroyWorld()`.
 
 ## throughput
 

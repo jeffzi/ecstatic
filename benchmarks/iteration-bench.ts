@@ -1,9 +1,9 @@
 /**
  * Iteration throughput: `each` over a whole storage, one pass at a time.
  *
- * These worlds carry no background entities — the tracked archetype is the only
- * one populated, so the numbers measure the iteration path itself rather than
- * dispatch across archetypes.
+ * These worlds carry no idle background population: every entity belongs to a
+ * storage its benchmark iterates, so the numbers measure the iteration path
+ * itself rather than world size.
  */
 
 import { despawn, despawnMany, destroyWorld, each, spawn } from "ecstatic";

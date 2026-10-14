@@ -41,7 +41,9 @@ multiplier: 4N background entities plus N tracked entities. The motivations:
 
 **Iteration benchmarks use bare worlds.** Entity and batch benchmarks need the populated world
 because structural operations behave differently under memory pressure. Iteration benchmarks strip
-out background entities to isolate per-entity throughput from world-size effects.
+out the idle background population to isolate per-entity throughput from world-size effects; every
+entity in an iteration world belongs to a storage its benchmark iterates, and the frame benchmark
+iterates the background archetype as one of its nine.
 
 **Warmup.** Priming passes run during setup and are not timed, so the measured body reflects V8's
 steady state rather than one-time optimization and inline-cache warmup costs. mitata additionally

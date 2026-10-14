@@ -1,7 +1,7 @@
 # Benchmarks
 
-Regression-detection benchmarks for ecstatic, timed with
-[mitata](https://github.com/evanwashere/mitata).
+Regression-detection benchmarks for ecstatic, plus a reference group of hand-fused loops to read the
+iteration benchmarks against, timed with [mitata](https://github.com/evanwashere/mitata).
 
 For what each benchmark measures and why, see [`docs/benchmarks/`](../docs/benchmarks/README.md).
 This file covers running the suite, choosing an engine, and the allocation gate.
