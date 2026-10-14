@@ -18,7 +18,10 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "ecstatic": ["./src/index.ts"]
+    }
   },
   "include": ["src", "tests", "scripts", "vitest.config.ts"]
 }

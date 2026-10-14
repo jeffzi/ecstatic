@@ -10,8 +10,16 @@ import { despawn, despawnMany, destroyWorld, each, spawn } from "ecstatic";
 import type { EntityId } from "ecstatic";
 
 import { chainArch, soa1Arch, soa2Arch, soa5Arch, soa10Arch } from "./archetypes.js";
-import { benchCreateWorld, DT, makeBareWorld, manualBench, timedBench } from "./helpers.js";
+import {
+  benchCreateWorld,
+  frameBench,
+  makeBareWorld,
+  manualBench,
+  throughputBench,
+  timedBench,
+} from "./helpers.js";
 import { registerBench } from "./runner.js";
+import { frameEach, throughputEach } from "./systems.js";
 
 let sink = 0;
 
@@ -25,21 +33,11 @@ export function sinkValue(): number {
   return sink;
 }
 
-registerBench("iteration/throughput", function* () {
-  const { world, trackedStorage: storage } = benchCreateWorld({ noBackground: true });
+registerBench("iteration/throughput", throughputBench(throughputEach));
 
-  const integrate = (): void => {
-    each(storage, (e) => {
-      e.Position.x += e.Velocity.dx * DT;
-      e.Position.y += e.Velocity.dy * DT;
-    });
-  };
-  integrate();
-
-  yield timedBench(integrate);
-
-  destroyWorld(world);
-});
+// Nine systems in a row, one per storage, each `each()` callback a different
+// shape: what a frame of systems costs when they share the `each()` call site.
+registerBench("iteration/frame", frameBench(frameEach));
 
 // Same pass as throughput, but over a storage whose rows have been churned:
 // five rounds of despawning every third entity and respawning the same count
@@ -66,10 +64,7 @@ registerBench("iteration/post_churn_throughput", function* () {
   }
 
   const integrate = (): void => {
-    each(storage, (e) => {
-      e.Position.x += e.Velocity.dx * DT;
-      e.Position.y += e.Velocity.dy * DT;
-    });
+    throughputEach(storage);
   };
   integrate();
 

@@ -1,4 +1,13 @@
+import { fileURLToPath } from "node:url";
+
 import { defineConfig } from "vitest/config";
+
+/**
+ * Benchmark modules import the package by name. Tests resolve that name to the
+ * sources, not to the `dist/` the package's `exports` point at, so they never
+ * run against a stale or missing build.
+ */
+const ecstaticSource = fileURLToPath(new URL("src/index.ts", import.meta.url));
 
 export default defineConfig({
   test: {
@@ -35,6 +44,9 @@ export default defineConfig({
         },
       },
       {
+        resolve: {
+          alias: [{ find: /^ecstatic$/, replacement: ecstaticSource }],
+        },
         test: {
           name: "unit",
           include: ["tests/unit/**/*.test.ts", "tests/benchmarks/**/*.test.ts"],

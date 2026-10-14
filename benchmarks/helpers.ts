@@ -14,7 +14,17 @@ import {
   type World,
 } from "ecstatic";
 
-import { bgArch, trackedArch } from "./archetypes.js";
+import {
+  bgArch,
+  chainArch,
+  soa1Arch,
+  soa2Arch,
+  soa5Arch,
+  soa10Arch,
+  spawnArch,
+  tagArch,
+  trackedArch,
+} from "./archetypes.js";
 import { mulberry32, shuffle } from "./random.js";
 import { parseGeneration } from "./runner.js";
 
@@ -175,6 +185,63 @@ export function makeBareWorld<A extends AnyArchetype>(arch: A): BareCtx<A> {
   return { world, storage, n };
 }
 
+/** The frame world and its nine storages, each holding `DEFAULT_N` default-valued entities. */
+export interface FrameCtx {
+  world: World;
+  tracked: Storage<typeof trackedArch>;
+  bg: Storage<typeof bgArch>;
+  spawn: Storage<typeof spawnArch>;
+  tag: Storage<typeof tagArch>;
+  chain: Storage<typeof chainArch>;
+  soa1: Storage<typeof soa1Arch>;
+  soa2: Storage<typeof soa2Arch>;
+  soa5: Storage<typeof soa5Arch>;
+  soa10: Storage<typeof soa10Arch>;
+}
+
+/**
+ * Build the world a frame of systems runs over: nine archetypes, `DEFAULT_N` default-valued
+ * entities in each, and no other entity.
+ *
+ * Parameterless for the same reason as `benchCreateWorld`: a frame benchmark and its fused twin
+ * must measure the same world.
+ *
+ * @returns The world and its nine storages; the caller owns the world and nothing here releases
+ * it.
+ */
+export function makeFrameWorld(): FrameCtx {
+  const world = createWorld();
+  return {
+    world,
+    tracked: registerDefaults(world, trackedArch),
+    bg: registerDefaults(world, bgArch),
+    spawn: registerDefaults(world, spawnArch),
+    tag: registerDefaults(world, tagArch),
+    chain: registerDefaults(world, chainArch),
+    soa1: registerDefaults(world, soa1Arch),
+    soa2: registerDefaults(world, soa2Arch),
+    soa5: registerDefaults(world, soa5Arch),
+    soa10: registerDefaults(world, soa10Arch),
+  };
+}
+
+/**
+ * Register `arch` in `world` and fill its storage with `DEFAULT_N` default-valued entities.
+ *
+ * @param world - World to register the archetype in.
+ * @param arch - Archetype to register and spawn from; it must declare no required relation,
+ * since every entity is spawned with no overrides.
+ * @returns The registered storage, holding `DEFAULT_N` entities.
+ */
+function registerDefaults<A extends AnyArchetype>(world: World, arch: A): Storage<A> {
+  const storage = register(world, arch);
+  // Widened to bare Storage for the same reason as in `makeBareWorld`: the
+  // no-overrides spawn form cannot be proven applicable to an unresolved A.
+  const untyped: Storage = storage;
+  spawnMany(untyped, DEFAULT_N);
+  return storage;
+}
+
 // ---------------------------------------------------------------------------
 // Timing shims
 // ---------------------------------------------------------------------------
@@ -199,6 +266,69 @@ export interface TimedYield {
  */
 export function timedBench(body: () => void): TimedYield {
   return { heap: false, bench: body };
+}
+
+/** A mitata generator benchmark that times one body under `timedBench` batching. */
+export type TimedBenchmark = () => Generator<TimedYield, void, unknown>;
+
+/**
+ * The lifecycle every net-neutral benchmark pair shares: build, one untimed pass, time, release.
+ *
+ * An `each()` benchmark and its fused twin both go through here with the same `setup`, so the
+ * pair can differ only in the body it times.
+ *
+ * @param setup - Builds the world and returns it with the body to time over it; called once per
+ * run, outside the clock.
+ * @returns A generator benchmark that runs the body once, yields it to `timedBench`, and destroys
+ * the world when mitata resumes it after timing.
+ */
+function warmedBench(setup: () => { world: World; body: () => void }): TimedBenchmark {
+  return function* () {
+    const { world, body } = setup();
+    body();
+
+    yield timedBench(body);
+
+    destroyWorld(world);
+  };
+}
+
+/**
+ * A benchmark timing `body` over the tracked storage of `benchCreateWorld({ noBackground: true })`.
+ *
+ * @param body - The pass to time; it receives the same storage for the warmup and every timed call.
+ * @returns The generator benchmark to hand `registerBench`.
+ */
+export function throughputBench(
+  body: (storage: Storage<typeof trackedArch>) => void,
+): TimedBenchmark {
+  return warmedBench(() => {
+    const { world, trackedStorage } = benchCreateWorld({ noBackground: true });
+    return {
+      world,
+      body: () => {
+        body(trackedStorage);
+      },
+    };
+  });
+}
+
+/**
+ * A benchmark timing `body` over a frame world from `makeFrameWorld`.
+ *
+ * @param body - The frame to time; it receives the same frame for the warmup and every timed call.
+ * @returns The generator benchmark to hand `registerBench`.
+ */
+export function frameBench(body: (frame: FrameCtx) => void): TimedBenchmark {
+  return warmedBench(() => {
+    const frame = makeFrameWorld();
+    return {
+      world: frame.world,
+      body: () => {
+        body(frame);
+      },
+    };
+  });
 }
 
 /** The generator yield shape that puts mitata into manual-timing mode. */

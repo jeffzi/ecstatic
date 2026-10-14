@@ -32,6 +32,7 @@ import { sinkValue as accessSink } from "./access-bench.js";
 import { sinkValue as entitySink } from "./entity-bench.js";
 import { sinkValue as iterationSink } from "./iteration-bench.js";
 import { sinkValue as manySink } from "./many-bench.js";
+import { sinkValue as referenceSink } from "./reference-bench.js";
 import {
   anchoredFilter,
   type BenchReport,
@@ -86,7 +87,7 @@ async function runChild(benchName: string): Promise<void> {
     throw: true,
   });
 
-  do_not_optimize(accessSink() + entitySink() + iterationSink() + manySink());
+  do_not_optimize(accessSink() + entitySink() + iterationSink() + manySink() + referenceSink());
 }
 
 // ---------------------------------------------------------------------------
