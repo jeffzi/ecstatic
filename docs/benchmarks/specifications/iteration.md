@@ -31,7 +31,7 @@ each(storage, (e) => {
 
 **Rationale:** Establishes the iteration baseline. One archetype, every entity visited, two field
 reads and two writes per entity. Overhead beyond the arithmetic is `each()` dispatch and view
-rebinding.
+rebinding. The fused twin is [`fused_throughput`](reference.md#fused_throughput).
 
 ---
 
@@ -61,6 +61,47 @@ each(storage, (e) => {
 where swap-and-pop reorganization or generational ID recycling degrades iteration performance. A
 delta from `throughput` indicates the dense array develops cache-unfriendly patterns under sustained
 churn. Inspired by the `IteratePathological` benchmark in EnTT, a C++ ECS library.
+
+---
+
+## frame
+
+**Purpose:** Measure a frame of nine `each()` systems, one per archetype, run back to back.
+
+| Property | Value                                                                    |
+| -------- | ------------------------------------------------------------------------ |
+| Setup    | Bare world, N default-valued entities in each of the nine storages below |
+| Warmup   | One frame                                                                |
+
+**Setup detail:** The nine archetypes and the system run over each, in frame order:
+
+| Archetype     | Components                        | System                                            |
+| ------------- | --------------------------------- | ------------------------------------------------- |
+| `trackedArch` | Position, Velocity, Alive (opt.)  | the `throughput` body                             |
+| `bgArch`      | Health, Armor, Aggro (opt.)       | `hp += def * DT`                                  |
+| `spawnArch`   | Position, Alive (opt.)            | `x += DT`                                         |
+| `tagArch`     | Position, Alive and Shield (opt.) | `y += x * DT`                                     |
+| `chainArch`   | A, B, C, D, E                     | `B.v += A.v * DT`, `D.v += C.v * DT`, `E.v += DT` |
+| `soa1Arch`    | F1                                | `a += DT`                                         |
+| `soa2Arch`    | F2                                | `a += b * DT`                                     |
+| `soa5Arch`    | F5                                | `a += b * DT`, `c += d * DT`, `e += DT`           |
+| `soa10Arch`   | F10                               | `a += b * DT`, `c += d * DT`, ..., `i += j * DT`  |
+
+**Operation:**
+
+```text
+throughput(tracked); heal(bg); drift(spawn); climb(tag); chain(chain)
+soa1(soa1); soa2(soa2); soa5(soa5); soa10(soa10)
+# each system is one each(storage, (e) => ...) call with the update above
+```
+
+**Rationale:** The other iteration benchmarks time one or a few callbacks over one archetype, so the
+callback call inside `each()` sees at most a handful of callbacks and a single view shape. A real
+frame runs many systems through that same call. Here it sees nine callbacks and nine view shapes, so
+a regression in how `each()` copes with a varied caller shows up here first. Every update adds `DT`,
+or a field the system never writes times `DT`, so no value shrinks toward the subnormal range,
+however many times mitata replays the frame. The fused twin is
+[`fused_frame`](reference.md#fused_frame).
 
 ---
 

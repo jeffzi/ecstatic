@@ -14,7 +14,7 @@ performance regressions between ecstatic releases, not comparing ecstatic agains
 frameworks.
 
 Each benchmark targets a specific ecstatic code path. A regression rarely moves a single number — a
-slowdown in `each()` moves all nine iteration benchmarks — but the set that moves narrows where it
+slowdown in `each()` moves all ten iteration benchmarks — but the set that moves narrows where it
 lives. A change confined to `deferred_despawn` and `many/despawn_half` points at the batch despawn
 path; one that moves every `soa_*` benchmark points at the iteration view.
 
@@ -113,6 +113,14 @@ iterating callback; [`deferred_despawn`](specifications/iteration.md#deferred_de
 doomed IDs and flushes them afterwards. Real cleanup systems are written both ways and the two costs
 diverge, so measuring only one would leave a regression in the other invisible. Each section covers
 what its form pays for.
+
+**The reference group is a ceiling, not a regression target.** Every other benchmark targets an
+ecstatic code path; the timed bodies of the [reference benchmarks](specifications/reference.md) call
+none. Each is a hand-fused column loop, the shape a compile-time transform would emit for one
+`each()` call, paired with the iteration benchmark it mirrors through the same world builder,
+warmup, and timing. The gap within a pair is what such a transform would buy for that call site,
+measured on the same engine in the same suite run. A reference number on its own says little about
+ecstatic, so the group is read against its twins and never gated on its own.
 
 ---
 

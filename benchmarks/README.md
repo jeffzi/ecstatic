@@ -4,7 +4,7 @@ Regression-detection benchmarks for ecstatic, timed with
 [mitata](https://github.com/evanwashere/mitata).
 
 For what each benchmark measures and why, see [`docs/benchmarks/`](../docs/benchmarks/README.md).
-This file covers running the suite and how much of the original Lua suite it currently covers.
+This file covers running the suite, choosing an engine, and the allocation gate.
 
 ## Running
 

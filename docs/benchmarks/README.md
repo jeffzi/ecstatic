@@ -7,7 +7,7 @@ rationale and omission justifications, see [rationale](rationale.md). Constants 
 palette shared by every group are in [parameters](specifications/parameters.md).
 
 Run the suite with `npx tsx --expose-gc benchmarks/main.ts` after a build; pass a pattern to run a
-subset, for example `npx tsx --expose-gc benchmarks/main.ts '^iteration\.'`. The runner requires an
+subset, for example `npx tsx --expose-gc benchmarks/main.ts '^iteration/'`. The runner requires an
 exposed garbage collector and can measure under a second engine;
 [`benchmarks/README.md`](../../benchmarks/README.md) covers both, along with the measurement and
 optimization workflows.
@@ -21,7 +21,8 @@ engine prefix).
 
 | Group     | Prefix       | Specification                               | Source                                                                 |
 | --------- | ------------ | ------------------------------------------- | ---------------------------------------------------------------------- |
-| Entity    | `entity.`    | [entity.md](specifications/entity.md)       | [`benchmarks/entity-bench.ts`](../../benchmarks/entity-bench.ts)       |
-| Access    | `access.`    | [access.md](specifications/access.md)       | [`benchmarks/access-bench.ts`](../../benchmarks/access-bench.ts)       |
-| Iteration | `iteration.` | [iteration.md](specifications/iteration.md) | [`benchmarks/iteration-bench.ts`](../../benchmarks/iteration-bench.ts) |
-| Batch     | `many.`      | [batch.md](specifications/batch.md)         | [`benchmarks/many-bench.ts`](../../benchmarks/many-bench.ts)           |
+| Entity    | `entity/`    | [entity.md](specifications/entity.md)       | [`benchmarks/entity-bench.ts`](../../benchmarks/entity-bench.ts)       |
+| Access    | `access/`    | [access.md](specifications/access.md)       | [`benchmarks/access-bench.ts`](../../benchmarks/access-bench.ts)       |
+| Iteration | `iteration/` | [iteration.md](specifications/iteration.md) | [`benchmarks/iteration-bench.ts`](../../benchmarks/iteration-bench.ts) |
+| Batch     | `many/`      | [batch.md](specifications/batch.md)         | [`benchmarks/many-bench.ts`](../../benchmarks/many-bench.ts)           |
+| Reference | `reference/` | [reference.md](specifications/reference.md) | [`benchmarks/reference-bench.ts`](../../benchmarks/reference-bench.ts) |
