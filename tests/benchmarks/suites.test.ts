@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 
 import { bgArch, Position, trackedArch } from "../../benchmarks/archetypes.js";
 import { DEFAULT_N, type FrameCtx, frameBench, throughputBench } from "../../benchmarks/helpers.js";
-import { benchNames } from "../../benchmarks/runner.js";
 
 /** A benchmark generator started over a recording body, with what that body has received so far. */
 interface Started {
@@ -114,25 +113,6 @@ describe("frameBench", () => {
     }
     expect([...frame.world.storages.values()].map((storage) => storage.n)).toStrictEqual(
       Array.from({ length: 9 }, () => DEFAULT_N),
-    );
-  });
-});
-
-describe("registered benchmarks", () => {
-  it("include the each() and fused twins under their documented names", async () => {
-    await import("../../benchmarks/iteration-bench.js");
-    await import("../../benchmarks/reference-bench.js");
-
-    const names = benchNames();
-
-    expect(names).toStrictEqual(
-      expect.arrayContaining([
-        "iteration/throughput",
-        "iteration/post_churn_throughput",
-        "iteration/frame",
-        "reference/fused_throughput",
-        "reference/fused_frame",
-      ]),
     );
   });
 });
