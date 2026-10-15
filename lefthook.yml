@@ -21,7 +21,7 @@ pre-commit:
     type:
       priority: 3
       glob: "**/*.{ts,tsx,mts,cts}"
-      run: npx tsc -p tsconfig.json --noEmit
+      run: npx tsc -p tsconfig.json --noEmit && npx tsc -p tests/tsconfig.json --noEmit
     typelint:
       priority: 3
       glob: "**/*.{ts,tsx,mts,cts}"

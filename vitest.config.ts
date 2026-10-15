@@ -35,6 +35,13 @@ export default defineConfig({
         },
       },
       {
+        // Tests and benchmark modules import the package by name. The `paths` in `tests/` and
+        // `benchmarks/` tsconfigs resolve that name to the sources, not to the `dist/` the
+        // package's `exports` point at, so tests never run against a stale or missing build.
+        // Without this, the name still resolves, to `dist/`, and the tests pass against whatever
+        // was last built. The root tsconfig carries no `paths`: tsx reads it, and the benchmark
+        // suite must measure `dist/`.
+        resolve: { tsconfigPaths: true },
         test: {
           name: "unit",
           include: ["tests/unit/**/*.test.ts", "tests/benchmarks/**/*.test.ts"],
