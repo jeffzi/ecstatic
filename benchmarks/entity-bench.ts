@@ -6,11 +6,11 @@
  * `alive_check` restore what they touch, so they reuse one world instead.
  */
 
-import { alive, despawn, destroyWorld, register, spawn } from "ecstatic";
+import { alive, despawn, register, spawn } from "ecstatic";
 import type { EntityId } from "ecstatic";
 
 import { emptyArch, spawnArch } from "./archetypes.js";
-import { benchCreateWorld, benchRandom, manualBench, timedBench } from "./helpers.js";
+import { benchCreateWorld, benchRandom, manualBench, warmedBench } from "./helpers.js";
 import { shuffle } from "./random.js";
 import { registerBench } from "./runner.js";
 
@@ -87,10 +87,9 @@ registerBench("entity/despawn", function* () {
 // Net-neutral: despawns all N tracked entities, then spawns N back, so the
 // population is unchanged at the end of every iteration and the freelist is
 // exercised in its steady state.
-registerBench("entity/spawn_recycle", function* () {
-  const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
-
-  yield timedBench(() => {
+registerBench(
+  "entity/spawn_recycle",
+  warmedBench(benchCreateWorld, ({ n, trackedStorage: storage, tracked }) => {
     for (let i = 0; i < n; i++) {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = tracked.length
       despawn(storage, tracked[i]!);
@@ -100,36 +99,37 @@ registerBench("entity/spawn_recycle", function* () {
     }
     // oxlint-disable-next-line typescript/no-non-null-assertion -- n ≥ 1 and tracked has n elements after the refill
     sink += tracked[n - 1]!;
-  });
-
-  destroyWorld(world);
-});
+  }),
+);
 
 // Half the IDs checked are stale — the ones spawned and immediately despawned
 // during setup — so the generation comparison takes both outcomes.
-registerBench("entity/alive_check", function* () {
-  const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
+registerBench(
+  "entity/alive_check",
+  warmedBench(
+    () => {
+      const { world, n, trackedStorage: storage, tracked } = benchCreateWorld();
 
-  const stale: EntityId[] = [];
-  for (let i = 0; i < n; i++) {
-    stale.push(spawn(storage));
-  }
-  for (let i = 0; i < n; i++) {
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = stale.length
-    despawn(storage, stale[i]!);
-  }
-
-  const mixed = [...tracked, ...stale];
-  shuffle(mixed, benchRandom());
-
-  yield timedBench(() => {
-    for (let i = 0; i < mixed.length; i++) {
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- i < mixed.length
-      if (alive(storage, mixed[i]!)) {
-        sink += 1;
+      const stale: EntityId[] = [];
+      for (let i = 0; i < n; i++) {
+        stale.push(spawn(storage));
       }
-    }
-  });
+      for (let i = 0; i < n; i++) {
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- i < n = stale.length
+        despawn(storage, stale[i]!);
+      }
 
-  destroyWorld(world);
-});
+      const mixed = [...tracked, ...stale];
+      shuffle(mixed, benchRandom());
+      return { world, storage, mixed };
+    },
+    ({ storage, mixed }) => {
+      for (let i = 0; i < mixed.length; i++) {
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- i < mixed.length
+        if (alive(storage, mixed[i]!)) {
+          sink += 1;
+        }
+      }
+    },
+  ),
+);

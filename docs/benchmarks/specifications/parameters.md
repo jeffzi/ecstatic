@@ -12,8 +12,8 @@ Entity, access, and batch benchmarks run against a **pre-populated world** holdi
 - `4N` **background** entities (Health, Armor, Aggro) — idle, different archetype from tracked
 - `N` **tracked** entities (Position, Velocity, Alive) — targets of the benchmark operation
 
-Iteration benchmarks use a **bare world** (no background entities) to isolate iteration throughput
-from world-size effects.
+Iteration benchmarks use a **bare world** (no idle background population: every entity belongs to a
+storage the benchmark iterates) to isolate iteration throughput from world-size effects.
 
 The world builder **shuffles** tracked entities (Fisher-Yates) after creation, defeating
 insertion-order bias. It draws from a generator seeded at `SEED`, so the layout is identical on
@@ -33,8 +33,10 @@ every run.
 All components and tags used across the suite, organized by category.
 
 Tracked and Background name the two archetypes of the [pre-populated world](#world-population).
-Generic and Field scaling belong to the archetypes the [iteration benchmarks](iteration.md) build,
-and appear nowhere else.
+Generic and Field scaling belong to the archetypes the [iteration benchmarks](iteration.md) and
+their [reference twins](reference.md) build, and appear nowhere else. `Shield` is the data-carrying
+optional of `tagArch`, which [`frame`](iteration.md#frame), its twin
+[`fused_frame`](reference.md#fused_frame), and the allocation gate run over.
 
 | Category      | Components              | Fields                                   |
 | ------------- | ----------------------- | ---------------------------------------- |
@@ -44,6 +46,7 @@ and appear nowhere else.
 | Background    | `Aggro`                 | (0-field, optional)                      |
 | Generic       | `A`, `B`, `C`, `D`, `E` | `{v}` each                               |
 | Field scaling | `F1`, `F2`, `F5`, `F10` | 1/2/5/10 fields (`{a}` through `{a..j}`) |
+| Optional data | `Shield`                | `{hp}` (optional)                        |
 
 The `F*` components back the `soa_*` benchmarks, named for the structure-of-arrays layout ecstatic
 stores components in: each field is its own column array, so touching `k` fields of one component

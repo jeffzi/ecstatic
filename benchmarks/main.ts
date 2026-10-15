@@ -18,9 +18,10 @@
  * successful parent run writes to stdout, so a partial report never reaches a
  * consumer parsing it; diagnostics go to stderr.
  *
- * Importing a suite module registers its benchmarks as a side effect; the
- * `sinkValue` imports exist so the accumulated results stay reachable until
- * after `run` returns.
+ * Importing a suite module registers its benchmarks as a side effect. Every
+ * suite that accumulates results returns them from its `sinkValue`, which keeps
+ * them reachable until after `run` returns; the reference suite accumulates
+ * nothing, so it is imported for registration alone.
  */
 
 import { spawn } from "node:child_process";
@@ -32,6 +33,8 @@ import { sinkValue as accessSink } from "./access-bench.js";
 import { sinkValue as entitySink } from "./entity-bench.js";
 import { sinkValue as iterationSink } from "./iteration-bench.js";
 import { sinkValue as manySink } from "./many-bench.js";
+// oxlint-disable-next-line import/no-unassigned-import -- importing the suite registers its benchmarks; it exports nothing
+import "./reference-bench.js";
 import {
   anchoredFilter,
   type BenchReport,

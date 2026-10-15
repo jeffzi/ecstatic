@@ -1,15 +1,23 @@
 # Iteration benchmarks
 
-Source: [`benchmarks/iteration-bench.ts`](../../../benchmarks/iteration-bench.ts)
+Source: [`benchmarks/iteration-bench.ts`](../../../benchmarks/iteration-bench.ts), with the
+`throughput` and `frame` bodies in [`benchmarks/systems.ts`](../../../benchmarks/systems.ts)
 
 Shared constants (`N`, the 5x world, `DT`) are defined in [parameters](parameters.md); the `sink`
 accumulator is explained in [rationale](../rationale.md#conventions).
 
-Every iteration benchmark runs against a bare world — no background entities — so the numbers
-reflect per-entity throughput rather than world size. `each_with_despawn` and `deferred_despawn`
-consume the population they run against, so the suite's `manualBench` shim rebuilds their world
-before each iteration and destroys it after, both outside the clock. The rest are net-neutral and
-reuse one world. Every benchmark here ends with `destroyWorld()`.
+`throughput` and `frame` each have a fused twin in the [reference group](reference.md): a
+hand-written column loop that does the same work without calling `each()`.
+
+Every iteration benchmark runs against a bare world, so the numbers reflect per-entity throughput
+rather than world size. A bare world has no idle background population: every entity belongs to a
+storage the benchmark iterates. [`frame`](#frame) iterates nine storages, one of them the background
+storage.
+
+`each_with_despawn` and `deferred_despawn` consume the population they run against, so the suite's
+`manualBench` shim rebuilds their world before each iteration and destroys it after, both outside
+the clock. The rest are [net-neutral](../rationale.md#conventions) and reuse one world. Every
+benchmark here ends with `destroyWorld()`.
 
 ## throughput
 
@@ -31,7 +39,7 @@ each(storage, (e) => {
 
 **Rationale:** Establishes the iteration baseline. One archetype, every entity visited, two field
 reads and two writes per entity. Overhead beyond the arithmetic is `each()` dispatch and view
-rebinding.
+rebinding. The fused twin is [`fused_throughput`](reference.md#fused_throughput).
 
 ---
 
@@ -64,6 +72,48 @@ churn. Inspired by the `IteratePathological` benchmark in EnTT, a C++ ECS librar
 
 ---
 
+## frame
+
+**Purpose:** Measure a frame of nine `each()` systems, one per archetype, run back to back.
+
+| Property | Value                                                                    |
+| -------- | ------------------------------------------------------------------------ |
+| Setup    | Bare world, N default-valued entities in each of the nine storages below |
+| Warmup   | One frame                                                                |
+
+**Setup detail:** The nine archetypes and the system run over each, in frame order:
+
+| Archetype     | Components                                    | System                                                     |
+| ------------- | --------------------------------------------- | ---------------------------------------------------------- |
+| `trackedArch` | Position, Velocity, Alive (optional)          | the `throughput` body                                      |
+| `bgArch`      | Health, Armor, Aggro (optional)               | `heal`: `hp += def * DT`                                   |
+| `spawnArch`   | Position, Alive (optional)                    | `drift`: `x += DT`                                         |
+| `tagArch`     | Position, Alive (optional), Shield (optional) | `climb`: `y += x * DT`                                     |
+| `chainArch`   | A, B, C, D, E                                 | `relay`: `B.v += A.v * DT`, `D.v += C.v * DT`, `E.v += DT` |
+| `soa1Arch`    | F1                                            | `tick`: `a += DT`                                          |
+| `soa2Arch`    | F2                                            | `accrue`: `a += b * DT`                                    |
+| `soa5Arch`    | F5                                            | `pulse`: `a += b * DT`, `c += d * DT`, `e += DT`           |
+| `soa10Arch`   | F10                                           | `sweep`: `a += b * DT`, `c += d * DT`, ..., `i += j * DT`  |
+
+Every update adds `DT`, or a field the system never writes times `DT`, so no value shrinks toward
+the subnormal range, however many times mitata replays the frame.
+
+**Operation:**
+
+```text
+throughput(tracked); heal(bg); drift(spawn); climb(tag); relay(chain)
+tick(soa1); accrue(soa2); pulse(soa5); sweep(soa10)
+# each system is one each(storage, (e) => ...) call with the update above
+```
+
+**Rationale:** The other iteration benchmarks time one or a few callbacks over one archetype. The
+callback call site inside `each()` sees at most a handful of callbacks and a single view shape. A
+real frame runs many systems through that same call site. Here it sees nine callbacks and nine view
+shapes, so a regression in how `each()` handles many callbacks at one call site shows up here first.
+The fused twin is [`fused_frame`](reference.md#fused_frame).
+
+---
+
 ## each_chained
 
 **Purpose:** Measure per-pass overhead when 4 sequential `each()` calls propagate values A → B → C →
@@ -72,7 +122,7 @@ D → E.
 | Property | Value                                      |
 | -------- | ------------------------------------------ |
 | Setup    | Bare world, N entities with components A-E |
-| Warmup   | One `each()` pass (A → B)                  |
+| Warmup   | One full chain (A → B → C → D → E)         |
 
 **Operation:**
 

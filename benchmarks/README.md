@@ -1,10 +1,14 @@
 # Benchmarks
 
 Regression-detection benchmarks for ecstatic, timed with
-[mitata](https://github.com/evanwashere/mitata).
+[mitata](https://github.com/evanwashere/mitata). The
+[reference group](../docs/benchmarks/specifications/reference.md) holds hand-fused twins of two
+iteration benchmarks, `throughput` and `frame`. Each twin runs the column loop a compile-time
+transform would emit for its `each()` call, which sets a speed ceiling for that benchmark. The
+reference group is not a regression target.
 
 For what each benchmark measures and why, see [`docs/benchmarks/`](../docs/benchmarks/README.md).
-This file covers running the suite and how much of the original Lua suite it currently covers.
+This file covers running the suite, choosing an engine, and passing the allocation gate.
 
 ## Running
 

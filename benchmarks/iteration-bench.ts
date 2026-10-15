@@ -1,17 +1,32 @@
 /**
  * Iteration throughput: `each` over a whole storage, one pass at a time.
  *
- * These worlds carry no background entities — the tracked archetype is the only
- * one populated, so the numbers measure the iteration path itself rather than
- * dispatch across archetypes.
+ * These worlds carry no idle background population: every entity belongs to a
+ * storage its benchmark iterates, so the numbers measure the iteration path
+ * itself rather than world size.
  */
 
-import { despawn, despawnMany, destroyWorld, each, spawn } from "ecstatic";
-import type { EntityId } from "ecstatic";
+import { despawn, despawnMany, each, spawn } from "ecstatic";
+import type { EntityId, Storage } from "ecstatic";
 
-import { chainArch, soa1Arch, soa2Arch, soa5Arch, soa10Arch } from "./archetypes.js";
-import { benchCreateWorld, DT, makeBareWorld, manualBench, timedBench } from "./helpers.js";
+import {
+  chainArch,
+  soa1Arch,
+  soa2Arch,
+  soa5Arch,
+  soa10Arch,
+  type trackedArch,
+} from "./archetypes.js";
+import {
+  benchCreateWorld,
+  makeBareWorld,
+  makeFrameWorld,
+  makeThroughputWorld,
+  manualBench,
+  warmedBench,
+} from "./helpers.js";
 import { registerBench } from "./runner.js";
+import { frameEach, throughputEach } from "./systems.js";
 
 let sink = 0;
 
@@ -25,28 +40,20 @@ export function sinkValue(): number {
   return sink;
 }
 
-registerBench("iteration/throughput", function* () {
-  const { world, trackedStorage: storage } = benchCreateWorld({ noBackground: true });
+registerBench(
+  "iteration/throughput",
+  warmedBench(makeThroughputWorld, ({ trackedStorage }) => {
+    throughputEach(trackedStorage);
+  }),
+);
 
-  const integrate = (): void => {
-    each(storage, (e) => {
-      e.Position.x += e.Velocity.dx * DT;
-      e.Position.y += e.Velocity.dy * DT;
-    });
-  };
-  integrate();
+// Nine systems in a row, one per storage, each `each()` callback a different
+// shape: what a frame of systems costs when they share the `each()` call site.
+registerBench("iteration/frame", warmedBench(makeFrameWorld, frameEach));
 
-  yield timedBench(integrate);
-
-  destroyWorld(world);
-});
-
-// Same pass as throughput, but over a storage whose rows have been churned:
-// five rounds of despawning every third entity and respawning the same count
+// Five rounds of despawning every third entity and respawning the same count
 // leave the freelist and row order fragmented the way a running game does.
-registerBench("iteration/post_churn_throughput", function* () {
-  const { world, trackedStorage: storage } = benchCreateWorld({ noBackground: true });
-
+function churnRows(storage: Storage<typeof trackedArch>): void {
   for (let round = 0; round < 5; round++) {
     const victims: EntityId[] = [];
     let count = 0;
@@ -64,46 +71,45 @@ registerBench("iteration/post_churn_throughput", function* () {
       sink += spawn(storage);
     }
   }
+}
 
-  const integrate = (): void => {
-    each(storage, (e) => {
-      e.Position.x += e.Velocity.dx * DT;
-      e.Position.y += e.Velocity.dy * DT;
-    });
-  };
-  integrate();
-
-  yield timedBench(integrate);
-
-  destroyWorld(world);
-});
+// Same pass as throughput, but over a storage whose rows have been churned.
+registerBench(
+  "iteration/post_churn_throughput",
+  warmedBench(
+    () => {
+      const ctx = makeThroughputWorld();
+      churnRows(ctx.trackedStorage);
+      return ctx;
+    },
+    ({ trackedStorage }) => {
+      throughputEach(trackedStorage);
+    },
+  ),
+);
 
 // Four dependent passes over one storage: each reads the column the previous
 // pass wrote. Four separate traversals, not one pass doing four assignments.
-registerBench("iteration/each_chained", function* () {
-  const { world, storage } = makeBareWorld(chainArch);
-
-  each(storage, (e) => {
-    e.B.v = e.A.v;
-  });
-
-  yield timedBench(() => {
-    each(storage, (e) => {
-      e.B.v = e.A.v;
-    });
-    each(storage, (e) => {
-      e.C.v = e.B.v;
-    });
-    each(storage, (e) => {
-      e.D.v = e.C.v;
-    });
-    each(storage, (e) => {
-      e.E.v = e.D.v;
-    });
-  });
-
-  destroyWorld(world);
-});
+registerBench(
+  "iteration/each_chained",
+  warmedBench(
+    () => makeBareWorld(chainArch),
+    ({ storage }) => {
+      each(storage, (e) => {
+        e.B.v = e.A.v;
+      });
+      each(storage, (e) => {
+        e.C.v = e.B.v;
+      });
+      each(storage, (e) => {
+        e.D.v = e.C.v;
+      });
+      each(storage, (e) => {
+        e.E.v = e.D.v;
+      });
+    },
+  ),
+);
 
 // Despawns every second entity from inside the callback iterating it — the
 // swap-and-pop has to stay correct while the traversal is in flight.
@@ -128,76 +134,66 @@ registerBench("iteration/each_with_despawn", function* () {
 });
 
 // The soa_* family varies only in how many fields of one component the pass
-// touches: 1, 2, 5, then 10. The spread shows what each extra column costs.
-registerBench("iteration/soa_1field", function* () {
-  const { world, storage } = makeBareWorld(soa1Arch);
+// touches: 1, 2, 5, then 10. The spread is not monotonic in field count:
+// soa_5field runs slower than soa_10field. Track each one against its own
+// history rather than reading the gap between neighbors as a per-column price.
+registerBench(
+  "iteration/soa_1field",
+  warmedBench(
+    () => makeBareWorld(soa1Arch),
+    ({ storage }) => {
+      each(storage, (e) => {
+        sink += e.F1.a;
+      });
+    },
+  ),
+);
 
-  const pass = (): void => {
-    each(storage, (e) => {
-      sink += e.F1.a;
-    });
-  };
-  pass();
+registerBench(
+  "iteration/soa_2field",
+  warmedBench(
+    () => makeBareWorld(soa2Arch),
+    ({ storage }) => {
+      each(storage, (e) => {
+        sink += e.F2.a + e.F2.b;
+      });
+    },
+  ),
+);
 
-  yield timedBench(pass);
+registerBench(
+  "iteration/soa_5field",
+  warmedBench(
+    () => makeBareWorld(soa5Arch),
+    ({ storage }) => {
+      each(storage, (e) => {
+        sink += e.F5.a + e.F5.b + e.F5.c + e.F5.d + e.F5.e;
+      });
+    },
+  ),
+);
 
-  destroyWorld(world);
-});
-
-registerBench("iteration/soa_2field", function* () {
-  const { world, storage } = makeBareWorld(soa2Arch);
-
-  const pass = (): void => {
-    each(storage, (e) => {
-      sink += e.F2.a + e.F2.b;
-    });
-  };
-  pass();
-
-  yield timedBench(pass);
-
-  destroyWorld(world);
-});
-
-registerBench("iteration/soa_5field", function* () {
-  const { world, storage } = makeBareWorld(soa5Arch);
-
-  const pass = (): void => {
-    each(storage, (e) => {
-      sink += e.F5.a + e.F5.b + e.F5.c + e.F5.d + e.F5.e;
-    });
-  };
-  pass();
-
-  yield timedBench(pass);
-
-  destroyWorld(world);
-});
-
-registerBench("iteration/soa_10field", function* () {
-  const { world, storage } = makeBareWorld(soa10Arch);
-
-  const pass = (): void => {
-    each(storage, (e) => {
-      sink +=
-        e.F10.a +
-        e.F10.b +
-        e.F10.c +
-        e.F10.d +
-        e.F10.e +
-        e.F10.f +
-        e.F10.g +
-        e.F10.h +
-        e.F10.i +
-        e.F10.j;
-    });
-  };
-  pass();
-
-  yield timedBench(pass);
-
-  destroyWorld(world);
-});
+registerBench(
+  "iteration/soa_10field",
+  warmedBench(
+    () => makeBareWorld(soa10Arch),
+    ({ storage }) => {
+      each(storage, (e) => {
+        sink +=
+          e.F10.a +
+          e.F10.b +
+          e.F10.c +
+          e.F10.d +
+          e.F10.e +
+          e.F10.f +
+          e.F10.g +
+          e.F10.h +
+          e.F10.i +
+          e.F10.j;
+      });
+    },
+  ),
+);
 
 // The deferred alternative to each_with_despawn: collect the doomed IDs during
 // the pass, then flush them in one batch once iteration is over.

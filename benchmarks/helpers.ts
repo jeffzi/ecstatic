@@ -14,7 +14,17 @@ import {
   type World,
 } from "ecstatic";
 
-import { bgArch, trackedArch } from "./archetypes.js";
+import {
+  bgArch,
+  chainArch,
+  soa1Arch,
+  soa2Arch,
+  soa5Arch,
+  soa10Arch,
+  spawnArch,
+  tagArch,
+  trackedArch,
+} from "./archetypes.js";
 import { mulberry32, shuffle } from "./random.js";
 import { parseGeneration } from "./runner.js";
 
@@ -23,7 +33,7 @@ import { parseGeneration } from "./runner.js";
 // ---------------------------------------------------------------------------
 
 /** Total population is this multiple of N: 1 tracked entity per 4 background ones. */
-export const WORLD_MULTIPLIER = 5;
+const WORLD_MULTIPLIER = 5;
 
 /** Fixed timestep, so movement integration matches a 60 Hz frame. */
 export const DT = 1 / 60;
@@ -64,7 +74,7 @@ export interface BenchCtx<A extends AnyArchetype> {
   n: number;
 }
 
-export interface CreateOpts {
+interface CreateOpts {
   /** Skip the 4N background entities, isolating the tracked archetype. */
   noBackground?: boolean;
 }
@@ -147,10 +157,19 @@ function ageTrackedSlots(storage: Storage<typeof trackedArch>, generation: numbe
   }
 }
 
-export interface BareCtx<A extends AnyArchetype> {
-  world: World;
-  storage: Storage<A>;
-  n: number;
+/**
+ * Build the world the throughput benchmarks run over: `benchCreateWorld` with no background
+ * population.
+ *
+ * `iteration/throughput`, `iteration/post_churn_throughput` and their fused twin all take their
+ * world from here, so they cannot drift onto different worlds.
+ *
+ * @returns The world, its tracked storage, the shuffled tracked ids, and `n` (always
+ * `DEFAULT_N`); the caller owns the world and nothing here releases it.
+ * @throws UsageError when `BENCH_GENERATION` is set to anything but an integer from 1 to 1023.
+ */
+export function makeThroughputWorld(): BenchCtx<typeof trackedArch> {
+  return benchCreateWorld({ noBackground: true });
 }
 
 /**
@@ -158,21 +177,72 @@ export interface BareCtx<A extends AnyArchetype> {
  *
  * @param arch - Archetype to register and spawn from; it must declare no required relation,
  * since every entity is spawned with no overrides.
- * @returns The world, the registered storage for `arch`, and `n` (always `DEFAULT_N`); the
- * caller owns the world and nothing here releases it.
+ * @returns The world and the registered storage for `arch`; the caller owns the world and nothing
+ * here releases it.
  */
-export function makeBareWorld<A extends AnyArchetype>(arch: A): BareCtx<A> {
-  const n = DEFAULT_N;
+export function makeBareWorld<A extends AnyArchetype>(
+  arch: A,
+): { world: World; storage: Storage<A> } {
   const world = createWorld();
+  return { world, storage: registerDefaults(world, arch) };
+}
+
+/** The frame world and its nine storages, each holding `DEFAULT_N` default-valued entities. */
+export interface FrameCtx {
+  world: World;
+  tracked: Storage<typeof trackedArch>;
+  bg: Storage<typeof bgArch>;
+  spawn: Storage<typeof spawnArch>;
+  tag: Storage<typeof tagArch>;
+  chain: Storage<typeof chainArch>;
+  soa1: Storage<typeof soa1Arch>;
+  soa2: Storage<typeof soa2Arch>;
+  soa5: Storage<typeof soa5Arch>;
+  soa10: Storage<typeof soa10Arch>;
+}
+
+/**
+ * Build the world a frame of systems runs over: nine archetypes, `DEFAULT_N` default-valued
+ * entities in each, and no other entity.
+ *
+ * Takes no entity count, for the same reason `benchCreateWorld` takes none: a frame benchmark and
+ * its fused twin must measure the same world.
+ *
+ * @returns The world and its nine storages; the caller owns the world and nothing here releases
+ * it.
+ */
+export function makeFrameWorld(): FrameCtx {
+  const world = createWorld();
+  return {
+    world,
+    tracked: registerDefaults(world, trackedArch),
+    bg: registerDefaults(world, bgArch),
+    spawn: registerDefaults(world, spawnArch),
+    tag: registerDefaults(world, tagArch),
+    chain: registerDefaults(world, chainArch),
+    soa1: registerDefaults(world, soa1Arch),
+    soa2: registerDefaults(world, soa2Arch),
+    soa5: registerDefaults(world, soa5Arch),
+    soa10: registerDefaults(world, soa10Arch),
+  };
+}
+
+/**
+ * Register `arch` in `world` and fill its storage with `DEFAULT_N` default-valued entities.
+ *
+ * @param world - World to register the archetype in.
+ * @param arch - Archetype to register and spawn from; it must declare no required relation,
+ * since every entity is spawned with no overrides.
+ * @returns The registered storage, holding `DEFAULT_N` entities.
+ */
+function registerDefaults<A extends AnyArchetype>(world: World, arch: A): Storage<A> {
   const storage = register(world, arch);
   // Widened to bare Storage: the generic A is unresolved here, so the
   // no-overrides spawn form (rejected for required-relation archetypes)
   // cannot be proven applicable; bench archetypes carry no relations.
   const untyped: Storage = storage;
-  for (let i = 0; i < n; i++) {
-    spawn(untyped);
-  }
-  return { world, storage, n };
+  spawnMany(untyped, DEFAULT_N);
+  return storage;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,12 +267,45 @@ export interface TimedYield {
  * @returns The object to `yield` from a mitata generator benchmark; `bench` is `body` itself,
  * not a wrapper.
  */
-export function timedBench(body: () => void): TimedYield {
+function timedBench(body: () => void): TimedYield {
   return { heap: false, bench: body };
 }
 
+/** A mitata generator benchmark that times one body under `timedBench` batching. */
+export type TimedBenchmark = () => Generator<TimedYield, void, unknown>;
+
+/**
+ * The lifecycle every net-neutral benchmark shares: build, one untimed pass, time, release.
+ *
+ * Any benchmark whose body leaves its world as it found it goes through here. Benchmarks that
+ * must match, such as an `each()` benchmark and its fused twin, pass the same `build`, so they
+ * can differ only in the body they time.
+ *
+ * @param build - Builds the context the body runs over; called once per run, outside the clock.
+ * @param body - The pass to time; it receives the same context for the warmup and every timed
+ * call, so it must leave that context as it found it.
+ * @returns A generator benchmark that runs the body once, yields it to `timedBench`, and destroys
+ * the context's world when mitata resumes it after timing.
+ */
+export function warmedBench<C extends { world: World }>(
+  build: () => C,
+  body: (ctx: C) => void,
+): TimedBenchmark {
+  return function* () {
+    const ctx = build();
+    const pass = (): void => {
+      body(ctx);
+    };
+    pass();
+
+    yield timedBench(pass);
+
+    destroyWorld(ctx.world);
+  };
+}
+
 /** The generator yield shape that puts mitata into manual-timing mode. */
-export interface ManualYield {
+interface ManualYield {
   heap: false;
   manual: () => number;
 }

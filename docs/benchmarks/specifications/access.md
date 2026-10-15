@@ -12,8 +12,9 @@ uses a pre-populated world (5x) with tracked entities carrying Position (`{x, y}
 (`{dx, dy}`), and Alive.
 
 The world is built once per benchmark and reused across samples, because these bodies read and
-overwrite fields without changing the population. No benchmark here uses a warmup pass, and each
-ends with `destroyWorld()` — so every one has the same setup, and only the operation below differs.
+overwrite fields without changing the population. Each benchmark runs its operation once untimed as
+a warmup and ends with `destroyWorld()` — so every one has the same setup, and only the operation
+below differs.
 
 ## get_1field
 

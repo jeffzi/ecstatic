@@ -5,10 +5,11 @@ Source: [`benchmarks/entity-bench.ts`](../../../benchmarks/entity-bench.ts)
 Shared constants (`N`, the 5x world, `DT`) are defined in [parameters](parameters.md); the `sink`
 accumulator is explained in [rationale](../rationale.md#conventions).
 
-Single-entity lifecycle calls, one at a time. No benchmark here uses a warmup pass. `spawn_recycle`
-and `alive_check` leave the population as they found it and reuse one world across samples. The rest
-change it, so the suite's `manualBench` shim rebuilds their world before each iteration and destroys
-it after, both outside the clock. Every benchmark here ends with `destroyWorld()`.
+Single-entity lifecycle calls, one at a time. `spawn_recycle` and `alive_check` leave the population
+as they found it, so they reuse one world across samples and run their operation once untimed as a
+warmup. The rest change it, so the suite's `manualBench` shim rebuilds their world before each
+iteration and destroys it after, both outside the clock, with no warmup pass. Every benchmark here
+ends with `destroyWorld()`.
 
 ## spawn_empty
 
@@ -103,9 +104,10 @@ generation increment, and freelist push. Order is shuffled to defeat sequential 
 
 **Purpose:** Measure entity ID recycling through despawn-then-respawn.
 
-| Property | Value                    |
-| -------- | ------------------------ |
-| Setup    | Pre-populated world (5x) |
+| Property | Value                         |
+| -------- | ----------------------------- |
+| Setup    | Pre-populated world (5x)      |
+| Warmup   | One despawn and respawn cycle |
 
 **Operation:**
 
@@ -133,6 +135,7 @@ so the tracked array is rewritten in place and the next sample runs against the 
 | Property | Value                                                          |
 | -------- | -------------------------------------------------------------- |
 | Setup    | Pre-populated world (5x), create N extra entities then despawn |
+| Warmup   | One pass over the mixed IDs                                    |
 
 **Operation:**
 
