@@ -21,6 +21,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Breaking:** Lower the entity ceiling to 1,048,576 entities per world (was 16,777,216) and the
   generations per slot to 1,023 (was 536,870,911), so a dead ID matches a live entity again once its
   slot has been recycled 1,023 times
+- Speed up `get`, `despawn`, and `alive` on recycled slots
 
 ### Fixed
 
