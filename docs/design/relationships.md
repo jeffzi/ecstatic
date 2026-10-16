@@ -1,16 +1,35 @@
-# Relationship System Design
+# Relationship system design
 
-Status: design — committed core. A relation is a **component with a reverse-indexed `target`
-field**. The `target` is written only through dedicated, world-scoped `link` / `unlink` verbs (and
-at birth by `spawn`), and read with `get` / `getTarget`. The component verbs `set` / `enable` /
-`disable` deliberately do **not** touch a relation's target. Confining reverse-index maintenance to
-a small, auditable set of functions is the correctness property this design is built around.
+Status: implemented, except the [deferred layers](#deferred-layers). A relation is a **component
+with a reverse-indexed `target` field**. The `target` is written only through dedicated,
+world-scoped `link` / `unlink` verbs (and at birth by `spawn`), and read with `get` / `getTarget`.
+The component verbs `set` / `enable` / `disable` deliberately do **not** touch a relation's target.
+Confining reverse-index maintenance to a small, auditable set of functions is the correctness
+property this design is built around.
 
 The full function set is in [Committed API surface](#committed-api-surface) below. For design
-motivation, see the design pillars; for existing communication patterns (entity links, flag +
-system), see `docs/events.md`. For internal architecture, see `docs/design/archetype.md`.
+motivation, see the [design pillars](../pillars.md); for existing communication patterns (entity
+links, flag + system), see [events.md](../events.md). For internal architecture, see
+[archetype.md](archetype.md).
 
-## Key Concepts
+## Contents
+
+- [Key concepts](#key-concepts)
+- [Committed API surface](#committed-api-surface)
+- [The core idea: a relation is a reverse-indexed component](#the-core-idea-a-relation-is-a-reverse-indexed-component)
+- [Semantics](#semantics)
+- [Schema](#schema)
+- [Lifecycle API](#lifecycle-api)
+- [Reverse queries](#reverse-queries)
+- [Target despawn behavior](#target-despawn-behavior)
+- [Type-level design](#type-level-design)
+- [Internal storage](#internal-storage)
+- [Error behavior](#error-behavior)
+- [Performance characteristics](#performance-characteristics)
+- [Deferred layers](#deferred-layers)
+- [Not in scope (permanent)](#not-in-scope-permanent)
+
+## Key concepts
 
 - **Relation**: A component with a reserved `target` field (an `EntityId`) that ecstatic maintains a
   reverse index for.
@@ -21,7 +40,8 @@ system), see `docs/events.md`. For internal architecture, see `docs/design/arche
 - **Reverse query**: Looking up which sources point at a given target via `querySources()` or
   `getSources()`.
 - **Required vs optional**: Required relations must receive a target at spawn; optional relations
-  may be linked later via `link()`. Both are detached via `unlink()` (optional only) or `despawn`.
+  may be linked later via `link()`. Optional relations detach via `unlink()` or `despawn`; required
+  relations detach only when the source despawns.
 - **Birth-link**: At spawn, both required and optional relations record their target in the reverse
   index. The presence bit means "linked" — `spawn` is a writer.
 - **The four writers**: Exactly four operations mutate relation state: `spawn` (birth-link), `link`,
@@ -46,16 +66,16 @@ Eight relation-specific names, plus relation-aware `despawnMany(world, ids)` and
 | `getTarget(world, id, rel)`                     | world | Alive-checked forward read (`EntityId \| undefined`) |
 | `querySources(world, rel, target, filter?, fn)` | world | Live, filtered, typed reverse iteration              |
 | `getSources(world, rel, target, out?)`          | world | Reverse lookup as a list (`EntityId[]`)              |
-| `hasSources(world, rel, target)`                | world | Existence peek; short-circuits on first source       |
+| `hasSources(world, rel, target)`                | world | Existence peek; reads the target bucket's size       |
 | `countSources(world, rel, target)`              | world | Cardinality read — total sources linking to target   |
 
 The component verbs do their normal jobs: `spawn` sets a required relation's target at birth (and
 validates it), `despawn` removes a dying entity's reverse entries, and `set` writes a relation's
-**non-target** data fields. `set` / `enable` / `disable` never write the `target` — that is reserved
+**non-target** data fields. `set` / `enable` / `disable` never write the `target`. That is reserved
 to `link` / `unlink` / `spawn`, which confines reverse-index maintenance to one small, auditable set
-of functions. Two new world-scoped `despawnMany` overloads — `despawnMany(world, ids)` (compose with
-`getSources` for cascade) and `despawnMany(world)` (clear the whole world) — extend batch despawn
-across archetypes.
+of functions. Two world-scoped `despawnMany` overloads extend batch despawn across archetypes:
+`despawnMany(world, ids)` (compose with `getSources` for cascade) and `despawnMany(world)` (clear
+the whole world).
 
 ## The core idea: a relation is a reverse-indexed component
 
@@ -80,17 +100,18 @@ per-operation work than a plain field. Forward-only links stay plain components.
 
 ## Semantics
 
-The link runs from a **source** entity to a **target** entity, reusing existing ECS machinery
-(descriptors, SoA columns, the bitmask for optionals). On every axis its semantics follow the
-component model:
+The link runs from a **source** entity to a **target** entity, reusing existing entity component
+system (ECS) machinery (descriptors, Structure-of-Arrays (SoA) columns, the bitmask for optionals).
+On every axis its semantics follow the component model:
 
 - **One target per source** (one-to-one). The `target` SoA column is a flat `number[i]`, so it costs
   zero allocation. One-to-many is deferred; model it for now as a reverse one-to-one queried with
   `querySources()`, or as scalar-column links.
 - **Required vs optional**, the same axis as components:
   - **Required** (first tuple slot): target set at spawn, always present. The target must be alive,
-    checked at runtime on spawn; its component _shape_ is enforced separately at compile time by the
-    relation's constraint. Retargeted with `link`; removed only by despawn (`unlink` is rejected).
+    checked at runtime on spawn (checked builds only); its component _shape_ is enforced separately
+    at compile time by the relation's constraint. Retargeted with `link`; removed only by despawn
+    (`unlink` is rejected).
   - **Optional** (second tuple slot): attached/detached at runtime via `link()` / `unlink()`, gated
     by the archetype bitmask exactly like an optional component — and drawing from the same 32-bit
     bitmask budget that tags and optional components share.
@@ -120,8 +141,9 @@ const ChildOf = relation("ChildOf", [Position], { offsetX: 0 }); // constrained 
 ```
 
 `target` is reserved. Declaring a user data field named `target` is a compile error (and a runtime
-error in the fallback). Argument 2 is discriminated by type: an array literal matches constraints;
-an object literal matches defaults; `{}` and `[]` differ, so there is no ambiguity.
+error in the dynamic fallback: the runtime check that catches untyped or cast call sites). Argument
+2 is discriminated by type: an array literal matches constraints; an object literal matches
+defaults; `{}` and `[]` differ, so there is no ambiguity.
 
 ### Archetype declaration
 
@@ -155,8 +177,8 @@ cannot enforce.
 Relation targets are written only through the four writers: `spawn` (birth-link), `link`, `unlink`,
 and despawn cleanup. `set` / `enable` / `disable` reject relations at both compile time (type error)
 and runtime (dynamic fallback errors), so they structurally cannot desync the index. `link`'s
-`target` is a required parameter (compile-time guarantee of a live target) and is state-agnostic
-(attach and retarget are the same call).
+`target` is a required parameter, so every call names a target; liveness is checked only in checked
+builds (`!NDEBUG`). `link` is state-agnostic: attach and retarget are the same call.
 
 ### Spawn with a relation (birth-link)
 
@@ -176,10 +198,10 @@ const t = spawn(turrets, {
 ```
 
 Required relations **must** receive a target at spawn — omitting the relation key is a compile
-error, and a stale target errors before the entity is created. Optional relations may provide a
-target at spawn (birth-link) or link later via `link()` — both paths record the target in the
-reverse index. Boolean spawn form (`Rel: true`) is invalid for relations; the target object form is
-always required.
+error, and a stale target errors before the entity is created (checked builds only). Optional
+relations may provide a target at spawn (birth-link) or link later via `link()` — both paths record
+the target in the reverse index. Boolean spawn form (`Rel: true`) is invalid for relations; the
+target object form is always required.
 
 The target's shape is guaranteed at compile time by the relation's constraint — see
 [write-site constraints](#write-site-constraint-enforcement).
@@ -246,9 +268,9 @@ const enemy = getTarget(world, missileId, Targets); // EntityId | undefined
 `get(storage, id, Rel.target)` is the relation equivalent of reading a plain entity-link field —
 fast, unchecked, you call `alive()` yourself. `getTarget` adds the bitmask + generation check, so a
 target whose generation has advanced comes back as `undefined` (the check is by generation; its
-bound is in `docs/pillars.md`, pillar 5). Keep `getTarget` for the common forward read where
-temporal safety matters; reach for `get` when you have already proven the target live in the same
-frame.
+bound is in [pillars.md, pillar 5](../pillars.md#5-generational-entity-ids-always-on)). Keep
+`getTarget` for the common forward read where temporal safety matters; reach for `get` when you have
+already proven the target live in the same frame.
 
 The "no check" in `get` refers only to _target_ liveness. On an **optional** relation that is
 currently unlinked, `get(storage, id, Rel.target)` still follows the standard optional-component
@@ -271,11 +293,12 @@ querySources(world, Targets, enemyId, (e) => {
 });
 ```
 
-Internally `querySources` first generation-checks `target`. A stale id — one whose slot has since
-been recycled by a later entity — fails that check and visits nothing instead of the new occupant's
-bucket (the check is by generation; its bound is in `docs/pillars.md`, pillar 5). For a live target
-it is a reverse-map lookup followed by an O(S) walk over the S sources that actually point at the
-target — not a scan of all sources.
+Internally `querySources` first generation-checks `target`. A stale id, one whose slot has since
+been recycled by a later entity, fails that check and visits nothing instead of the new occupant's
+bucket (the check is by generation; its bound is in
+[pillars.md, pillar 5](../pillars.md#5-generational-entity-ids-always-on)). For a live target it is
+a reverse-map lookup followed by an O(S) walk over the S sources that actually point at the target —
+not a scan of all sources.
 
 The bucket iteration is safe under despawn/retarget mutations of the current source:
 
@@ -297,13 +320,14 @@ querySources(world, Targets, enemyId, { none: [Stunned] }, (e) => {
 });
 ```
 
-With no filter, `querySources` allocates nothing even in the pure-runtime path. With a filter, the
-descriptor is elided by the transform the same way `each` / `query` filter descriptors are.
+With no filter, `querySources` allocates nothing. With a filter, it allocates one normalized filter
+tuple per storage it resolves the filter against, plus the filter object itself when the call site
+writes it inline.
 
 ### `getSources(world, rel, target, out?)` — the source list
 
-When you want sources as a **list** — to count them, hold them, mutate the set while iterating, or
-hand them to `despawnMany` — `getSources` returns an `EntityId[]` instead of calling back.
+When you want sources as a **list** (to count them, hold them, mutate the set while iterating, or
+hand them to `despawnMany`), `getSources` returns an `EntityId[]` instead of calling back.
 
 ```typescript
 function getSources(world: World, rel: Relation, target: EntityId, out?: EntityId[]): EntityId[];
@@ -373,7 +397,8 @@ despawn(vehicles, vehicleId);
 
 No automatic cascade. The recipe keeps despawns immediate and gives foreign-resource children a
 cleanup seam. The cost: forget the recipe and a source holds a dead required target (detectable in
-debug builds; see [Target despawn behavior](#target-despawn-behavior)).
+every build: `getTarget` returns `undefined`; see
+[Target despawn behavior](#target-despawn-behavior)).
 
 ### Reacting to a broken link without a cascade
 
@@ -396,9 +421,10 @@ To act on a target's death, capture sources first (the
 Invariant: capture before the bucket disappears; despawn order is a marginal performance choice
 (target-first drops the bucket once instead of S individual hash deletes — both orders are O(S)).
 
-**Debug aid.** Iterating a source whose required relation points at a dead target is a likely
-"forgot the cascade recipe" bug. `getTarget` always performs a generation check and returns
-`undefined` for a dead target — the check is unconditional and never stripped, even under `NDEBUG`.
+**Detecting a forgotten cascade.** Iterating a source whose required relation points at a dead
+target is a likely "forgot the cascade recipe" bug. `getTarget` always performs a generation check
+and returns `undefined` for a dead target — the check is unconditional and never stripped, even
+under `NDEBUG`.
 
 ## Type-level design
 
@@ -408,16 +434,15 @@ Relations reuse the real `Component` brand, expose `target` as a visible field, 
 relation-only phantom slot for the target constraint:
 
 ```typescript
-// A unique-symbol slot (parallel to __ecs_component_meta), carrying the target
-// constraint tuple. Present only on relations — it is the relation discriminator.
-declare const __ecs_relation_meta: unique symbol;
-
+// The phantom slot carries the target constraint tuple. Present only on relations, it is the
+// relation discriminator.
 type Relation<
   N extends string = string,
   T extends object = object,
-  Constraints extends Component[] = [],
+  Constraints extends readonly Component[] = readonly Component[],
 > = Component<N, T & { target: EntityId }> & {
-  readonly [__ecs_relation_meta]: { constraints: Constraints };
+  readonly __ecstatic_relation_meta: { constraints: Constraints; fields: T };
+  readonly target: RelationTargetFieldDescriptor;
 };
 ```
 
@@ -428,8 +453,8 @@ it is Component-assignable and slots into `Archetype<Comps, Optionals>` tuples w
 - `FieldsOf<typeof ChildOf>` → `{ offsetX: number; offsetY: number; target: EntityId }`
 - `get(storage, id, ChildOf.target)` is typed `EntityId` with no cast.
 
-The `__ecs_relation_meta` slot is additive, and its presence is what distinguishes a relation from a
-plain component (the transform reads it via the phantom `constraints` property).
+The `__ecstatic_relation_meta` slot is additive, and its presence is what distinguishes a relation
+from a plain component.
 
 ### `relation()` overloads
 
@@ -463,18 +488,21 @@ admits every `EntityId` by structural subtyping.
 hands you), but every **write** to a relation's `target` is typed `With<Constraints>`:
 
 ```typescript
-type RelationConstraints<R extends Relation> =
-  R extends Relation<string, object, infer C> ? C : never;
+type RelationConstraints<R> = R extends {
+  readonly __ecstatic_relation_meta: { constraints: infer C extends readonly Component[] };
+}
+  ? C
+  : never;
 
 /**
- * `With<C>` accepts a single Component or a readonly Component[] tuple.
+ * `With<C>` accepts a single component or a readonly component tuple.
  * Any EntityId whose archetype's component presence map includes every constraint
  * component satisfies it by structural subtyping.
  */
-type With<C extends Component | readonly Component[]> = EntityId & {
-  readonly [__ecs_entity_meta]: {
-    components: PhantomComponents<EntityId> & {
-      [K in C extends readonly Component[] ? C[number] : C as PhantomName<K>]: true;
+type With<C extends ComponentDescriptor | readonly ComponentDescriptor[]> = EntityId & {
+  readonly __ecstatic_entity_meta: {
+    components: {
+      [K in C extends readonly ComponentDescriptor[] ? C[number] : C as ComponentName<K>]: true;
     };
   };
 };
@@ -482,7 +510,7 @@ type With<C extends Component | readonly Component[]> = EntityId & {
 
 `With<Constraints>` types the `target` in its two write positions:
 
-- **Spawn overrides** — `SpawnOverrides` detects `__ecs_relation_meta` and types the relation's
+- **Spawn overrides** — `SpawnOverrides` detects `__ecstatic_relation_meta` and types the relation's
   `target` override as `With<Constraints>`.
 - **`link`'s `target` parameter** — typed `With<RelationConstraints<R>>`, so a wrong-shaped target
   is a compile error at the call site. `link`'s optional `values` covers the relation's data fields
@@ -496,8 +524,7 @@ An actual `EntityId<Enemy>` carries a _derived_ `components` presence map —
 `{ Position: true; Health: true; … }`. `With<[...]>` requires that map to include every constraint
 component, so a target missing one is a compile error, while a target that has them (plus extras)
 satisfies it by structural subtyping. Constraints are **compile-time only**: they erase to nothing
-in the emitted JavaScript and cost zero at runtime. The descriptor still stores `constraints` for
-the transform to read; the runtime never enforces them.
+in the emitted JavaScript and cost zero at runtime. The runtime never enforces them.
 
 **Round-tripping through `getTarget` needs no cast.** `getTarget` returns `With<[...]>` — the
 constraint is preserved on the dedicated accessor. Forwarding its result into `link` typechecks
@@ -583,9 +610,10 @@ storing the storage in the bucket adds no extra lookup.
 | `countSources`         | N/A                              | returns `0` (generation-checked)                    | returns `0` on unregistered relation                                                                        |
 
 ¹ Checked builds only: the stale-ID check is gated by `!NDEBUG` and stripped from NDEBUG builds (the
-entity-validation contract in `docs/pillars.md`, pillar 5). Unmarked checks — including
-`getTarget`'s dead-target check and the `querySources` family's target generation checks — are
-unconditional and never stripped.
+entity-validation contract in
+[pillars.md, pillar 5](../pillars.md#5-generational-entity-ids-always-on)). Unmarked checks —
+including `getTarget`'s dead-target check and the `querySources` family's target generation checks —
+are unconditional and never stripped.
 
 ## Performance characteristics
 
@@ -596,7 +624,7 @@ unconditional and never stripped.
 | `unlink`               | O(1) | clear bit + clear target + reverse-map hash delete                                                                                                            |
 | `get` / `getTarget`    | O(1) | read SoA column (+ alive check for `getTarget`)                                                                                                               |
 | `hasSources`           | O(1) | single existence check on the target's bucket after gen-check + 2-level descent                                                                               |
-| `countSources`         | O(S) | S = sources for this (relation, target); walks the target's bucket counting entries                                                                           |
+| `countSources`         | O(1) | reads the target bucket's size after gen-check + 2-level descent                                                                                              |
 | `querySources`         | O(S) | target gen-check + 2-level reverse-map descent then per-source sparse resolve                                                                                 |
 | `getSources`           | O(S) | same walk, collecting IDs; one array allocation when `out` is omitted, zero when provided                                                                     |
 | Source despawn cleanup | O(1) | hash delete from the target's bucket, per relation the source carries                                                                                         |
@@ -640,8 +668,7 @@ before.
 
 ### One-to-many relations
 
-A source linking many targets. The zero-allocation representations from literature on entity
-component systems:
+A source linking many targets. Two representations avoid allocation:
 
 - **Known small N** → N scalar columns (`target0[i] … targetN[i]`), no nesting.
 - **Unbounded** → an implicit linked list threaded through scalar columns (`first[i]`, `next[i]`).
@@ -661,6 +688,5 @@ owned, per-edge target data — defer until that case is real.
   `querySources` / `getSources` require a specific `(relation, target)`. The reverse map supports
   targeted lookups, not open-ended discovery.
 - **Reactive hooks** — no automatic callbacks on link, unlink, or target despawn. Sources are
-  queried explicitly. Consistent with ecstatic's no-lifecycle-hooks stance (see `docs/pillars.md`,
-  pillar 11).
-- **Serialization** — relations are runtime-only, like the rest of the ECS.
+  queried explicitly. Consistent with ecstatic's no-lifecycle-hooks stance (see
+  [pillars.md, pillar 11](../pillars.md#11-no-lifecycle-hooks-no-observers)).

@@ -44,11 +44,31 @@ import {
 } from "ecstatic";
 ```
 
-`EntityId` is available as a type from the same import.
+`EntityId`, `Storage`, and `World` are available as types:
+`import type { EntityId, Storage, World } from "ecstatic";`.
+
+## Contents
+
+- [Recommended project layout](#recommended-project-layout)
+- [Named archetypes and composition](#named-archetypes-and-composition)
+- [Allocation-free event queue](#allocation-free-event-queue)
+- [Frame-scoped counter](#frame-scoped-counter)
+- [Deferred despawn by ID list](#deferred-despawn-by-id-list)
+- [Cooldown timer](#cooldown-timer)
+- [Game loop structure](#game-loop-structure)
+- [State machines with optional tags](#state-machines-with-optional-tags)
+- [Parent-child without relationships](#parent-child-without-relationships)
+- [Collision pair handling](#collision-pair-handling)
+- [Hoisting query filters](#hoisting-query-filters)
+- [Batch vs single-entity operations](#batch-vs-single-entity-operations)
+- [Pooling / recycling](#pooling--recycling)
+- [Entity links vs. relations](#entity-links-vs-relations)
+- [Choosing a reverse-query function](#choosing-a-reverse-query-function)
+- [Hot module replacement](#hot-module-replacement)
 
 ## Recommended project layout
 
-ecstatic has no system concept — a system is a plain function that calls `each()` or `query()`. This
+ecstatic has no system concept: a system is a plain function that calls `each()` or `query()`. This
 is intentional: plain functions are easy to test, easy to reorder, and need no registration or base
 class.
 
@@ -63,8 +83,8 @@ src/
     input.ts            reads platform input, writes to components
     movement.ts         Position += Velocity * dt
     combat.ts           damage, status effects, projectile hits
-    death.ts            marks dead entities for deferred despawn
-    cleanup.ts          flushes despawn list, clears transient queues
+    death.ts            queues dead entities on the deferred despawn list
+    cleanup.ts          flushes the deferred despawn list, clears transient queues
 ```
 
 Each system file exports one function that takes `world` (and any other state it needs):
@@ -202,7 +222,7 @@ drainQueue(damageQueue, (cols, i) => {
   }
 });
 
-// Second consumer: VFX system (reads before drain, or use separate drain)
+// Second consumer: visual effects (VFX) system (reads before drain, or use separate drain)
 // If multiple consumers need the same events, iterate with a plain loop
 // instead of drain, then clear manually at end of frame:
 for (let i = 0; i < damageQueue.count; i++) {
@@ -261,7 +281,7 @@ updateKillCounter(stats.kills);
 resetResource(world, Stats);
 ```
 
-## Deferred despawn list
+## Deferred despawn by ID list
 
 Sometimes you need to mark entities for removal in one system and despawn them in another (e.g.,
 after all systems have had a chance to read the dying entity's data).
@@ -352,11 +372,11 @@ function combatSystem(world: World): void {
 }
 
 function deathSystem(world: World): void {
-  // mark dead entities for deferred despawn
+  // queue dead entities on the deferred despawn list
 }
 
 function cleanupSystem(world: World): void {
-  // flush deferred despawns, clear transient queues
+  // flush the deferred despawn list, clear transient queues
 }
 
 function update(world: World, dt: number): void {
@@ -370,9 +390,9 @@ function update(world: World, dt: number): void {
 ```
 
 No scheduler, no dependency graph. The developer controls execution order. For a runnable version,
-see the examples.
+see [`examples/game-loop.ts`](../examples/game-loop.ts).
 
-## State machines with archetypes
+## State machines with optional tags
 
 Use optional tags as exclusive states. One system transitions between states; other systems filter
 on the active state.
@@ -506,8 +526,8 @@ for (let i = 0; i < collisionQueue.count; i++) {
 clearQueue(collisionQueue);
 ```
 
-The `i < j` guard avoids duplicate pairs. Each consumer iterates the same queue independently;
-`clearQueue` resets the count at end of frame.
+The `eA.id < eB.id` guard avoids duplicate pairs. Each consumer iterates the same queue
+independently; `clearQueue` resets the count at end of frame.
 
 ## Hoisting query filters
 
@@ -534,9 +554,9 @@ function movementSystem(world: World, dt: number) {
 }
 ```
 
-Both filter forms `query()` accepts — the bare component array and the `{all, any, none}` object —
-go through the same identity-keyed cache. Matched-row flags live on the matchers and update as
-entities spawn, enable, and disable, so a hoisted filter never goes stale between resolutions.
+Both filter forms `query()` accepts, the bare component array and the `{all, any, none}` object, go
+through the same identity-keyed cache. Matched-row flags live on the matchers and update as entities
+spawn, enable, and disable, so a hoisted filter never goes stale between resolutions.
 
 `each()` and `querySources()` need no hoisting: they resolve a filter to its bitmasks on every call
 and dedupe matchers by mask value, so an inline literal costs the literal plus one small tuple and a
@@ -602,20 +622,6 @@ for (const id of ids) {
 into tight code with entity resolution and the matcher update already specialized. The batch form's
 dispatch overhead does not amortize for a single operation.
 
-**Despawning specific entities by ID.** `despawn(storage, id)` is a single-pass swap-and-pop with no
-intermediate allocation. `despawnMany(ids)` must first sort the targeted dense indices, so a plain
-`despawn()` loop is faster for partial despawns by ID.
-
-```typescript
-// Good: single pass per entity
-for (const id of toRemove) {
-  despawn(enemies, id);
-}
-
-// Slower for partial despawn: sort overhead
-despawnMany(enemies, toRemove);
-```
-
 **Logic is conditional or interleaved with iteration.** Any `enable`, `disable`, or `despawn` that
 depends on per-entity data belongs inside `each()`:
 
@@ -626,6 +632,27 @@ each(enemies, (e) => {
   }
 });
 ```
+
+### Partial despawn by ID
+
+`despawn(storage, id)` is a single swap-and-pop with no intermediate allocation.
+`despawnMany(storage, ids)` first validates the whole list: a live ID listed twice throws, and the
+world is left intact. It then frees every listed row in one compaction pass that fills the holes
+from the tail.
+
+```typescript
+// One swap-and-pop per entity
+for (const id of toRemove) {
+  despawn(enemies, id);
+}
+
+// One validation pass, then one compaction pass
+despawnMany(enemies, toRemove);
+```
+
+[`many/despawn_half`](benchmarks/specifications/batch.md#despawn_half) measures the batch form under
+partial churn. To choose for your workload, compare it per entity against
+[`entity/despawn`](benchmarks/specifications/entity.md#despawn).
 
 ## Pooling / recycling
 
@@ -675,7 +702,7 @@ each(bullets, { all: [Active] }, (e) => {
 
 When the pool is exhausted, `poolAcquire` returns `undefined` — the caller decides whether to fall
 back to a real `spawn()` or skip. The freelist is a dense array with a count, same allocation-free
-pattern as the deferred despawn list.
+pattern as the [deferred despawn by ID list](#deferred-despawn-by-id-list).
 
 ## Entity links vs. relations
 
@@ -717,24 +744,23 @@ Four functions query the reverse map. Pick the cheapest one that answers your qu
 
 | Question                           | Function                               | Cost | Allocates?       |
 | ---------------------------------- | -------------------------------------- | ---- | ---------------- |
-| "Does anything point at this?"     | `hasSources(world, rel, target)`       | O(A) | No               |
-| "How many sources point here?"     | `countSources(world, rel, target)`     | O(S) | No               |
+| "Does anything point at this?"     | `hasSources(world, rel, target)`       | O(1) | No               |
+| "How many sources point here?"     | `countSources(world, rel, target)`     | O(1) | No               |
 | "Give me the source IDs as a list" | `getSources(world, rel, target, out)`  | O(S) | Only without out |
 | "Run logic per source entity"      | `querySources(world, rel, target, fn)` | O(S) | Only with filter |
 
-S = total source count across all archetypes for the (relation, target) pair. A = source archetypes
-for the pair. `hasSources` short-circuits on the first source found — O(A) worst case, effectively
-O(1) when sources exist.
+S = total source count across all archetypes for the (relation, target) pair. `hasSources` and
+`countSources` read the size of the target's source bucket, so neither walks the sources.
 
 ```typescript
 const Targets = relation("Targets", [Position]);
 
-// Threat detection: exit combat when nothing targets us (O(A), zero alloc)
+// Threat detection: exit combat when nothing targets us (O(1), zero alloc)
 if (!hasSources(world, Targets, entity)) {
   disable(enemies, entity, InCombat);
 }
 
-// UI: display attacker count (O(S), zero alloc)
+// UI: display attacker count (O(1), zero alloc)
 const n = countSources(world, Targets, entity);
 drawText(`${n} locked on`);
 
@@ -751,9 +777,8 @@ querySources(world, Targets, deadEnemy, (e) => {
 });
 ```
 
-**Prefer `hasSources` over `countSources(...) > 0`.** `hasSources` short-circuits on the first
-source found; `countSources` walks every source. For per-frame polling ("is anyone still targeting
-me?"), the difference matters.
+Both cost the same, so pick by intent: `hasSources` reads better than `countSources(...) > 0` when
+the question is yes or no.
 
 ## Hot module replacement
 
@@ -762,18 +787,18 @@ ecstatic's declaration functions are idempotent: calling `component()`, `compone
 registration. A live world's storage stays valid because archetypes resolve to the same descriptors
 they used on first registration.
 
-**Systems swap freely.** Systems are plain functions — replace the function reference at module
+**Systems swap freely.** Systems are plain functions: replace the function reference at module
 re-evaluation and the next frame runs the new code. No registration step is involved.
 
-**Schema modules survive re-evaluation when the shape is unchanged.** When Vite (or another
-HMR-capable bundler) re-evaluates a module that declares components and resources, each declaration
-returns the original descriptor or ID. The world, its archetypes, and all entity data are
-unaffected.
+**Schema modules survive re-evaluation when the shape is unchanged.** When Vite (or another bundler
+with hot module replacement, HMR) re-evaluates a module that declares components and resources, each
+declaration returns the original descriptor or ID. The world, its archetypes, and all entity data
+are unaffected.
 
 **Changing a field's shape throws on re-evaluation.** Adding, removing, or renaming a field, or
 changing a default value, width marker, or ref-ness, produces a shape conflict error. The bundler
-falls back to a full page reload because existing SoA storage cannot be reinterpreted under the new
-layout. The original registrations remain intact after the throw.
+falls back to a full page reload because existing Structure-of-Arrays (SoA) storage cannot be
+reinterpreted under the new layout. The original registrations remain intact after the throw.
 
 **Resource defaults that hold functions or class instances compare by identity.** A re-evaluated
 module mints new closures and instances, so the identity check fails and the bundler falls back to a
@@ -801,7 +826,7 @@ if (import.meta.hot) {
 }
 ```
 
-**Surviving a shape change** — keeping the live world across a field rename or a new column —
-requires snapshotting the world state before the swap and restoring it by name with defaults filled
-in for new fields. This is the snapshot-first serialization module described in the
+**Surviving a shape change**, keeping the live world across a field rename or a new column, requires
+snapshotting the world state before the swap and restoring it by name with defaults filled in for
+new fields. This is the snapshot-first serialization module described in the
 [design pillars](pillars.md) (see "Consequence for serialization"), not yet implemented.

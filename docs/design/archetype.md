@@ -1,9 +1,36 @@
-# Archetype ECS — Internal Architecture Reference
+# Archetype ECS: internal architecture reference
+
+## Contents
+
+- [Overview](#overview)
+- [Data structures](#data-structures)
+  - [Storage](#storage)
+  - [SoA columns](#soa-columns)
+  - [Optional component bitmask](#optional-component-bitmask)
+  - [Matchers](#matchers)
+  - [Generational entity IDs](#generational-entity-ids)
+  - [Component descriptors](#component-descriptors)
+  - [World state](#world-state)
+- [Operations](#operations)
+  - [spawn](#spawn)
+  - [despawn](#despawn)
+  - [enable / disable](#enable--disable)
+  - [despawnMany](#despawnmany)
+  - [each](#each)
+  - [query](#query)
+- [Key design decisions](#key-design-decisions)
+  - [Dense SoA layout](#dense-soa-layout)
+  - [Reverse iteration](#reverse-iteration)
+  - [Bitmask for optionals](#bitmask-for-optionals)
+  - [Incremental matched-flag maintenance](#incremental-matched-flag-maintenance)
+  - [Generational IDs](#generational-ids)
+  - [LIFO freelist](#lifo-freelist)
+  - [Query cache](#query-cache)
 
 ## Overview
 
-ecstatic is an archetype-based Entity Component System with Structure-of-Arrays (SoA) layout. Each
-archetype defines a fixed set of **required components** (always present) and **optional
+ecstatic is an archetype-based Entity Component System (ECS) with Structure-of-Arrays (SoA) layout.
+Each archetype defines a fixed set of **required components** (always present) and **optional
 components** (toggled at runtime via bitmask). Component data is stored in parallel columns — one
 per field — rather than per-entity, enabling cache-friendly iteration and zero per-entity allocation
 overhead.
@@ -16,27 +43,35 @@ Key concepts:
 - 32-bit bitmask for optional component presence
 - Per-row matched flags to avoid mask checks during hot iteration
 
-## Data Structures
+## Data structures
 
-### Archetype
+### Storage
 
-An archetype is both a type definition and a sparse set. It stores entities, their component data,
-and query state.
+An archetype is a type definition. Registering it in a world creates its `Storage`: the sparse set
+that holds the archetype's entities, their component data, and matcher state.
 
 ```text
-Archetype
-├── sparse: number[]                    // sparse index → dense index
-├── entities: Float64Array              // dense index → entity ID (30-bit packed integer)
-├── n: number                           // current entity count
-├── mask: Uint32Array                   // dense index → optional component bitmask
-├── columns: Map<Descriptor, Column>    // descriptor → SoA column
-├── requiredColumns: Column[]           // required component SoA (hot path)
-├── components: Descriptor[]            // required component descriptors
-├── queries: QueryState[]               // registered query states
-└── meta: ArchMeta                      // cold metadata lookup
-    ├── optionals: Descriptor[]         // optional component descriptors
-    ├── descriptorByName: Map<string, Descriptor>
-    └── bitByDescriptor: Map<Descriptor, number> // descriptor → bit (0..31)
+Storage
+├── id: number                            // same as the archetype's id
+├── world: WorldState                     // owning world
+├── archetype: ArchetypeDescriptor        // registered archetype (components, optionals)
+├── entities: Float64Array                // dense index → entity ID (30-bit packed integer)
+├── n: number                             // current entity count
+├── mask: Uint32Array                     // dense index → optional component bitmask
+├── matchers: Matcher[]                   // registered matchers, deduped by (all, any, none)
+├── matcherMatched: Uint8Array[]          // matcherMatched[i] is matchers[i].matched
+├── columns: Map<Descriptor, SoAColumns>  // descriptor → SoA column record
+├── flatColumns: Column[]                 // every column, flat (swap-and-pop loops)
+├── fieldColumns: Map<Descriptor, FieldColumn[]> // per-field handles that views read
+├── generation, sparse                    // aliases of the world's arrays
+├── despawnClear, hasDespawnClear         // ref columns cleared on despawn (GC release)
+├── hasOptionalData: boolean              // some optional carries data fields
+├── relationTargetColumns, relationDescriptors, relationOptionalBits, relationN
+├── hasRelations: boolean                 // archetype carries any relation
+├── componentByName: Map<string, Descriptor>
+├── componentLookup: Set<Descriptor>
+├── optionalBitLookup: Map<Descriptor, number>    // optional descriptor → bit (0..31)
+└── optionalNotBitLookup: Map<Descriptor, number> // optional descriptor → inverted bit
 ```
 
 **Parallel arrays**: `entities`, `mask`, and every column are indexed in parallel. Index `i` refers
@@ -54,7 +89,7 @@ is recovered arithmetically as `entities[i] % 2^20`.
 The sparse map `sparse[3] = 0`, `sparse[0] = 1`, `sparse[7] = 2` translates entity sparse indices to
 dense row positions.
 
-### SoA Columns
+### SoA columns
 
 Each component defines one column record with one array per field:
 
@@ -72,10 +107,10 @@ layout and predictable allocation.
 **Ref fields** and **strings** store in plain JS arrays (`unknown[]`). They are wrapped in the type
 system: a `ref<T>()` field unwraps to `T | undefined`.
 
-Columns are indexed through the archetype's canonical `columns` map and aliased directly on the
-archetype for ergonomic access (e.g., `arch.Position` points to `columns.get(Position)`).
+Columns are indexed through the storage's canonical `columns` map and aliased directly on the
+storage for ergonomic access (e.g., `storage.Position` points to `columns.get(Position)`).
 
-### Optional Component Bitmask
+### Optional component bitmask
 
 Each optional component is assigned a bit position (0–31) at archetype creation:
 
@@ -91,16 +126,17 @@ Stunned and Shielded are enabled; OnFire is disabled.
 Since JavaScript supports native 32-bit bitwise operations, up to 32 optional components per
 archetype are supported without lookup tables.
 
-### Query State
+### Matchers
 
-Each unique `(allMask, anyMask, noneMask)` triple creates a `QueryState`:
+Each unique `(allMask, anyMask, noneMask)` triple registers one `Matcher` on the storage:
 
 ```typescript
-interface QueryState {
+interface Matcher {
   allMask: number; // bits that MUST ALL be set
   anyMask: number; // bits where AT LEAST ONE must be set
   noneMask: number; // bits that must NOT be set
-  matched: boolean[]; // parallel to the dense rows: true if row matches
+  filterMask: number; // union of the three: refreshes skip matchers the changed bits miss
+  matched: Uint8Array; // parallel to the dense rows: 1 if the row matches
 }
 ```
 
@@ -110,10 +146,10 @@ interface QueryState {
 - `anyMask === 0 || (mask[i] & anyMask) !== 0` (at least one optional bit set, or no constraint)
 - `(mask[i] & noneMask) === 0` (no forbidden bits set)
 
-The `matched[i]` boolean is maintained incrementally on spawn, enable, and disable, so iteration
-never recomputes masks — it only reads the precomputed boolean.
+The `matched[i]` flag (`Uint8Array`) is maintained incrementally on spawn, enable, and disable, so
+iteration never recomputes masks — it only reads the precomputed flag.
 
-### Generational Entity IDs
+### Generational entity IDs
 
 Entity IDs pack a **20-bit sparse index** and a **10-bit generation** into a single 30-bit integer,
 which stays inside the small-integer range that JavaScript engines store without allocating:
@@ -156,7 +192,8 @@ repeat. The exposed case is an ID held unchecked for longer than that: a delayed
 file, a late network message.
 
 Every public entity operation validates that the entity ID's generation matches the current
-generation at that index. These checks compile out under a build-time `NDEBUG` define.
+generation at that index. These checks compile out when a bundler defines `NDEBUG`, or switch off
+when `globalThis.NDEBUG` is set before ecstatic is first imported.
 
 **Exception**: `despawn` of a stale ID is a defined no-op, always. This pattern is common in
 deferred cleanup and multi-system teardown where IDs may outlive their entities.
@@ -193,33 +230,42 @@ generations run out, would lengthen the distance before an ID repeats, each at a
 despawn. Last-freed-first reuse is also the order the determinism pillar specifies
 ([pillars.md](../pillars.md), pillar 12).
 
-### Component Descriptors
+### Component descriptors
 
 ```typescript
 interface ComponentDescriptor {
-  name: string; // e.g., "Position"
-  fields: string[]; // sorted field names: ["x", "y"]
-  defaults: Record<string, unknown>; // { x: 0, y: 0 }
+  __ecstatic_name: string; // e.g., "Position"
+  __ecstatic_fields: string[]; // sorted field names: ["x", "y"]
+  __ecstatic_defaults: Record<string, unknown>; // { x: 0, y: 0 }
+  __ecstatic_default_values: unknown[]; // defaults in field order
+  __ecstatic_is_reference: (boolean | undefined)[]; // per field: plain-array ref column
+  __ecstatic_component_key: string; // "<length>:<name>"
+  __ecstatic_column_ctor?: (NumericColumnCtor | undefined)[]; // per field: TypedArray constructor
 }
 ```
 
 Components are declared via `component(name, fields?)` or grouped via
 `components({ Name: defaults })`. Zero-field components (boolean flags) use the same descriptor
-structure with `fields: []` and `defaults: {}`, but do not allocate SoA columns unless used as
-data-carrying optionals.
+structure with `__ecstatic_fields: []` and `__ecstatic_defaults: {}`, but do not allocate SoA
+columns unless used as data-carrying optionals.
 
-### World State
+### World state
 
 ```typescript
 interface WorldState {
-  archetypes: Archetype[]; // all registered archetypes
-  entityArch: (Archetype | undefined)[]; // sparse entity index → archetype
+  storages: Map<number, Storage>; // archetype id → storage
+  entityArch: (Storage | undefined)[]; // sparse entity index → storage
   generation: Float64Array; // occupant's full packed ID per index; next ID while free
   sparse: Int32Array; // index → dense row; dead slots hold the freelist next pointer
   freeHead: number; // LIFO freelist head (−1 = empty)
   nextIndex: number; // next fresh sparse index
-  queryCache: Map<string, Archetype[]>; // component-set key → cached archetypes
-  resources: Map<number, object>; // resource ID → data
+  resources: Map<number, Record<string, unknown>>; // resource ID → data record
+  relations: RelationDescriptor[]; // relations registered in this world
+  hasAnyRelations: boolean; // true once any registered archetype carries a relation
+  reverseMap: Map<ComponentDescriptor, RelationReverseMap>; // relation → reverse index
+  maxTargetIndex: number; // highest target index with a reverse entry (−1 = none)
+  queryEpoch: number; // bumped by register/destroyWorld; validates cached query resolutions
+  destroyed?: true; // set by destroyWorld
 }
 ```
 
@@ -239,8 +285,8 @@ spawn(storage, overrides?)
   3. Append dense row
   4. Write entity ID and initialize all columns from defaults or overrides
   5. Initialize mask from overrides (optionals may be enabled at spawn; otherwise 0)
-  6. Compute matched flags for the initial mask in all query states
-  7. Record arch in entityArch[index]
+  6. Compute matched flags for the initial mask in all matchers
+  7. Record the storage in entityArch[index]
   8. Return id
 ```
 
@@ -256,7 +302,7 @@ despawn(world, id)
   4. If not the last row, swap-and-pop:
      - Copy last row into the hole (entities, all columns, mask, matched)
      - Update sparse mapping for the swapped entity (its sparse index = entities[hole] % 2^20)
-  5. Decrement archetype.n
+  5. Decrement storage.n
   6. Free the sparse index:
      - generation[index] += 2^20 (when the generation would reach 2^10: wrap to generation 1,
        stored negated so the ID issued before does not match the free slot)
@@ -290,8 +336,8 @@ disable(storage, id, component)
 ```
 
 `enable` and `disable` are pure bit flips at the mask level. SoA fields are not zeroed; disabling
-hides them (filtered out by `matched[]`). Re-enabling resumes the prior data, enabling resume
-semantics without deallocating.
+hides them (filtered out by the `matched` flags). Re-enabling resumes the prior data, enabling
+resume semantics without deallocating.
 
 ### despawnMany
 
@@ -303,7 +349,7 @@ despawnMany(storage)
      - Advance generation[index], as in despawn
      - Push index onto freelist
      - Clear entityArch[index]
-  2. Set archetype.n = 0
+  2. Set storage.n = 0
   3. Do NOT zero SoA columns (stale data is inaccessible)
 ```
 
@@ -317,7 +363,7 @@ Iterates entities in one or more archetypes, optionally filtered.
 ```text
 each(storage, [filter], fn) or each([storages], [filter], fn)
   1. For each archetype in the list:
-     2. If filter provided, register or resolve query state
+     2. If filter provided, register or resolve its matcher
      3. Iterate from n−1 down to 0:
         - If filter: skip row unless matched[i] is true
         - Rebind the reused per-archetype view to row i
@@ -327,7 +373,7 @@ each(storage, [filter], fn) or each([storages], [filter], fn)
 The view is a reused object per archetype with generated accessors over the columns — no per-entity
 allocation, and property access stays monomorphic. Each archetype keeps one view per nesting depth,
 so nested `each` over the same archetype rebinds distinct views (a pairwise pass reads two different
-rows through two views). The build-time transform may replace an `each` call with a fused
+rows through two views). A future build-time transform could replace an `each` call with an inlined
 direct-column loop, but the design never depends on it: the untransformed path is fully correct and
 is the performance floor.
 
@@ -346,13 +392,12 @@ Iterates entities across multiple archetypes matching a filter.
 
 ```text
 query(world, compsOrFilter, fn)
-  1. Resolve filter to component bit masks or descriptor list
-  2. Check world-level query cache:
-     - If hit: use cached archetype list
-     - If miss: scan all archetypes, build and cache the list
-  3. For each matching archetype:
-     4. Register or resolve query state
-     5. Iterate via each(archetype, queryState, fn)
+  1. Normalize the filter into all/any/none component lists
+  2. Check the query cache for this filter object and world:
+     - If hit (epoch unchanged): use the cached storages and matchers
+     - If miss: scan all storages, register a matcher on each match, cache the result
+  3. For each matching storage:
+     4. Iterate its rows with its matcher, as each does
 ```
 
 **Filter resolution**:
@@ -363,21 +408,21 @@ query(world, compsOrFilter, fn)
   impossible.
 - For each none component: OR its bit into `noneMask`.
 
-The world-level query cache stores the list of matching archetypes by a canonical component set key,
-so repeated calls with the same filter reuse the precomputed list.
+The query cache stores the matching storages per filter object (see [Query cache](#query-cache)), so
+repeated calls with the same filter object reuse the resolution.
 
-## Key Design Decisions
+## Key design decisions
 
-### Dense SoA Layout
+### Dense SoA layout
 
 Component data is stored in parallel columns (one per field), not per-entity. Iterating
-`Position.x[0..n]` scans contiguous memory — cache-friendly compared to AoS, where x, y, and z
-values are interleaved.
+`Position.x[0..n]` scans contiguous memory — cache-friendly compared to Array-of-Structures (AoS),
+where x, y, and z values are interleaved.
 
-Named aliases like `arch.Position` provide ergonomic typed access (`arch.Position.x[i]`) without map
-lookup on every access.
+Named aliases like `storage.Position` provide ergonomic typed access (`storage.Position.x[i]`)
+without map lookup on every access.
 
-### Reverse Iteration
+### Reverse iteration
 
 `each` iterates from `n−1` down to 0. Combined with swap-and-pop deletion, this makes despawning the
 current entity during iteration safe by construction: the swapped-in row fills the hole behind the
@@ -386,7 +431,7 @@ current iteration point, which has already been visited.
 Similarly, spawning during a reverse pass appends new entities at the end, which the pass has
 already passed, so new entities are deterministically skipped.
 
-### Bitmask for Optionals
+### Bitmask for optionals
 
 Optional components (adjectives, toggles) are tracked via a per-row 32-bit bitmask. Each optional is
 assigned one bit; enabling and disabling are O(1) bit flips. This avoids structural changes (moving
@@ -395,16 +440,16 @@ entities between archetypes) and keeps the archetype static.
 Native 32-bit bitwise operations support up to 32 optionals per archetype without lookup tables or
 interpretation overhead.
 
-### Incremental matched[] Maintenance
+### Incremental matched-flag maintenance
 
-Rather than scanning all entities' masks on every query, the `matched[]` boolean array is kept
-up-to-date incrementally:
+Rather than scanning all entities' masks on every query, each matcher's `matched` flags
+(`Uint8Array`) are kept up-to-date incrementally:
 
-- **spawn**: `matched[i]` is set based on the initial mask (0)
+- **spawn**: `matched[i]` is set from the initial mask (0 unless spawn overrides enable optionals)
 - **enable/disable**: `matched[i]` is recalculated for the new mask
 - **despawn**: `matched[i]` is swapped from the last row
 
-This means `each` reads one boolean per row — no mask computation in the hot loop.
+This means `each` reads one flag per row — no mask computation in the hot loop.
 
 ### Generational IDs
 
@@ -412,25 +457,25 @@ Static archetypes with dense sparse sets allow immediate, safe entity removal. G
 IDs provide temporal safety by comparing generations: a stale ID (old generation) fails the check
 after its sparse index has been recycled, up to the bound in [pillars.md](../pillars.md), pillar 5.
 
-Checks are gated by an `NDEBUG` build flag. When enabled (default), every public entity operation
-validates the generation. When disabled (production), checks compile out.
+By default `NDEBUG` is undefined and every public entity operation validates the generation.
+Defining `NDEBUG` (production) compiles the checks out.
 
 `despawn` of a stale ID is always a no-op, not gated — deferred cleanup patterns depend on this.
 
-### LIFO Freelist
+### LIFO freelist
 
-Freed sparse indices are pushed onto a stack (freelist). Fresh allocations pop from the head. LIFO
-reuse means recently freed indices (still warm in cache) are recycled first, improving memory
-locality.
+Despawn pushes freed sparse indices onto a last-in, first-out (LIFO) stack, the freelist. Fresh
+allocations pop from the head. LIFO reuse means recently freed indices (still warm in cache) are
+recycled first, improving memory locality.
 
-### World-Level Query Cache
+### Query cache
 
 `query(world, [Comp1, Comp2], fn)` must discover which registered archetypes contain all requested
-components. Without caching, this requires scanning all archetypes on every call.
+components. Without caching, this requires scanning all storages on every call.
 
-The world maintains a `queryCache: Map<string, Archetype[]>` mapping a canonical component-set key
-to the list of matching archetypes. On first call, the cache is populated by scanning; subsequent
-calls reuse the precomputed list.
+A module-level `WeakMap` keyed by the filter object's identity holds one resolution per world: the
+matching storages and the matcher registered on each. An entry stays valid while `world.queryEpoch`
+is unchanged; `register` and `destroyWorld` bump the epoch, and the next call re-resolves.
 
-Keys are built from sorted component names, so the same set always produces the same key regardless
-of query order.
+The key is the object, not its contents. Two equal but distinct literals miss the cache, so a filter
+written inline re-resolves on every call; hoist it to a constant to reuse the resolution.
