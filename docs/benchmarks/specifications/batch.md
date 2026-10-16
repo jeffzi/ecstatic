@@ -15,6 +15,14 @@ Every body here changes the population, so the suite's `manualBench` shim rebuil
 each iteration and destroys it after, both outside the clock. Every benchmark ends with
 `destroyWorld()`.
 
+- [spawn_empty](#spawn_empty)
+- [spawn_with_data](#spawn_with_data)
+- [spawn_out_reuse](#spawn_out_reuse)
+- [despawn](#despawn)
+- [despawn_half](#despawn_half)
+- [despawn_all](#despawn_all)
+- [despawn_world](#despawn_world)
+
 ## spawn_empty
 
 **Purpose:** Measure batch entity allocation via `spawnMany`, without components.
@@ -53,8 +61,9 @@ sink += spawnMany(storage, N, { Position: { x: 0, y: 0 } }).length
 ```
 
 **Rationale:** Batch counterpart to [`entity/spawn_with_data`](entity.md#spawn_with_data). Resolves
-the override shape once before the allocation loop rather than per entity. The delta from
-[`many/spawn_empty`](#spawn_empty) is the per-component column write cost.
+each component's override once for the whole batch and fills each column in one run, rather than
+writing per entity. The delta from [`many/spawn_empty`](#spawn_empty) is the per-component column
+write cost.
 
 ---
 
@@ -75,10 +84,10 @@ spawnMany(storage, N, { Position: { x: 0, y: 0 } }, out)
 ```
 
 **Rationale:** The out overload leaves the spawned IDs in an array the caller owns and can reuse
-across calls — the shape bullet pools and wave spawners want, where the result of one call is
-consumed and the buffer lives on. The setup runs one full spawn-and-despawn cycle first so the
-buffer is already grown to N and the timed call measures reuse rather than the growth it would
-otherwise pay for once.
+across calls. Bullet pools and wave spawners want this shape: they consume each call's result, and
+the buffer lives on. The setup runs one full spawn-and-despawn cycle first, so the buffer is already
+grown to N. The timed call then measures reuse rather than the growth it would otherwise pay for
+once.
 
 `spawnMany` writes entity IDs straight into `out`, so the saving this form promises is real: no
 result array is allocated and no copy runs. That makes this benchmark the guard on the property.
@@ -87,8 +96,9 @@ N-element copy would show up here as a slowdown against its own history.
 
 One comparison to avoid: the raw delta from [`many/spawn_with_data`](#spawn_with_data) is not an
 allocation measurement. The warmup cycle leaves this benchmark's freelist full, so its spawns take
-the recycling path while [`many/spawn_with_data`](#spawn_with_data)'s take the growth path, and that
-difference dominates.
+the recycling path. With [`BENCH_GENERATION`](parameters.md#world-population) unset,
+[`many/spawn_with_data`](#spawn_with_data)'s spawns take the growth path, and that difference
+dominates.
 
 ---
 
@@ -108,9 +118,9 @@ despawnMany(storage, tracked)
 ```
 
 **Rationale:** Batch counterpart to [`entity/despawn`](entity.md#despawn), which loops `despawn` N
-times. Marks all IDs in one pass, back-fills freed slots from surviving tail entities where any
-remain, then bumps generations and pushes the freelist in a final pass — leaving the 4N background
-entities. Order is shuffled to defeat sequential access. The delta from
+times. Marks all IDs in one pass and back-fills freed slots from surviving tail entities where any
+remain. A final pass bumps generations and pushes the freelist, leaving the 4N background entities.
+The world builder shuffles the ID order to defeat sequential access. The delta from
 [`entity/despawn`](entity.md#despawn) is the per-call overhead the batch phases amortize.
 
 ---
@@ -179,10 +189,9 @@ everything.
 despawnMany(world, mixed)   // N IDs interleaved across both archetypes
 ```
 
-**Rationale:** The storage form knows every ID belongs to one storage and can validate, mark, and
-back-fill in one batch pass. The world form cannot: each ID needs its generation checked and its
-owning storage resolved before the swap-and-pop, with no cross-ID batching. It is the form for
-cleanup queues holding untyped IDs from mixed archetypes, such as level unload and deferred kill
-lists. The delta from [`many/despawn`](#despawn) prices that per-ID dispatch plus the per-ID swaps
-the full drain skips entirely; expect per-operation cost near [`entity/despawn`](entity.md#despawn),
-since it is the same per-ID work behind one call.
+**Rationale:** The storage form trusts that every ID belongs to one storage. The world form first
+makes one partition pass: it checks each ID's generation and groups the ID under its owning storage.
+Then it runs the same batch compaction once per storage. It is the form for cleanup queues that hold
+untyped IDs from mixed archetypes, such as level unload and deferred kill lists. The delta from
+[`many/despawn`](#despawn) prices that partition pass plus the fill swaps in the half-drained
+tracked storage, which the full drain skips.

@@ -1,24 +1,44 @@
 # Iteration benchmarks
 
-Source: [`benchmarks/iteration-bench.ts`](../../../benchmarks/iteration-bench.ts)
+Source: [`benchmarks/iteration-bench.ts`](../../../benchmarks/iteration-bench.ts), with the
+`throughput` and `frame` bodies in [`benchmarks/systems.ts`](../../../benchmarks/systems.ts)
 
 Shared constants (`N`, the 5x world, `DT`) are defined in [parameters](parameters.md); the `sink`
 accumulator is explained in [rationale](../rationale.md#conventions).
 
-Every iteration benchmark runs against a bare world — no background entities — so the numbers
-reflect per-entity throughput rather than world size. `each_with_despawn` and `deferred_despawn`
-consume the population they run against, so the suite's `manualBench` shim rebuilds their world
-before each iteration and destroys it after, both outside the clock. The rest are net-neutral and
-reuse one world. Every benchmark here ends with `destroyWorld()`.
+`throughput` and `frame` each have an inlined twin in the [reference group](reference.md): a
+hand-written column loop that does the same work without calling `each()`.
+
+Every iteration benchmark runs against a bare world, so the numbers reflect per-entity throughput
+rather than world size. A bare world has no idle background population: every entity belongs to a
+storage the benchmark iterates. [`frame`](#frame) iterates nine storages, one of them the background
+storage.
+
+`each_with_despawn` and `deferred_despawn` consume the population they run against, so the suite's
+`manualBench` shim rebuilds their world before each iteration and destroys it after, both outside
+the clock. The rest are [net-neutral](../rationale.md#conventions) and reuse one world. Every
+benchmark here ends with `destroyWorld()`. The tracked archetype also declares the optional Alive
+tag, but no benchmark here enables it.
+
+- [throughput](#throughput)
+- [post_churn_throughput](#post_churn_throughput)
+- [frame](#frame)
+- [each_chained](#each_chained)
+- [each_with_despawn](#each_with_despawn)
+- [deferred_despawn](#deferred_despawn)
+- [soa_1field](#soa_1field)
+- [soa_2field](#soa_2field)
+- [soa_5field](#soa_5field)
+- [soa_10field](#soa_10field)
 
 ## throughput
 
 **Purpose:** Measure raw per-entity `each()` throughput with a minimal workload.
 
-| Property | Value                                                  |
-| -------- | ------------------------------------------------------ |
-| Setup    | Bare world with N entities (Position, Velocity, Alive) |
-| Warmup   | One `each()` pass                                      |
+| Property | Value                                           |
+| -------- | ----------------------------------------------- |
+| Setup    | Bare world with N entities (Position, Velocity) |
+| Warmup   | One `each()` pass                               |
 
 **Operation:**
 
@@ -31,7 +51,7 @@ each(storage, (e) => {
 
 **Rationale:** Establishes the iteration baseline. One archetype, every entity visited, two field
 reads and two writes per entity. Overhead beyond the arithmetic is `each()` dispatch and view
-rebinding.
+rebinding. The inlined twin is [`inlined_throughput`](reference.md#inlined_throughput).
 
 ---
 
@@ -39,10 +59,10 @@ rebinding.
 
 **Purpose:** Measure `each()` iteration throughput on a world fragmented by sustained entity churn.
 
-| Property | Value                                                  |
-| -------- | ------------------------------------------------------ |
-| Setup    | Bare world with N entities (Position, Velocity, Alive) |
-| Warmup   | One `each()` pass, after the churn                     |
+| Property | Value                                           |
+| -------- | ----------------------------------------------- |
+| Setup    | Bare world with N entities (Position, Velocity) |
+| Warmup   | One `each()` pass, after the churn              |
 
 **Setup detail:** After the initial spawn, runs 5 churn rounds. Each round collects every 3rd entity
 via `each()`, despawns them, then respawns the same count. This scrambles dense array ordering via
@@ -64,6 +84,48 @@ churn. Inspired by the `IteratePathological` benchmark in EnTT, a C++ ECS librar
 
 ---
 
+## frame
+
+**Purpose:** Measure a frame of nine `each()` systems, one per archetype, run back to back.
+
+| Property | Value                                                                    |
+| -------- | ------------------------------------------------------------------------ |
+| Setup    | Bare world, N default-valued entities in each of the nine storages below |
+| Warmup   | One frame                                                                |
+
+**Setup detail:** The nine archetypes and the system run over each, in frame order:
+
+| Archetype     | Components                                    | System                                                     |
+| ------------- | --------------------------------------------- | ---------------------------------------------------------- |
+| `trackedArch` | Position, Velocity, Alive (optional)          | the `throughput` body                                      |
+| `bgArch`      | Health, Armor, Aggro (optional)               | `heal`: `hp += def * DT`                                   |
+| `spawnArch`   | Position, Alive (optional)                    | `drift`: `x += DT`                                         |
+| `tagArch`     | Position, Alive (optional), Shield (optional) | `climb`: `y += x * DT`                                     |
+| `chainArch`   | A, B, C, D, E                                 | `relay`: `B.v += A.v * DT`, `D.v += C.v * DT`, `E.v += DT` |
+| `soa1Arch`    | F1                                            | `tick`: `a += DT`                                          |
+| `soa2Arch`    | F2                                            | `accrue`: `a += b * DT`                                    |
+| `soa5Arch`    | F5                                            | `pulse`: `a += b * DT`, `c += d * DT`, `e += DT`           |
+| `soa10Arch`   | F10                                           | `sweep`: `a += b * DT`, `c += d * DT`, ..., `i += j * DT`  |
+
+Every update adds `DT`, or a field the system never writes times `DT`, so no value shrinks toward
+the subnormal range, however many times mitata replays the frame.
+
+**Operation:**
+
+```text
+throughput(tracked); heal(bg); drift(spawn); climb(tag); relay(chain)
+tick(soa1); accrue(soa2); pulse(soa5); sweep(soa10)
+# each system is one each(storage, (e) => ...) call with the update above
+```
+
+**Rationale:** The other iteration benchmarks time one or a few callbacks over one archetype. The
+callback call site inside `each()` sees at most a handful of callbacks and a single view shape. A
+real frame runs many systems through that same call site. Here it sees nine callbacks and nine view
+shapes, so a regression in how `each()` handles many callbacks at one call site shows up here first.
+The inlined twin is [`inlined_frame`](reference.md#inlined_frame).
+
+---
+
 ## each_chained
 
 **Purpose:** Measure per-pass overhead when 4 sequential `each()` calls propagate values A → B → C →
@@ -72,7 +134,7 @@ D → E.
 | Property | Value                                      |
 | -------- | ------------------------------------------ |
 | Setup    | Bare world, N entities with components A-E |
-| Warmup   | One `each()` pass (A → B)                  |
+| Warmup   | One full chain (A → B → C → D → E)         |
 
 **Operation:**
 
@@ -83,10 +145,10 @@ each(storage, (e) => e.D.v = e.C.v)
 each(storage, (e) => e.E.v = e.D.v)
 ```
 
-**Rationale:** Four `each()` passes over the same archetype measure per-call dispatch overhead and
-whether writes from one pass are visible to the next within the same frame. Because the archetype
-carries five components, the bound view is wider than `throughput`'s — the pair brackets how view
-width affects per-entity cost.
+**Rationale:** Four `each()` passes over the same archetype measure per-call dispatch overhead. Each
+pass reads the column the previous pass wrote, which is the dependent-pass shape of a real system
+chain. Because the archetype carries five components, the bound view is wider than `throughput`'s —
+the pair brackets how view width affects per-entity cost.
 
 ---
 
@@ -94,10 +156,10 @@ width affects per-entity cost.
 
 **Purpose:** Measure `each()` iteration cost when every other entity is despawned mid-iteration.
 
-| Property | Value                                                  |
-| -------- | ------------------------------------------------------ |
-| Setup    | Bare world with N entities (Position, Velocity, Alive) |
-| Warmup   | One read-only `each()` pass                            |
+| Property | Value                                           |
+| -------- | ----------------------------------------------- |
+| Setup    | Bare world with N entities (Position, Velocity) |
+| Warmup   | One read-only `each()` pass                     |
 
 **Operation:**
 
@@ -124,10 +186,10 @@ change. It measures only cost; the unit tests own the correctness of the travers
 **Purpose:** Measure the deferred-cleanup idiom — collect dead entities during `each()`, then flush
 them with one batch `despawnMany()` after the loop.
 
-| Property | Value                                                  |
-| -------- | ------------------------------------------------------ |
-| Setup    | Bare world with N entities (Position, Velocity, Alive) |
-| Warmup   | One collect + flush cycle, then a respawn back to N    |
+| Property | Value                                               |
+| -------- | --------------------------------------------------- |
+| Setup    | Bare world with N entities (Position, Velocity)     |
+| Warmup   | One collect + flush cycle, then a respawn back to N |
 
 **Operation:**
 
@@ -147,13 +209,13 @@ dead.length = 0
 
 **Rationale:** `each_with_despawn` pins inline despawn during iteration; this benchmark pins the
 collect-then-flush alternative, where systems mark the dead into a reused buffer and a cleanup pass
-flushes them after the loop. The buffer is emptied after each flush rather than replaced, which is
-required for correctness: IDs left behind would be handed to the next iteration's `despawnMany` as
-already-dead entities. The flush input is also what distinguishes this from
+flushes them after the loop. The body empties the buffer after each flush instead of replacing it,
+which is required for correctness: IDs left behind would be handed to the next iteration's
+`despawnMany` as already-dead entities. The flush input is also what distinguishes this from
 [`many/despawn_half`](batch.md#despawn_half). That benchmark shuffles its ID list to defeat
-sequential access, while IDs collected during `each()` arrive in descending dense order, so the
-flush's generation checks and freelist pushes walk the entity arrays sequentially — the input shape
-this idiom actually produces in a frame.
+sequential access. IDs collected during `each()` arrive in descending dense order instead, so the
+flush's generation checks and freelist pushes walk the entity arrays sequentially. That is the input
+shape this idiom actually produces in a frame.
 
 ---
 
@@ -172,8 +234,11 @@ this idiom actually produces in a frame.
 each(storage, (e) => sink += e.F1.a)
 ```
 
-**Rationale:** Baseline for field-access scaling. One array read per entity establishes the minimum
-per-field cost.
+**Rationale:** One array read per entity, the smallest field count in the family.
+
+The `soa_*` family varies only how many fields of one component the pass reads: 1, 2, 5, then 10.
+The spread is not monotonic in field count, so track each benchmark against its own history rather
+than reading the gap between neighbors as a per-field price.
 
 ---
 
@@ -192,8 +257,7 @@ per-field cost.
 each(storage, (e) => sink += e.F2.a + e.F2.b)
 ```
 
-**Rationale:** Two array reads per entity. The delta from `soa_1field` isolates per-field overhead
-from per-entity overhead.
+**Rationale:** Two array reads per entity.
 
 ---
 
@@ -212,8 +276,7 @@ from per-entity overhead.
 each(storage, (e) => sink += e.F5.a + e.F5.b + e.F5.c + e.F5.d + e.F5.e)
 ```
 
-**Rationale:** Five array reads per entity. Tests whether per-field cost stays constant or shows
-cache-line effects as field count grows.
+**Rationale:** Five array reads per entity.
 
 ---
 
@@ -232,5 +295,4 @@ cache-line effects as field count grows.
 each(storage, (e) => sink += e.F10.a + e.F10.b + ... + e.F10.j)
 ```
 
-**Rationale:** Ten array reads per entity, one from each of ten separate column arrays. Completes
-the field-count scaling curve from 1 to 10.
+**Rationale:** Ten array reads per entity, one from each of ten separate column arrays.

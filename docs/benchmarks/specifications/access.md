@@ -6,18 +6,25 @@ Shared constants (`N`, the 5x world, `DT`) are defined in [parameters](parameter
 accumulator is explained in [rationale](../rationale.md#conventions).
 
 Entity-by-id field access via `get()` and `set()`. Unlike the view-bound field access inside
-`each()` callbacks, these functions resolve an entity ID to its dense index, resolve the component
-column, and perform error checks on every call — a real framework code path. Every benchmark here
-uses a pre-populated world (5x) with tracked entities carrying Position (`{x, y}`), Velocity
-(`{dx, dy}`), and Alive.
+`each()` callbacks, these functions resolve an entity ID to its dense index and resolve the
+component column on every call. They also run their error checks every time, which makes this a real
+framework code path. Every benchmark here uses a pre-populated world (5x) with tracked entities
+carrying Position (`{x, y}`) and Velocity (`{dx, dy}`); the archetype declares the optional Alive
+tag, but it is not enabled.
 
-The world is built once per benchmark and reused across samples, because these bodies read and
-overwrite fields without changing the population. No benchmark here uses a warmup pass, and each
-ends with `destroyWorld()` — so every one has the same setup, and only the operation below differs.
+Each benchmark builds its world once and reuses it across samples, because these bodies read and
+overwrite fields without changing the population. Every benchmark ends with `destroyWorld()`.
 
 ## get_1field
 
-**Purpose:** Measure single-field read cost via `get(storage, id, field)`. **Operation:**
+**Purpose:** Measure single-field read cost via `get(storage, id, field)`.
+
+| Property | Value                    |
+| -------- | ------------------------ |
+| Setup    | Pre-populated world (5x) |
+| Warmup   | One untimed pass         |
+
+**Operation:**
 
 ```text
 for (let i = 0; i < N; i++) {
@@ -26,15 +33,21 @@ for (let i = 0; i < N; i++) {
 ```
 
 **Rationale:** Baseline for per-entity field access outside iteration. Exercises the full resolve
-chain: unpack the entity index from the ID, resolve the owning storage, read the dense index from
-the sparse map, then resolve the component's column and index it. Regressions in entity resolution
-or column resolution show up here.
+chain: unpack the entity index from the ID, resolve the owning storage, and read the dense index
+from the sparse map. Then it resolves the component's column and indexes it. Regressions in entity
+resolution or column resolution show up here.
 
 ---
 
 ## get_2field
 
 **Purpose:** Measure the cost of reading two fields of one component from the same entity.
+
+| Property | Value                    |
+| -------- | ------------------------ |
+| Setup    | Pre-populated world (5x) |
+| Warmup   | One untimed pass         |
+
 **Operation:**
 
 ```text
@@ -56,6 +69,12 @@ the same component (Position), so the two calls resolve the same column map entr
 ## get_4field
 
 **Purpose:** Measure the cost of reading four fields spanning two components from the same entity.
+
+| Property | Value                    |
+| -------- | ------------------------ |
+| Setup    | Pre-populated world (5x) |
+| Warmup   | One untimed pass         |
+
 **Operation:**
 
 ```text
@@ -78,7 +97,14 @@ per-call baseline — separate entries in the storage's column map, separate bac
 
 ## set_1field
 
-**Purpose:** Measure single-field write cost via `set(storage, id, field, value)`. **Operation:**
+**Purpose:** Measure single-field write cost via `set(storage, id, field, value)`.
+
+| Property | Value                    |
+| -------- | ------------------------ |
+| Setup    | Pre-populated world (5x) |
+| Warmup   | One untimed pass         |
+
+**Operation:**
 
 ```text
 for (let i = 0; i < N; i++) {
@@ -88,14 +114,20 @@ for (let i = 0; i < N; i++) {
 
 **Rationale:** Write counterpart to `get_1field`. Exercises the same resolve chain plus the column
 write, including the per-write check of whether the field's declared default is a boolean (booleans
-are stored as 0/1). The delta from `get_1field` isolates the write-side cost. Values are stored by
-reference — no cloning on this or any component write path.
+are stored as 0/1). The delta from `get_1field` isolates the write-side cost. `set` stores values by
+reference: no component write path clones them.
 
 ---
 
 ## set_record
 
 **Purpose:** Measure component-record write cost via `set(storage, id, Component, { fields })`.
+
+| Property | Value                    |
+| -------- | ------------------------ |
+| Setup    | Pre-populated world (5x) |
+| Warmup   | One untimed pass         |
+
 **Operation:**
 
 ```text
@@ -109,5 +141,5 @@ for (let i = 0; i < N; i++) {
 record. It resolves the entity once, then walks the record's own entries and writes each named
 field, resolving the column per field. This is the general multi-field `set` path: one entity
 resolve, one object walk, and a per-field column resolve. The delta from `set_1field` prices the
-record walk and the second field write against a single direct field write; the delta from
+record walk and the second field write against a single direct field write. The delta from
 `get_2field` contrasts one entity resolve with two.

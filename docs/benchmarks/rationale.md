@@ -8,13 +8,13 @@ states its teardown once in its intro.
 
 ## Overview
 
-This is a **regression-detection benchmark suite** for ecstatic, an entity component system (ECS),
-running on Node (V8) via [mitata](https://github.com/evanwashere/mitata). The goal is catching
-performance regressions between ecstatic releases, not comparing ecstatic against other ECS
-frameworks.
+This is a **regression-detection benchmark suite** for ecstatic, an entity component system (ECS).
+It runs on Node (V8) by default, and optionally under Bun (JavaScriptCore) via `--engine`, timed
+with [mitata](https://github.com/evanwashere/mitata). The goal is catching performance regressions
+between ecstatic releases, not comparing ecstatic against other ECS frameworks.
 
-Each benchmark targets a specific ecstatic code path. A regression rarely moves a single number — a
-slowdown in `each()` moves all nine iteration benchmarks — but the set that moves narrows where it
+Each benchmark targets a specific ecstatic code path. A regression rarely moves a single number (a
+slowdown in `each()` moves all ten iteration benchmarks), but the set that moves narrows where it
 lives. A change confined to `deferred_despawn` and `many/despawn_half` points at the batch despawn
 path; one that moves every `soa_*` benchmark points at the iteration view.
 
@@ -41,7 +41,9 @@ multiplier: 4N background entities plus N tracked entities. The motivations:
 
 **Iteration benchmarks use bare worlds.** Entity and batch benchmarks need the populated world
 because structural operations behave differently under memory pressure. Iteration benchmarks strip
-out background entities to isolate per-entity throughput from world-size effects.
+out the idle background population to isolate per-entity throughput from world-size effects. Every
+entity in an iteration world belongs to a storage its benchmark iterates. The frame benchmark
+iterates the background storage as one of its nine storages.
 
 **Warmup.** Priming passes run during setup and are not timed, so the measured body reflects V8's
 steady state rather than one-time optimization and inline-cache warmup costs. mitata additionally
@@ -113,6 +115,16 @@ iterating callback; [`deferred_despawn`](specifications/iteration.md#deferred_de
 doomed IDs and flushes them afterwards. Real cleanup systems are written both ways and the two costs
 diverge, so measuring only one would leave a regression in the other invisible. Each section covers
 what its form pays for.
+
+**The reference group is a ceiling, not a regression target.** Every other benchmark targets an
+ecstatic code path; the timed bodies of the [reference benchmarks](specifications/reference.md) call
+none. Each is a hand-inlined column loop, the shape a compile-time transform would emit for one
+`each()` call. It pairs with the iteration benchmark it mirrors and shares that benchmark's world
+builder, warmup, and timing. The gap within a pair is what such a transform would buy for that call
+site, measured on the same engine in the same suite run. A reference number says little about
+ecstatic by itself: read each one against its iteration twin. The
+[allocation gate](../../benchmarks/README.md#allocation-gate) measures ecstatic operations such as
+`each()`, and a reference body calls none, so the gate has nothing to check there.
 
 ---
 

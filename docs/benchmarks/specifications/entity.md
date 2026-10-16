@@ -5,10 +5,18 @@ Source: [`benchmarks/entity-bench.ts`](../../../benchmarks/entity-bench.ts)
 Shared constants (`N`, the 5x world, `DT`) are defined in [parameters](parameters.md); the `sink`
 accumulator is explained in [rationale](../rationale.md#conventions).
 
-Single-entity lifecycle calls, one at a time. No benchmark here uses a warmup pass. `spawn_recycle`
-and `alive_check` leave the population as they found it and reuse one world across samples. The rest
-change it, so the suite's `manualBench` shim rebuilds their world before each iteration and destroys
-it after, both outside the clock. Every benchmark here ends with `destroyWorld()`.
+Single-entity lifecycle calls, one at a time. `spawn_recycle` and `alive_check` leave the population
+as they found it, so they reuse one world across samples and run their operation once untimed as a
+warmup. The rest change it, so the suite's `manualBench` shim rebuilds their world before each
+iteration and destroys it after, both outside the clock, with no warmup pass. Every benchmark here
+ends with `destroyWorld()`.
+
+- [spawn_empty](#spawn_empty)
+- [spawn_with_data](#spawn_with_data)
+- [spawn_indirect](#spawn_indirect)
+- [despawn](#despawn)
+- [spawn_recycle](#spawn_recycle)
+- [alive_check](#alive_check)
 
 ## spawn_empty
 
@@ -17,6 +25,7 @@ it after, both outside the clock. Every benchmark here ends with `destroyWorld()
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register empty archetype |
+| Warmup   | None                                               |
 
 **Operation:**
 
@@ -38,6 +47,7 @@ cost. Regressions here indicate overhead in the sparse set or freelist path.
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register spawn archetype |
+| Warmup   | None                                               |
 
 **Operation:**
 
@@ -60,6 +70,7 @@ rather than rebuilt per call.
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register spawn archetype |
+| Warmup   | None                                               |
 
 **Operation:**
 
@@ -73,8 +84,8 @@ for (let i = 0; i < N; i++) {
 **Rationale:** Identical workload to `spawn_with_data` except for where the overrides object comes
 from. `spawn_with_data` builds a fresh nested literal on every call; this benchmark hoists it out of
 the loop. The delta is what constructing those objects costs — two allocations per spawn that the
-caller can avoid entirely. The hoist stays inside the timed body, so the one allocation it does make
-is still counted.
+caller can avoid entirely. The hoist stays inside the timed body, so its two allocations, made once
+per sample, are still counted.
 
 ---
 
@@ -85,6 +96,7 @@ is still counted.
 | Property | Value                    |
 | -------- | ------------------------ |
 | Setup    | Pre-populated world (5x) |
+| Warmup   | None                     |
 
 **Operation:**
 
@@ -95,7 +107,8 @@ for (let i = 0; i < N; i++) {
 ```
 
 **Rationale:** Entities leave a world that remains populated. Exercises sparse set swap-and-pop,
-generation increment, and freelist push. Order is shuffled to defeat sequential access patterns.
+generation increment, and freelist push. The world builder shuffles the ID order to defeat
+sequential access patterns.
 
 ---
 
@@ -103,9 +116,10 @@ generation increment, and freelist push. Order is shuffled to defeat sequential 
 
 **Purpose:** Measure entity ID recycling through despawn-then-respawn.
 
-| Property | Value                    |
-| -------- | ------------------------ |
-| Setup    | Pre-populated world (5x) |
+| Property | Value                         |
+| -------- | ----------------------------- |
+| Setup    | Pre-populated world (5x)      |
+| Warmup   | One despawn and respawn cycle |
 
 **Operation:**
 
@@ -121,8 +135,8 @@ sink += tracked[N - 1]
 
 **Rationale:** Forces the freelist to fill and drain in sequence. The respawn phase reuses freed
 slots with incremented generations, exercising the last-in-first-out freelist pop path under
-pressure. The pair is net-neutral — the population it ends with is the population it started with —
-so the tracked array is rewritten in place and the next sample runs against the recycled IDs.
+pressure. The pair is net-neutral: it ends with the population it started with. So the tracked array
+is rewritten in place, and the next sample runs against the recycled IDs.
 
 ---
 
@@ -133,6 +147,7 @@ so the tracked array is rewritten in place and the next sample runs against the 
 | Property | Value                                                          |
 | -------- | -------------------------------------------------------------- |
 | Setup    | Pre-populated world (5x), create N extra entities then despawn |
+| Warmup   | One pass over the mixed IDs                                    |
 
 **Operation:**
 
@@ -147,6 +162,6 @@ for (let i = 0; i < 2 * N; i++) {
 
 **Rationale:** Half the IDs are stale (generation mismatch). Tests the generational ID check path
 with unpredictable branch patterns, preventing branch prediction from hiding lookup cost. The
-world-scoped `alive(world, id)` overload needs no separate benchmark: both forms share one
-implementation — a single generation-array compare keyed by the unpacked entity index — so this
+world-scoped `alive(world, id)` overload needs no separate benchmark. Both forms share one
+implementation, a single generation-array compare keyed by the unpacked entity index, so this
 benchmark pins that path for both.
