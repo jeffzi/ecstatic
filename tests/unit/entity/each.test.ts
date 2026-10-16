@@ -6,11 +6,14 @@ import {
   createWorld,
   despawn,
   each,
+  f32,
   get,
+  i16,
   register,
   set,
   spawn,
   spawnMany,
+  u8,
 } from "../../../src/index.js";
 
 const { EachTestPosition: Position } = components({
@@ -131,6 +134,40 @@ describe("each — edge cases", () => {
     }
     // Spawned-mid-pass entities should not have been visited/incremented
     expect(storage.n).toBe(18); // 8 original + 10 spawned
+  });
+
+  it("reads and writes every field kind through the view after mid-pass growth", () => {
+    const { EachTestMixed: Mixed } = components({
+      EachTestMixed: { on: false, w: u8(3), s: i16(-2), f: f32(1.5), label: "n" },
+    });
+    const storage = register(createWorld(), archetype([Mixed]));
+    const ids = spawnMany(storage, 8);
+
+    let grown = false;
+    const readBack: unknown[][] = [];
+    each(storage, (e) => {
+      if (!grown) {
+        grown = true;
+        spawnMany(storage, 10);
+      }
+      e.EachTestMixed.on = !e.EachTestMixed.on;
+      e.EachTestMixed.w += 1;
+      e.EachTestMixed.s -= 1;
+      e.EachTestMixed.f *= 2;
+      e.EachTestMixed.label += "!";
+      readBack.push([
+        e.EachTestMixed.on,
+        e.EachTestMixed.w,
+        e.EachTestMixed.s,
+        e.EachTestMixed.f,
+        e.EachTestMixed.label,
+      ]);
+    });
+
+    expect(readBack).toStrictEqual(Array.from({ length: 8 }, () => [true, 4, -3, 3, "n!"]));
+    expect(
+      ids.map((id) => [get(storage, id, Mixed.w), get(storage, id, Mixed.label)]),
+    ).toStrictEqual(Array.from({ length: 8 }, () => [4, "n!"]));
   });
 
   it("spawned entities mid-pass are not visited in current pass", () => {

@@ -94,6 +94,25 @@ export type TypedArray =
   | Uint8Array;
 
 /**
+ * One field's column: the field name and the array currently storing it.
+ * Growth swaps the new array into the same object, so accessors that captured
+ * it keep reading the current column. View accessors read `column.array` — a
+ * named load on a map shared by every field column — instead of keying into
+ * the column record by field name, which would make the lookup megamorphic and
+ * tie its speed to unrelated objects whose keys overlap the field names.
+ */
+export class FieldColumn {
+  readonly field: string;
+  array: TypedArray | Array<unknown>;
+
+  /** Creates the column for field `field`, backed by `array`. */
+  constructor(field: string, array: TypedArray | Array<unknown>) {
+    this.field = field;
+    this.array = array;
+  }
+}
+
+/**
  * Internal storage state for a single archetype in a single world.
  * The A parameter threads the registered archetype's component tuple
  * to spawn overrides, get/set, and each views.
@@ -132,6 +151,13 @@ export interface Storage<A extends ArchetypeDescriptor = ArchetypeDescriptor> {
 
   /** Flat list of all columns (for swap-and-pop despawn loops) */
   flatColumns: (TypedArray | Array<unknown>)[];
+
+  /**
+   * Component → one field column per declared field, in `__ecstatic_fields`
+   * order. Refreshed on growth alongside `flatColumns`, so view accessors that
+   * captured a field column read the new arrays.
+   */
+  readonly fieldColumns: Map<ComponentDescriptor, FieldColumn[]>;
 
   /** World arrays cached (aliases for generation and sparse) */
   generation: Float64Array;
@@ -293,7 +319,7 @@ export function getStorage(world: World, arch: ArchetypeRef): Storage {
  * @returns A fresh array of every column across all components, in map then field order; the
  *   column arrays themselves are shared with `columns`, not copied.
  */
-export function collectFlatColumns(
+function collectFlatColumns(
   columns: Map<ComponentDescriptor, SoAColumns>,
 ): (TypedArray | Array<unknown>)[] {
   const flatColumns: (TypedArray | Array<unknown>)[] = [];
@@ -303,6 +329,67 @@ export function collectFlatColumns(
     }
   }
   return flatColumns;
+}
+
+/**
+ * Look up a declared field's column in a component's column record.
+ *
+ * @param soa - The component's column record.
+ * @param fieldName - A declared field of the component.
+ * @returns The field's current column array.
+ * @throws If the field has no column (invariant guard, unreachable)
+ */
+function requireColumn(soa: SoAColumns, fieldName: string): TypedArray | Array<unknown> {
+  const col = soa[fieldName];
+  /* istanbul ignore next */
+  if (col === undefined) throw new Error("invariant: declared field has no column");
+  return col;
+}
+
+/**
+ * Build one field column per declared field of every column-carrying component.
+ *
+ * @param columns - One storage's component → SoA column-record map.
+ * @returns A fresh component → field-columns map, each list in the component's
+ *   `__ecstatic_fields` order and backed by the arrays currently in `columns`.
+ * @throws If a declared field has no column (invariant guard, unreachable)
+ */
+function collectFieldColumns(
+  columns: Map<ComponentDescriptor, SoAColumns>,
+): Map<ComponentDescriptor, FieldColumn[]> {
+  const fieldColumns = new Map<ComponentDescriptor, FieldColumn[]>();
+  for (const [comp, soa] of columns) {
+    fieldColumns.set(
+      comp,
+      comp.__ecstatic_fields.map(
+        (fieldName) => new FieldColumn(fieldName, requireColumn(soa, fieldName)),
+      ),
+    );
+  }
+  return fieldColumns;
+}
+
+/**
+ * Bring a storage's column caches back in line with its column records after growth replaced
+ * column arrays: `flatColumns` is rebuilt and every field column is pointed at its field's new
+ * array.
+ *
+ * @param storage - Storage whose `flatColumns` is replaced and whose `fieldColumns` are updated
+ *   in place from `columns`; the field column objects themselves are kept, so accessors holding
+ *   them read the new arrays.
+ * @throws If a field column's component or field has no column array (invariant guard,
+ *   unreachable)
+ */
+export function syncColumnCaches(storage: Storage): void {
+  storage.flatColumns = collectFlatColumns(storage.columns);
+  for (const [comp, fieldColumns] of storage.fieldColumns) {
+    const soa = storage.columns.get(comp);
+    /* istanbul ignore next */
+    if (soa === undefined) throw new Error("invariant: field columns without a column record");
+    for (const column of fieldColumns) {
+      column.array = requireColumn(soa, column.field);
+    }
+  }
 }
 
 /**
@@ -446,6 +533,7 @@ function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
     matcherMatched: [],
     columns,
     flatColumns,
+    fieldColumns: collectFieldColumns(columns),
     generation: state.generation,
     sparse: state.sparse,
     despawnClear,

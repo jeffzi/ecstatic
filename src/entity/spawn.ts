@@ -16,7 +16,7 @@ import {
 import { growMatcherArrays, maskSatisfies, refreshMatchersMask } from "../matcher.js";
 import type { RelationFields } from "../relation.js";
 import { getRelationMeta } from "../relation.js";
-import { collectFlatColumns } from "../world.js";
+import { syncColumnCaches } from "../world.js";
 import type { SoAColumns, Storage, TypedArray, WorldState } from "../world.js";
 import {
   assertRelationTargets,
@@ -294,12 +294,13 @@ function growWorldArrays(state: WorldState): void {
 /**
  * Grow every parallel array of a storage together (entities, mask, all TypedArray columns) to
  * double capacity. Plain-Array columns (ref/string) auto-extend on indexed assignment and are
- * never replaced, so despawnClear references stay valid. flatColumns is rebuilt from the updated
- * columns.
+ * never replaced, so despawnClear references stay valid. flatColumns is rebuilt and the field
+ * columns are pointed at the new arrays.
  *
  * @param storage - Storage whose capacity doubles: `entities`, `mask`, every typed column,
  *   `flatColumns`, `relationTargetColumns`, and each matcher's `matched` array are replaced
- *   together, so any of them cached across the call is stale.
+ *   together, so any of them cached across the call is stale; `fieldColumns` update in place.
+ * @throws If a field column has no matching column array (invariant guard, unreachable)
  */
 function growStorageArrays(storage: Storage): void {
   const capacity = storage.entities.length * 2;
@@ -314,7 +315,7 @@ function growStorageArrays(storage: Storage): void {
     }
   }
 
-  storage.flatColumns = collectFlatColumns(storage.columns);
+  syncColumnCaches(storage);
 
   // Growth replaced the TypedArray target columns: refresh the cached
   // references (parallel to the flatColumns rebuild).
