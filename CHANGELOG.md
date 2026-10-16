@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-16
+
 ### Added
 
 - Export `DEBUG` so application code can branch on whether debug checks are active
@@ -15,20 +17,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Return the existing registration from `component()`, `components()`, `relation()`, and
   `resource()` when re-declared with an equal shape instead of throwing
-- **Breaking:** Read the debug opt-out from a bare `NDEBUG` global define
-  (`define: { NDEBUG: "true" }` in esbuild/Vite, or `globalThis.NDEBUG = true` without a bundler)
-  instead of `process.env.NDEBUG`
+- **Breaking:** Read the debug opt-out from a bare `NDEBUG` global define instead of
+  `process.env.NDEBUG`. Set `define: { NDEBUG: "true" }` in esbuild/Vite, or, without a bundler, set
+  `globalThis.NDEBUG = true` before the package is first imported
 - **Breaking:** Lower the entity ceiling to 1,048,576 entities per world (was 16,777,216) and the
   generations per slot to 1,023 (was 536,870,911), so a dead ID matches a live entity again once its
   slot has been recycled 1,023 times
 - Speed up `get`, `despawn`, and `alive` on recycled slots
+- Speed up view field access in `each` and `query` when components share field names
 
 ### Fixed
 
 - Stop package imports from failing at load time in browsers and bundlers
 - Stop `spawn` and `despawn` from allocating on V8 after a slot has been recycled many times
-- Stop a dead ID from passing as alive, and `despawn` of it from throwing, removing another entity,
-  or handing its slot out twice, while the slot is free after its generation wraps
+- Stop a dead ID from passing as alive, and `despawn` from accepting it, while its slot sits empty
+  after a generation wrap
 
 ## [0.4.0] - 2026-08-10
 
@@ -62,12 +65,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Add optional components: declare components as optional in an archetype and toggle them with
-  `enable`/`disable` and `enableMany`/`disableMany`
-- Add optional-component checks: `has` and `hasAny` test which optional components are enabled
-- Add iteration filters: `each` accepts an `{all, any, none}` filter
-- Add multi-storage iteration: `each` accepts an array of storages to iterate across archetypes in
-  one pass
+- Add optional components: declare them in an archetype, toggle them with `enable`/`disable` and
+  `enableMany`/`disableMany`, and test them with `has` and `hasAny`
+- Add `each` filters and multi-storage iteration: `each` accepts an `{all, any, none}` filter and an
+  array of storages to iterate across archetypes in one pass
 - Add cross-archetype iteration: `query()` iterates entities across every archetype matching a
   filter
 
@@ -82,7 +83,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add generational entity IDs that detect stale references to despawned entities
 - Add world lifecycle management: creation, archetype registration, and destruction
 
-[Unreleased]: https://github.com/jeffzi/ecstatic/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/jeffzi/ecstatic/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jeffzi/ecstatic/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jeffzi/ecstatic/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jeffzi/ecstatic/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jeffzi/ecstatic/releases/tag/v0.2.0
