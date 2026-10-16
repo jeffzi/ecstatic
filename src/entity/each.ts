@@ -19,7 +19,7 @@ import type { EntityId } from "../entity-id.js";
 import type { EachFilter } from "../filter.js";
 import { resolveFilter } from "../filter.js";
 import type { Matcher } from "../matcher.js";
-import type { SoAColumns, Storage } from "../world.js";
+import type { FieldColumn, Storage } from "../world.js";
 import type { IsTagFields } from "./spawn.js";
 
 /**
@@ -159,23 +159,48 @@ export interface BoundView {
 }
 
 /**
+ * Create an empty plain object on a hidden-class root no other object shares.
+ *
+ * The view and its field records each carry accessors with their own
+ * getter/setter closures. Objects grown from `{}` share one transition tree,
+ * where a key can map to only one accessor pair — so the second object to
+ * define an already-used key with different closures (every view's `id`,
+ * every component with a field named like another's) would drop to dictionary
+ * mode. Rooting each object at its own class keeps all of them in fast mode;
+ * resetting the prototype keeps them indistinguishable from `{}` literals.
+ *
+ * @returns A fresh, empty object whose prototype is `Object.prototype`.
+ */
+function newAccessorHost(): Record<string, unknown> {
+  // Declared per call on purpose: every class gets its own root hidden class.
+  class AccessorHost {
+    [key: string]: unknown;
+  }
+  const host = new AccessorHost();
+  Object.setPrototypeOf(host, Object.prototype);
+  return host;
+}
+
+/**
  * Generate a view for a storage: an `id` accessor plus one slot per
  * component — a getter/setter sub-object per data component, literal `true`
  * for required tags, and mask-tested accessors for optionals. Accessors read
- * through the SoA record (not captured column references) so they survive
- * column growth — growth replaces the arrays inside the record.
+ * through the storage's field columns (not captured arrays) so they survive
+ * column growth — growth points the same field columns at the new arrays.
  *
  * All accessor objects are built eagerly here; the per-row bind swaps only
  * the closed-over row index, so binding allocates nothing.
  *
- * @param storage - Storage whose archetype and SoA record the accessors close
+ * @param storage - Storage whose archetype and field columns the accessors close
  *   over; the view is tied to this one storage for its whole lifetime.
  * @returns A newly allocated view and its rebinder, owned by the per-storage
  *   pool; the view reads an arbitrary row until `bind` has been called.
+ * @throws If a data component has no field columns or an optional has no
+ *   presence bit (invariant guards, unreachable)
  */
 function buildView(storage: Storage): BoundView {
   let row = 0;
-  const view: Record<string, unknown> = {};
+  const view = newAccessorHost();
 
   Object.defineProperty(view, "id", {
     get() {
@@ -188,31 +213,30 @@ function buildView(storage: Storage): BoundView {
    *
    * @param comp - Data component whose declared fields become accessors;
    *   boolean fields are decoded from their 0/1 Uint8Array encoding.
-   * @param soa - The storage's column record for `comp`, read through on every
-   *   access rather than captured, so the accessors survive column growth.
+   * @param columns - The storage's field columns for `comp`, read through on
+   *   every access rather than capturing the arrays, so the accessors survive
+   *   column growth.
    * @returns One accessor per field, reading and writing whichever row the
    *   enclosing view is currently bound to.
    */
   const fieldAccessorsFor = (
     comp: ComponentDescriptor,
-    soa: SoAColumns,
+    columns: readonly FieldColumn[],
   ): Record<string, unknown> => {
-    const fieldAccessors: Record<string, unknown> = {};
-    for (const fieldName of comp.__ecstatic_fields) {
+    const fieldAccessors = newAccessorHost();
+    for (const column of columns) {
       // Boolean fields live in Uint8Array columns: encode 1/0, decode !== 0
-      const isBoolean = typeof comp.__ecstatic_defaults[fieldName] === "boolean";
-      /* oxlint-disable typescript/no-non-null-assertion -- soa[fieldName] is guaranteed present: the loop iterates comp.__ecstatic_fields, and createStorage builds a column for each. Reads through soa (not a captured ref) so accessors survive column growth. */
-      Object.defineProperty(fieldAccessors, fieldName, {
-        get: isBoolean ? () => soa[fieldName]![row] !== 0 : () => soa[fieldName]![row],
+      const isBoolean = typeof comp.__ecstatic_defaults[column.field] === "boolean";
+      Object.defineProperty(fieldAccessors, column.field, {
+        get: isBoolean ? () => column.array[row] !== 0 : () => column.array[row],
         set: isBoolean
           ? (value: unknown) => {
-              soa[fieldName]![row] = value === true ? 1 : 0;
+              column.array[row] = value === true ? 1 : 0;
             }
           : (value: unknown) => {
-              soa[fieldName]![row] = value;
+              column.array[row] = value;
             },
       });
-      /* oxlint-enable typescript/no-non-null-assertion */
     }
     return fieldAccessors;
   };
@@ -223,11 +247,11 @@ function buildView(storage: Storage): BoundView {
       view[comp.__ecstatic_name] = true;
       continue;
     }
-    // Every required data component has a columns entry (createStorage invariant)
-    const soa = storage.columns.get(comp);
+    // Every required data component has field columns (createStorage invariant)
+    const columns = storage.fieldColumns.get(comp);
     /* istanbul ignore next */
-    if (soa === undefined) throw new Error("invariant: missing columns for required component");
-    view[comp.__ecstatic_name] = fieldAccessorsFor(comp, soa);
+    if (columns === undefined) throw new Error("invariant: missing columns for required component");
+    view[comp.__ecstatic_name] = fieldAccessorsFor(comp, columns);
   }
 
   // Optional slots test the row's mask bit on every read, so enable/disable
@@ -236,13 +260,11 @@ function buildView(storage: Storage): BoundView {
     const bit = storage.optionalBitLookup.get(comp);
     /* istanbul ignore next */
     if (bit === undefined) throw new Error("invariant: optional missing from bitLookup");
-    const optSoa = storage.columns.get(comp);
-    let enabledValue: Record<string, unknown> | true;
-    if (comp.__ecstatic_fields.length === 0 || optSoa === undefined) {
-      enabledValue = true;
-    } else {
-      enabledValue = fieldAccessorsFor(comp, optSoa);
-    }
+    const optColumns = storage.fieldColumns.get(comp);
+    const enabledValue =
+      comp.__ecstatic_fields.length === 0 || optColumns === undefined
+        ? true
+        : fieldAccessorsFor(comp, optColumns);
     Object.defineProperty(view, comp.__ecstatic_name, {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- mask[row] is guaranteed present: row is always a valid dense index maintained by acquireView/bind
       get: () => ((storage.mask[row]! & bit) !== 0 ? enabledValue : undefined),

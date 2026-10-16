@@ -76,6 +76,7 @@ const RESERVED_NAMES = new Set<string>([
   "mask",
   "columns",
   "flatColumns",
+  "fieldColumns",
   "world",
   // Archetype descriptor fields
   "id",
