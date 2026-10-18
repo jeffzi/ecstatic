@@ -232,7 +232,7 @@ describe("despawn world overload", () => {
 });
 
 describe("despawn safety checks", () => {
-  it("errors under DEBUG when a live ID is despawned through the wrong storage", () => {
+  it("errors under DEBUG when a live ID is despawned through the wrong storage #checked", () => {
     const world = createWorld();
     const storage1 = register(world, archetype([Position]));
     const storage2 = register(world, archetype([Velocity]));
@@ -434,7 +434,7 @@ describe("an id whose slot is free after the generation wraps", () => {
         get(world, held, Position.x);
       },
     },
-  ])("is stale to get through the $label", ({ run }) => {
+  ])("is stale to get through the $label #checked", ({ run }) => {
     const fixture = createWrappedFreeSlot();
 
     expect(() => {

@@ -178,3 +178,10 @@ benchmarks/tmp/
 # Agents
 .mcp.json
 AGENTS.local.md
+
+# ttsc's Vite adapter (@ttsc/unplugin) keeps its project records in `.ttsc/` below the directory
+# the build runs in; the location is not configurable
+/.ttsc/
+
+# Optimized benchmark build (npx tsx benchmarks/main.ts --optimized)
+/.bench-optimized/

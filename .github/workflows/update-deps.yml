@@ -1,4 +1,4 @@
-name: Update tools
+name: Update dependencies
 
 on:
   schedule:
@@ -12,8 +12,8 @@ concurrency:
 permissions: {}
 
 jobs:
-  autoupdate:
-    name: Update dependencies
+  update:
+    name: npm update
     permissions:
       contents: write # push the autoupdate branch
       pull-requests: write # open the update pull request

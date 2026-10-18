@@ -1,0 +1,28 @@
+go 1.26.0
+
+use (
+	.
+	../node_modules/ttsc
+	../node_modules/ttsc/shim/ast
+	../node_modules/ttsc/shim/astnav
+	../node_modules/ttsc/shim/bundled
+	../node_modules/ttsc/shim/checker
+	../node_modules/ttsc/shim/compiler
+	../node_modules/ttsc/shim/core
+	../node_modules/ttsc/shim/diagnosticwriter
+	../node_modules/ttsc/shim/lsp
+	../node_modules/ttsc/shim/parser
+	../node_modules/ttsc/shim/printer
+	../node_modules/ttsc/shim/scanner
+	../node_modules/ttsc/shim/stringutil
+	../node_modules/ttsc/shim/tsoptions
+	../node_modules/ttsc/shim/tspath
+	../node_modules/ttsc/shim/vfs
+	../node_modules/ttsc/shim/vfs/cachedvfs
+	../node_modules/ttsc/shim/vfs/osvfs
+	./tools
+)
+
+// A workspace module required at a version still has its go.mod read at
+// that version; v0.0.0 is never published, so point it at the local copy.
+replace github.com/samchon/ttsc/packages/ttsc v0.0.0 => ../node_modules/ttsc

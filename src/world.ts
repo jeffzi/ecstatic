@@ -471,6 +471,10 @@ function collectRelationColumns(
  * Build the SoA columns for every column-carrying component of an archetype,
  * collecting the reference columns despawn must clear.
  *
+ * Part of the runtime contract with the optimizer: a component's SoA record is
+ * created here, once per storage, and never replaced. Growth swaps the arrays inside it, so code
+ * that holds the record across a spawn still reads current columns.
+ *
  * @param arch - Archetype whose components get columns; tag-only optionals get none.
  * @returns `columns`: component → SoA map with every column sized to `INITIAL_ARCH_CAPACITY`;
  *   `despawnClear`: the plain-array columns of reference-marked fields, whose freed slots are
@@ -513,6 +517,25 @@ function buildColumns(arch: ArchetypeDescriptor): {
   return { columns, despawnClear };
 }
 
+/**
+ * Build the storage for an archetype in a world, with each column-carrying component's SoA
+ * record also aliased as `storage[name]`.
+ *
+ * Part of the runtime contract with the optimizer:
+ *
+ * - **The per-component alias.** `storage[name]` is the same object as
+ *   `storage.columns.get(component)` for every component that has a record. No runtime code
+ *   reads it; generated code does. `__proto__` is a reserved component name so this write
+ *   cannot replace the storage's prototype.
+ * - **Filter resolution inputs are fixed.** `componentByName`, `componentLookup`,
+ *   `optionalBitLookup`, and `optionalNotBitLookup` are set here and never change, so a filter
+ *   resolves the same way for the storage's whole life.
+ *
+ * @param state - World the storage belongs to; its relation registry is updated.
+ * @param arch - Archetype whose components get columns and aliases.
+ * @returns The new storage, empty and sized to `INITIAL_ARCH_CAPACITY`.
+ * @throws If a component's declared fields and columns disagree (invariant guard, unreachable)
+ */
 function createStorage(state: WorldState, arch: ArchetypeDescriptor): Storage {
   const { columns, despawnClear } = buildColumns(arch);
 

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "plugins": [{ "transform": "../src/plugin/optimizer.ts", "strict": false }]
+  }
+}

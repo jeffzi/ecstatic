@@ -161,8 +161,9 @@ function ageTrackedSlots(storage: Storage<typeof trackedArch>, generation: numbe
  * Build the world the throughput benchmarks run over: `benchCreateWorld` with no background
  * population.
  *
- * `iteration/throughput`, `iteration/post_churn_throughput` and their inlined twin all take their
- * world from here, so they cannot drift onto different worlds.
+ * `iteration/throughput`, `iteration/post_churn_throughput`, `iteration/helper_call` and the
+ * inlined twin of `iteration/throughput` all take their world from here, so they cannot drift
+ * onto different worlds.
  *
  * @returns The world, its tracked storage, the shuffled tracked ids, and `n` (always
  * `DEFAULT_N`); the caller owns the world and nothing here releases it.

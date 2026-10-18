@@ -67,8 +67,17 @@ const archetypeCache = new Map<string, ArchetypeDescriptor>();
 /** Maximum number of optional components per archetype (32-bit bitmask limit). */
 const MAX_OPTIONAL_COMPONENTS = 32;
 
-/** Field names and properties reserved by the archetype storage itself */
+/**
+ * Field names and properties reserved by the archetype storage itself.
+ *
+ * Part of the runtime contract with the optimizer: every storage writes each
+ * component's SoA record to `storage[name]`, and `each` writes required tags to `view[name]`.
+ * Reserving every storage field and `__proto__` keeps those writes from replacing a storage
+ * field or the storage's (or view's) prototype.
+ */
 const RESERVED_NAMES = new Set<string>([
+  // Assigning it replaces the object's prototype instead of adding a property
+  "__proto__",
   // Storage structure fields
   "entities",
   "sparse",

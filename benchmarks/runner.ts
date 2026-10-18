@@ -1,12 +1,18 @@
 /**
- * Pure logic of the benchmark runner: command-line parsing, the registry of
- * benchmark names, name-to-filter selection, and the shape of the child process
- * each engine is launched with.
+ * Logic of the benchmark runner: command-line parsing, the registry of
+ * benchmark names, name-to-filter selection, the shape of the child process
+ * each engine is launched with, and the optimized compile.
  *
- * Nothing here touches the process, the filesystem, or `node:child_process` —
+ * The optimized compile is the one piece here that spawns a process. Everything
+ * else touches neither the process, the filesystem, nor `node:child_process` —
  * that shell lives in `main.ts`. Keeping the decisions separate from the I/O is
  * what makes them testable.
  */
+
+import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 
 import { bench } from "mitata";
 
@@ -78,17 +84,18 @@ export function parseGeneration(raw: string | undefined): number {
  * Outcome of parsing the command line.
  *
  * Parent mode runs the suites matching `filter` (every suite when absent) by
- * spawning one child per benchmark; child mode runs the single named benchmark.
+ * spawning one child per benchmark, from the optimizer's compiled output when
+ * `optimized` is set; child mode runs the single named benchmark.
  */
 export type ParsedArgs =
-  | { mode: "parent"; filter?: string; engines: readonly Engine[] }
+  | { mode: "parent"; filter?: string; engines: readonly Engine[]; optimized: boolean }
   | { mode: "child"; benchName: string };
 
 /**
- * Parse `[<filter>] [--engine node,bun]`, or `--child <name>`.
+ * Parse `[<filter>] [--engine node,bun] [--optimized]`, or `--child <name>`.
  *
  * The positional argument is a regex matched against benchmark names and may
- * appear before or after `--engine`; `--child` takes an exact name and
+ * appear before, between, or after the flags; `--child` takes an exact name and
  * combines with nothing else.
  *
  * `--engine` accepts a comma-separated list of engines (e.g. `node,bun`). The
@@ -100,21 +107,22 @@ export type ParsedArgs =
  *
  * @param argv - Argument list after the executable and script, i.e. `process.argv.slice(2)`;
  * read only, never mutated.
- * @returns Parent mode carrying the filter (absent when no positional was given) and the engine
- * list (`["node"]` when `--engine` was absent), or child mode carrying the exact benchmark name.
+ * @returns Parent mode carrying the filter (absent when no positional was given), the engine
+ * list (`["node"]` when `--engine` was absent), and whether `--optimized` was given; or child
+ * mode carrying the exact benchmark name.
  * @throws UsageError when the arguments do not fit that grammar.
  */
 export function parseArgs(argv: readonly string[]): ParsedArgs {
-  const { filter, engines, benchName } = scanArgs(argv);
+  const { filter, engines, benchName, optimized = false } = scanArgs(argv);
 
   if (benchName !== undefined) {
-    return childOnly(benchName, filter, engines);
+    return childOnly(benchName, filter, engines, optimized);
   }
 
   const parentEngines = engines ?? DEFAULT_ENGINES;
   return filter === undefined
-    ? { mode: "parent", engines: parentEngines }
-    : { mode: "parent", filter, engines: parentEngines };
+    ? { mode: "parent", engines: parentEngines, optimized }
+    : { mode: "parent", filter, engines: parentEngines, optimized };
 }
 
 /** Raw command-line values before mode resolution; every field is absent until its flag or positional is seen. */
@@ -122,14 +130,17 @@ interface ScannedArgs {
   filter?: string;
   engines?: readonly Engine[];
   benchName?: string;
+  optimized?: true;
 }
 
 /**
  * Walk the argument list once, consuming each flag with its value.
  *
  * @param argv - Argument list after the executable and script; read only, never mutated.
- * @returns The filter, engine list, and child benchmark name that appeared, each absent when it did not.
- * @throws UsageError on an unknown flag, a repeated `--engine`, a flag without its value, or a second positional.
+ * @returns The filter, engine list, child benchmark name, and `--optimized` switch that appeared,
+ * each absent when it did not.
+ * @throws UsageError on an unknown flag, a repeated `--engine` or `--optimized`, a flag without
+ * its value, or a second positional.
  */
 function scanArgs(argv: readonly string[]): ScannedArgs {
   const scanned: ScannedArgs = {};
@@ -144,6 +155,11 @@ function scanArgs(argv: readonly string[]): ScannedArgs {
       }
       i += 1;
       scanned.engines = toEngines(flagValue(argv, i, "--engine", "a value: node or bun"));
+    } else if (arg === "--optimized") {
+      if (scanned.optimized !== undefined) {
+        throw new UsageError("--optimized may only appear once");
+      }
+      scanned.optimized = true;
     } else if (arg === "--child") {
       i += 1;
       scanned.benchName = flagValue(argv, i, "--child", "a benchmark name");
@@ -234,19 +250,24 @@ function engineList(): string {
  * @param benchName - Exact name given to `--child`; not checked against the registry here.
  * @param filter - Positional filter if one was parsed; must be `undefined`.
  * @param engines - Engine list if `--engine` was parsed; must be `undefined`.
+ * @param optimized - Whether `--optimized` was parsed; must be `false`.
  * @returns A child-mode result naming `benchName`.
- * @throws UsageError when `filter` or `engines` is present.
+ * @throws UsageError when `filter`, `engines`, or `optimized` is present.
  */
 function childOnly(
   benchName: string,
   filter: string | undefined,
   engines: readonly Engine[] | undefined,
+  optimized: boolean,
 ): ParsedArgs {
   if (filter !== undefined) {
     throw new UsageError("--child takes an exact benchmark name and accepts no filter");
   }
   if (engines !== undefined) {
     throw new UsageError("--child is set by the parent, which picks the engine itself");
+  }
+  if (optimized) {
+    throw new UsageError("--child is set by the parent, which picks the compiled entry itself");
   }
   return { mode: "child", benchName };
 }
@@ -281,24 +302,27 @@ export function describeAbnormalExit(code: number | null, signal: NodeJS.Signals
  * Both engines need `--expose-gc`, since the suite refuses to run without a
  * reachable collector. Node is invoked as the binary at `execPath` with
  * `--import tsx` rather than through the `tsx` wrapper, which would re-exec and
- * cost an extra process per benchmark.
+ * cost an extra process per benchmark. A compiled entry runs with no loader:
+ * tsx would transform the optimizer's output again before it ran.
  *
  * @param engine - Runtime to launch; `bun` is resolved from `PATH` as the bare command `bun`.
  * @param target - `execPath` is the Node binary to run (ignored for bun), `mainPath` the entry
- * script the child executes, `benchName` the exact name handed to `--child`.
+ * script the child executes, `benchName` the exact name handed to `--child`, and `compiled`
+ * whether `mainPath` is JavaScript the optimized compile wrote; absent means the TypeScript source.
  * @returns A fresh spec whose `args` always ends with `<mainPath> --child <benchName>`.
  */
 export function childSpawnSpec(
   engine: Engine,
-  target: { execPath: string; mainPath: string; benchName: string },
+  target: { execPath: string; mainPath: string; benchName: string; compiled?: boolean },
 ): ChildSpawnSpec {
   const childArgs = [target.mainPath, "--child", target.benchName];
+  const nodeLoader = target.compiled === true ? [] : ["--import", "tsx"];
   // Keyed by `Engine`, so adding a variant without a command here is a compile
   // error rather than a runtime hole.
   const byEngine: Record<Engine, ChildSpawnSpec> = {
     node: {
       command: target.execPath,
-      args: ["--expose-gc", "--import", "tsx", ...childArgs],
+      args: ["--expose-gc", ...nodeLoader, ...childArgs],
     },
     bun: { command: "bun", args: ["--expose-gc", ...childArgs] },
   };
@@ -554,21 +578,30 @@ export function parseChildReport(stdout: string): BenchReport {
 }
 
 /**
- * Prefix every benchmark alias with its engine.
+ * Prefix every benchmark alias with its engine, and mark an optimized run.
  *
  * The parent calls this after `parseChildReport` so that benchmarks from
- * different engines carry distinct aliases before `mergeReports`.
+ * different engines, and plain and optimized runs, carry distinct aliases
+ * before `mergeReports`.
  *
  * @param report - A child's parsed report; not mutated.
  * @param engine - Engine the child ran under; becomes the alias prefix, as in
  * `node/access/get_1field`.
+ * @param variant - `optimized` is whether the child ran the optimizer's compiled output; plain
+ * when omitted.
  * @returns A new report whose entries are shallow copies with `alias` rewritten to
- * `<engine>/<alias>`; `layout` and `context` are shared with the input, not copied.
+ * `<engine>/<alias>`, or `<engine>/optimized/<alias>` for an optimized run; `layout` and
+ * `context` are shared with the input, not copied.
  */
-export function namespaceReport(report: BenchReport, engine: Engine): BenchReport {
+export function namespaceReport(
+  report: BenchReport,
+  engine: Engine,
+  variant: { optimized: boolean } = { optimized: false },
+): BenchReport {
+  const prefix = variant.optimized ? `${engine}/optimized/` : `${engine}/`;
   const benchmarks = report.benchmarks.map((entry) => ({
     ...entry,
-    alias: `${engine}/${entry.alias}`,
+    alias: `${prefix}${entry.alias}`,
   }));
   return { layout: report.layout, benchmarks, context: report.context };
 }
@@ -606,4 +639,80 @@ export function mergeReports(reports: readonly BenchReport[]): BenchReport {
   }
 
   return { layout: first.layout, benchmarks, context: first.context };
+}
+
+// ---------------------------------------------------------------------------
+// Optimized compile
+// ---------------------------------------------------------------------------
+
+/** Thrown when the optimized compile fails; the message carries the compiler's diagnostics. */
+export class CompileError extends Error {}
+
+/**
+ * Locate the `ttsc` command-line entry through the package's own manifest.
+ *
+ * @returns Absolute path of the script `ttsc`'s `bin` field names.
+ * @throws Error when `ttsc` is not installed or its manifest names no `ttsc` binary.
+ */
+function ttscEntry(): string {
+  const manifestPath = createRequire(import.meta.url).resolve("ttsc/package.json");
+  const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const bin = isRecord(manifest) ? manifest["bin"] : undefined;
+  const entry = isRecord(bin) ? bin["ttsc"] : undefined;
+  if (typeof entry !== "string") {
+    throw new Error(`${manifestPath} names no ttsc binary`);
+  }
+  return join(dirname(manifestPath), entry);
+}
+
+/**
+ * Compile a project through `ttsc`, which runs the optimizer over it, and emit it to `outDir`.
+ *
+ * The compiler's output is captured, never inherited, so a failed compile writes nothing to the
+ * caller's stdout.
+ *
+ * @param options - `project` is the tsconfig to compile, whose plugin entry configures the
+ * optimizer; `outDir` the directory the JavaScript is written to.
+ * @returns Once the compile exits with status 0.
+ * @throws CompileError (as a rejection) when the compile exits with any other status or a signal —
+ * a TypeScript error, or a diagnostic the optimizer reports as an error in strict mode — carrying
+ * everything the compiler printed. A `ttsc` that cannot be located or spawned rejects with the
+ * underlying error.
+ */
+export async function compileOptimized(options: {
+  project: string;
+  outDir: string;
+}): Promise<void> {
+  // `--emit` because the project inherits `noEmit` from the root tsconfig, and ttsc only checks
+  // a `noEmit` project unless told to emit.
+  const args = [ttscEntry(), "-p", options.project, "--emit", "--outDir", options.outDir];
+  const child = spawn(process.execPath, args, {
+    cwd: dirname(options.project),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let output = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  const collect = (chunk: string): void => {
+    output += chunk;
+  };
+  child.stdout.on("data", collect);
+  child.stderr.on("data", collect);
+
+  await new Promise<void>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const cause = describeAbnormalExit(code, signal);
+      reject(
+        new CompileError(
+          `optimized compile of ${options.project} failed with ${cause}:\n${output}`,
+        ),
+      );
+    });
+  });
 }

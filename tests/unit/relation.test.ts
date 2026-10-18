@@ -277,7 +277,7 @@ describe("accessing relation targets", () => {
     expect(get(storage, entityId, Owner.target)).toBe(targetId);
   });
 
-  it("spawn errors when required relation lacks target", () => {
+  it("spawn errors when required relation lacks target #checked", () => {
     const Rel = relation("SpawnTargetGuard_Rel");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp, Rel]));
@@ -317,7 +317,7 @@ describe("accessing relation targets", () => {
     expect(sources).toContain(entityIndex(source2));
   });
 
-  it("spawn errors when required relation target is stale", () => {
+  it("spawn errors when required relation target is stale #checked", () => {
     const Link = relation("SpawnStaleTarget_Link");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp, Link]));
@@ -396,7 +396,7 @@ describe("optional relation birth-link at spawn", () => {
     expect(get(storage, entityId, OptionalDataRel.strength)).toBe(1);
   });
 
-  it("spawn with optional relation birth-link errors on stale target", () => {
+  it("spawn with optional relation birth-link errors on stale target #checked", () => {
     const OptionalStaleTarget = relation("OptionalStaleTarget");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp], [OptionalStaleTarget]));
@@ -411,7 +411,7 @@ describe("optional relation birth-link at spawn", () => {
     }).toThrow("stale target ID for relation OptionalStaleTarget");
   });
 
-  it("spawn with optional relation errors on a 0 target", () => {
+  it("spawn with optional relation errors on a 0 target #checked", () => {
     const OptionalZeroTarget = relation("OptionalZeroTarget");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp], [OptionalZeroTarget]));
@@ -555,7 +555,7 @@ const atomicCases = invalidTargets.flatMap((invalid) =>
 );
 
 describe("checked-mode birth-link validation", () => {
-  it.each(atomicCases)("rejects $name without mutating the world", (testCase) => {
+  it.each(atomicCases)("rejects $name without mutating the world #checked", (testCase) => {
     const fixture = createAtomicFixture();
     testCase.prepare(fixture);
     const { storage, world } = fixture;
@@ -575,7 +575,7 @@ describe("checked-mode birth-link validation", () => {
     expect(visitLinked(storage)).toStrictEqual([]);
   });
 
-  it("reuses the recycled slot cleanly after a rejected birth-link spawn", () => {
+  it("reuses the recycled slot cleanly after a rejected birth-link spawn #checked", () => {
     const { storage, targetStorage, world } = createAtomicFixture();
     const target = spawn(targetStorage);
     const first = spawn(storage, { BirthLinkAtomic_Rel: { target } });
@@ -781,7 +781,7 @@ describe("link and unlink", () => {
     expect(sourceIndices(world, DataRel, targetB)).toStrictEqual([entityIndex(sourceId)]);
   });
 
-  it("link errors on a stale source ID", () => {
+  it("link errors on a stale source ID #checked", () => {
     const Rel = relation("LinkSpec_StaleSource");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp], [Rel]));
@@ -795,7 +795,7 @@ describe("link and unlink", () => {
     }).toThrow("stale entity ID");
   });
 
-  it("link errors on a stale target", () => {
+  it("link errors on a stale target #checked", () => {
     const Rel = relation("LinkSpec_StaleTarget");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp], [Rel]));
@@ -855,7 +855,7 @@ describe("link and unlink", () => {
     }).toThrow("cannot unlink required relation UnlinkSpec_Required");
   });
 
-  it("unlink errors on a stale source ID", () => {
+  it("unlink errors on a stale source ID #checked", () => {
     const Rel = relation("UnlinkSpec_StaleSource");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp], [Rel]));

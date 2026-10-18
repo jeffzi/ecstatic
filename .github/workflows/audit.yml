@@ -1,4 +1,4 @@
-name: Audit
+name: Security audit
 
 on:
   push:
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   audit:
-    name: Audit
+    name: Known vulnerabilities
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -33,3 +33,13 @@ jobs:
       # Dev dependencies are left out: the audit gates what a consumer installs.
       - name: Audit runtime dependencies for known vulnerabilities
         run: npm audit --omit=dev
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: optimizer/go.mod
+          cache-dependency-path: optimizer/**/go.sum
+      # go.work resolves the ttsc shim modules from node_modules.
+      - name: Install dependencies
+        run: npm ci
+      - name: Audit the Go optimizer for known vulnerabilities
+        run: go -C optimizer tool govulncheck ./...

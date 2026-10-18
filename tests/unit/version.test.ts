@@ -1,31 +1,88 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, assert, describe, expect, it } from "vitest";
 
 import { checkVersion, syncVersion } from "../../scripts/sync-version.js";
 import { VERSION } from "../../src/index.js";
 
-/** Creates a temp project directory holding a package.json with `version` and an empty src/, and returns its path. */
+const TS_VERSION_FILE = join("src", "version.ts");
+const GO_VERSION_FILE = join("optimizer", "internal", "version", "version.go");
+const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const NPM_VERSION_TIMEOUT_MS = 60_000;
+
+/** The files the `version` lifecycle script reads or rewrites, relative to the repository root. */
+const VERSION_SCRIPT_FILES = [
+  "package.json",
+  join("scripts", "sync-version.ts"),
+  TS_VERSION_FILE,
+  GO_VERSION_FILE,
+];
+
+/** Creates a temp git repository holding copies of the files `npm version` needs, linked to this repository's node_modules, and returns its path. */
+function createVersionRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "ecstatic-npm-version-"));
+  for (const file of VERSION_SCRIPT_FILES) {
+    cpSync(join(REPO_ROOT, file), join(dir, file));
+  }
+  symlinkSync(join(REPO_ROOT, "node_modules"), join(dir, "node_modules"));
+  execFileSync("git", ["init", "--quiet"], { cwd: dir });
+  return dir;
+}
+
+/** Writes a package.json declaring `version` into the project directory `dir`. */
+function writePackageVersion(dir: string, version: string): void {
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ version }));
+}
+
+/** Creates a temp project directory holding a package.json with `version`, an empty src/ and optimizer/internal/version/, and returns its path. */
 function createProject(version: string): string {
   const dir = join(
     tmpdir(),
     `ecstatic-version-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   mkdirSync(join(dir, "src"), { recursive: true });
-  writeFileSync(join(dir, "package.json"), JSON.stringify({ version }));
+  mkdirSync(join(dir, "optimizer", "internal", "version"), { recursive: true });
+  writePackageVersion(dir, version);
   return dir;
+}
+
+/** The `version` declared by this repository's package.json. */
+function readRepoVersion(): string {
+  const manifest: unknown = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf-8"));
+  assert(
+    typeof manifest === "object" &&
+      manifest !== null &&
+      "version" in manifest &&
+      typeof manifest.version === "string",
+  );
+  return manifest.version;
+}
+
+/** The message of the error `action` throws; fails when it does not throw. */
+function failureMessage(action: () => void): string {
+  try {
+    action();
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  throw new Error("expected the action to throw");
 }
 
 describe("VERSION", () => {
   it("equals the version in package.json", () => {
-    const pkg = JSON.parse(
-      readFileSync(new URL("../../package.json", import.meta.url), "utf-8"),
-    ) as {
-      version: string;
-    };
-    expect(VERSION).toBe(pkg.version);
+    expect(VERSION).toBe(readRepoVersion());
   });
 
   it("is a semver string", () => {
@@ -33,28 +90,50 @@ describe("VERSION", () => {
   });
 });
 
+describe("version.Version", () => {
+  it("equals the version in package.json", () => {
+    const source = readFileSync(join(REPO_ROOT, GO_VERSION_FILE), "utf-8");
+
+    expect(source).toContain(`const Version = "${readRepoVersion()}"`);
+  });
+});
+
 describe("syncVersion", () => {
   it("writes src/version.ts as a generated module exporting VERSION", () => {
     const dir = createProject("1.2.3");
     syncVersion(dir);
-    const content = readFileSync(join(dir, "src", "version.ts"), "utf-8");
+    const content = readFileSync(join(dir, TS_VERSION_FILE), "utf-8");
 
     expect(content).toMatch(/^\/\//);
     expect(content).toContain("sync-version");
     expect(content).toContain('export const VERSION: string = "1.2.3"');
   });
 
-  it("is idempotent — running twice yields byte-identical output", () => {
-    const dir = createProject("2.0.0");
+  it("writes optimizer/internal/version/version.go as a generated Go file declaring Version", () => {
+    const dir = createProject("1.2.3");
 
     syncVersion(dir);
-    const first = readFileSync(join(dir, "src", "version.ts"), "utf-8");
+    const content = readFileSync(join(dir, GO_VERSION_FILE), "utf-8");
 
-    syncVersion(dir);
-    const second = readFileSync(join(dir, "src", "version.ts"), "utf-8");
-
-    expect(second).toBe(first);
+    expect(content).toMatch(/^\/\/ Code generated by scripts\/sync-version\.ts; DO NOT EDIT\.$/m);
+    expect(content).toMatch(/^package version$/m);
+    expect(content).toContain('const Version = "1.2.3"');
   });
+
+  it.each([TS_VERSION_FILE, GO_VERSION_FILE])(
+    "is idempotent — running twice yields byte-identical %s",
+    (file) => {
+      const dir = createProject("2.0.0");
+
+      syncVersion(dir);
+      const first = readFileSync(join(dir, file), "utf-8");
+
+      syncVersion(dir);
+      const second = readFileSync(join(dir, file), "utf-8");
+
+      expect(second).toBe(first);
+    },
+  );
 });
 
 describe("checkVersion", () => {
@@ -70,7 +149,7 @@ describe("checkVersion", () => {
   it("fails with a message naming both versions when they differ", () => {
     const dir = createProject("1.0.0");
     syncVersion(dir);
-    writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "2.0.0" }));
+    writePackageVersion(dir, "2.0.0");
 
     expect(() => {
       checkVersion(dir);
@@ -80,12 +159,26 @@ describe("checkVersion", () => {
     }).toThrow(/2\.0\.0/);
   });
 
+  it("fails naming optimizer/internal/version/version.go and both versions when only it differs", () => {
+    const dir = createProject("1.0.0");
+    syncVersion(dir);
+    writeFileSync(join(dir, GO_VERSION_FILE), 'package version\n\nconst Version = "9.9.9"\n');
+
+    const message = failureMessage(() => {
+      checkVersion(dir);
+    });
+
+    expect(message).toContain("optimizer/internal/version/version.go");
+    expect(message).toContain("9.9.9");
+    expect(message).toContain("1.0.0");
+  });
+
   it("does not write when versions differ", () => {
     const dir = createProject("1.0.0");
     syncVersion(dir);
-    const before = readFileSync(join(dir, "src", "version.ts"), "utf-8");
+    const before = readFileSync(join(dir, TS_VERSION_FILE), "utf-8");
 
-    writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "2.0.0" }));
+    writePackageVersion(dir, "2.0.0");
 
     try {
       checkVersion(dir);
@@ -93,7 +186,44 @@ describe("checkVersion", () => {
       // the mismatch error is not under test here; only the untouched file is asserted below
     }
 
-    const after = readFileSync(join(dir, "src", "version.ts"), "utf-8");
+    const after = readFileSync(join(dir, TS_VERSION_FILE), "utf-8");
     expect(after).toBe(before);
   });
+});
+
+describe("npm version", () => {
+  const repos: string[] = [];
+
+  afterEach(() => {
+    for (const dir of repos.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it(
+    "rewrites optimizer/internal/version/version.go and stages it with src/version.ts",
+    () => {
+      const dir = createVersionRepo();
+      repos.push(dir);
+
+      execFileSync("npm", ["version", "9.9.9", "--no-git-tag-version", "--ignore-scripts=false"], {
+        cwd: dir,
+        shell: process.platform === "win32",
+        stdio: "pipe",
+      });
+
+      const staged = execFileSync("git", ["diff", "--cached", "--name-only"], {
+        cwd: dir,
+        encoding: "utf8",
+      });
+      expect(staged.split("\n").filter(Boolean).toSorted()).toStrictEqual([
+        "optimizer/internal/version/version.go",
+        "src/version.ts",
+      ]);
+      expect(readFileSync(join(dir, GO_VERSION_FILE), "utf-8")).toContain(
+        'const Version = "9.9.9"',
+      );
+    },
+    NPM_VERSION_TIMEOUT_MS,
+  );
 });

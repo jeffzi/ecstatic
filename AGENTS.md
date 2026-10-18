@@ -15,23 +15,41 @@ design — never add references to Lua, TSTL, or "the port" there.
 
 ## Commands
 
-Package manager is **npm** (`package-lock.json`).
+Package manager is **npm** (`package-lock.json`). `npm test`, `npm run test:go`, and `npm run check`
+also need Go ≥ 1.26 (`optimizer/go.mod`).
 
-- `npm run build` — compile with `tsc -p tsconfig.build.json`
-- `npm test` — `vitest run --coverage` (types + unit projects); coverage thresholds fail the run,
-  and untested `src/` files count against them
+- `npm run build` — compile the core with `tsc -p tsconfig.build.json` (no Node types), then the
+  Node-only `src/plugin/` modules with `tsc -p tsconfig.build-plugin.json`
+- `npm test` — `vitest run --coverage` over the `types`, `unit`, and `fixtures` projects, plus
+  `unit-optimized` and `unit-ndebug` (the unit tests through the optimizer, the second under
+  `NDEBUG`) and `fixtures-ndebug` (the fixtures under `NDEBUG`). The first optimized run builds the
+  Go plugin, about a minute cold. Coverage thresholds fail the run, and untested `src/` files count
+  against them. Then `npm run test:go`, which runs second because vitest empties `coverage/` when it
+  starts
+- `npm run test:vitest` — the vitest projects of `npm test` with coverage, without the Go tests; CI
+  runs the Go tests in a job of their own
 - `npm run test:types` — type-only tests (`tests/types/*.test-d.ts`)
+- `npm run test:go` — `go test` over the `optimizer/` module with a coverage profile at
+  `coverage/go.out`, then `scripts/check-go-coverage.ts`, which fails naming each package under 95%
+  statement coverage (files named `main.go` are left out).
 - `npm run examples` — build, then run each `examples/*.ts` with tsx
-- `npm run check` — every pre-commit hook over all tracked and untracked files (lint, markdown,
-  formatting, workflow lint/audit, type-aware lint, spelling, types), plus dead code and publish
-  hygiene (`publint` + `@arethetypeswrong/cli`); then the build, examples, and benchmarks type
-  checks, the version sync check, and the allocation gate. The lint, markdown, and formatting hooks
-  rewrite files in place. The dead-code hook scores complexity against the coverage `npm test`
-  writes and refuses to run when a `src/` file is newer than that report, so run `npm test` first
-  after editing `src/`. It runs in `check` and `pre-push` (right after `npm test`), never at
-  pre-commit. Run before committing.
+- `npm run check` — run before committing.
+  - It runs every pre-commit hook over all tracked and untracked files (lint, markdown, formatting,
+    workflow lint/audit, type-aware lint, spelling, types, and for `optimizer/**/*.go` formatting,
+    `go vet`, and golangci-lint, plus a `go mod tidy -diff` check of `optimizer/tools`), plus dead
+    code and publish hygiene (`publint` + `@arethetypeswrong/cli`); then the build, examples, and
+    benchmarks type checks, the version sync check, and the allocation gate.
+  - The lint, markdown, and formatting hooks rewrite files in place; Go files are formatted by
+    `golangci-lint fmt`.
+  - golangci-lint v2 runs through `go tool`, pinned in `optimizer/tools/go.mod`, once with
+    `optimizer/.golangci.yml` and again with `optimizer/.golangci.tests.yml` (the `_test.go`
+    file-length cap); `npm run lint:go` runs both passes alone.
+  - Run `npm test` before `check` after editing `src/`: the dead-code hook scores complexity against
+    the coverage `npm test` writes and refuses to run when a `src/` file is newer than that report.
+    The dead-code hook runs in `check` and `pre-push` (right after `npm test`), never at pre-commit.
 - `npm run check:type` — type-check the build, examples, and benchmarks tsconfigs
-- `npm run check:version` — fail when `src/version.ts` is out of sync with `package.json`
+- `npm run check:version` — fail when `src/version.ts` or `optimizer/internal/version/version.go` is
+  out of sync with `package.json`; `npm version` regenerates and stages both
 - `npm run check:alloc` — build, then run the allocation gate (`benchmarks/alloc/gate.ts`)
 - `npm run fix` — auto-fix lint, markdown, and formatting, then remove unused exports, dependencies,
   and enum members (`fallow fix`). Deletes code — review the diff before committing.
@@ -43,10 +61,9 @@ Package manager is **npm** (`package-lock.json`).
 
 - Never run `git commit --no-verify`, `git commit -n`, or anything else that skips the lefthook
   hooks — the hooks are the gate, not an obstacle.
-- Fix a failing check at its source. Never weaken a test to make it pass; never widen a lint ignore
-  to silence a real finding. A test whose assertion is right but whose input is wrong (a sample
-  value that collides with a fixture, a typo, a bad import) is a test bug: fix the input and say so
-  in one line.
+- Fix a failing check at its source. Never weaken a test to make it pass. A test whose assertion is
+  right but whose input is wrong (a sample value that collides with a fixture, a typo, a bad import)
+  is a test bug: fix the input and say so in one line.
 
 ## Linter and type-checker configuration
 

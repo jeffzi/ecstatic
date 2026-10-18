@@ -15,7 +15,12 @@
     "url": "git+https://github.com/jeffzi/ecstatic.git"
   },
   "files": [
-    "dist"
+    "dist",
+    "src",
+    "optimizer/go.mod",
+    "optimizer/**/*.go",
+    "!optimizer/**/*_test.go",
+    "!optimizer/tools/**"
   ],
   "type": "module",
   "main": "dist/index.js",
@@ -24,28 +29,44 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "default": "./dist/internal.js"
+    },
+    "./optimizer": {
+      "types": "./dist/plugin/optimizer.d.ts",
+      "default": "./dist/plugin/optimizer.js"
+    },
+    "./vite": {
+      "types": "./dist/plugin/vite.d.ts",
+      "default": "./dist/plugin/vite.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.build-plugin.json",
     "check": "lefthook run check && npm run check:type && npm run check:version && npm run check:alloc",
     "check:alloc": "npm run -s build && tsx --expose-gc benchmarks/alloc/gate.ts",
     "check:package": "npm run build && publint --strict && attw --pack . --profile esm-only",
     "check:security": "fallow security",
-    "check:type": "tsc -p tsconfig.build.json --noEmit && tsc -p examples/tsconfig.json --noEmit && tsc -p benchmarks/tsconfig.json --noEmit",
+    "check:type": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.build-plugin.json --noEmit && tsc -p examples/tsconfig.json --noEmit && tsc -p benchmarks/tsconfig.json --noEmit",
     "check:version": "tsx scripts/sync-version.ts --check",
     "examples": "npm run build && tsx examples/basics.ts && tsx examples/iteration.ts && tsx examples/component-sets.ts && tsx examples/relationships.ts && tsx examples/resources.ts && tsx examples/game-loop.ts && tsx examples/optionals.ts",
-    "fix": "lefthook run check --command lint --command md --command fmt && fallow fix --yes --no-create-config",
+    "lint:go": "go -C optimizer tool golangci-lint run ./... && go -C optimizer tool golangci-lint run -c .golangci.tests.yml ./...",
+    "fix": "lefthook run check --command lint --command md --command gofmt --command fmt && fallow fix --yes --no-create-config",
     "prepare": "test -d .git && lefthook install || true",
     "prepublishOnly": "npm test && npm run check",
-    "test": "vitest run --coverage",
+    "test": "npm run test:vitest && npm run test:go",
+    "test:vitest": "vitest run --coverage",
+    "test:go": "node -e \"require('node:fs').mkdirSync('coverage', { recursive: true })\" && go -C optimizer test -race ./... -coverprofile=../coverage/go.out && tsx scripts/check-go-coverage.ts coverage/go.out",
     "test:types": "vitest run --project types",
-    "version": "tsx scripts/sync-version.ts && git add src/version.ts"
+    "version": "tsx scripts/sync-version.ts && git add src/version.ts optimizer/internal/version/version.go"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.0",
     "@commitlint/cli": "^21.2.0",
     "@commitlint/config-conventional": "^21.2.0",
+    "@ttsc/unplugin": "0.32.1",
     "@types/node": "^26.6.0",
     "@vitest/coverage-istanbul": "^4.1.0",
     "cspell": "^10.3.0",
@@ -59,8 +80,22 @@
     "oxlint-tsgolint": "^7.0.0",
     "publint": "^0.3.0",
     "tsx": "^4.23.0",
+    "ttsc": "0.32.1",
     "typescript": "^7.0.0",
+    "vite": "^8.3.4",
     "vitest": "^4.1.0"
+  },
+  "peerDependencies": {
+    "@ttsc/unplugin": "~0.32.1",
+    "ttsc": "~0.32.1"
+  },
+  "peerDependenciesMeta": {
+    "@ttsc/unplugin": {
+      "optional": true
+    },
+    "ttsc": {
+      "optional": true
+    }
   },
   "overrides": {
     "markdownlint-cli2": {

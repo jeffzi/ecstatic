@@ -3,8 +3,8 @@
 Regression-detection benchmarks for ecstatic, timed with
 [mitata](https://github.com/evanwashere/mitata). The
 [reference group](../docs/benchmarks/specifications/reference.md) holds hand-inlined twins of two
-iteration benchmarks, `throughput` and `frame`. Each twin runs the column loop a compile-time
-transform would emit for its `each()` call, which sets a speed ceiling for that benchmark. The
+iteration benchmarks, `throughput` and `frame`. Each twin runs the column loop a build-time
+optimizer would emit for its `each()` call, which sets a speed ceiling for that benchmark. The
 reference group is not a regression target.
 
 For what each benchmark measures and why, see [`docs/benchmarks/`](../docs/benchmarks/README.md).
@@ -31,6 +31,31 @@ iteration group under every requested engine.
 Bare `"ecstatic"` imports resolve through the package's own `exports` map to `dist/`, so both the
 suite and the allocation gate measure the last compiled output; build before running the suite by
 hand.
+
+### Optimized run
+
+`--optimized` measures the suite as the build-time optimizer compiles it:
+
+```bash
+npm run -s build
+npx tsx --expose-gc benchmarks/main.ts --optimized '^iteration/'
+npx tsx --expose-gc benchmarks/main.ts --optimized --engine node,bun
+```
+
+Before measuring anything, the runner compiles the benchmark sources through the optimizer with
+`benchmarks/tsconfig.optimizer.json` into `.bench-optimized/` (gitignored), then spawns every child
+from that compiled output under each requested engine. The aliases carry an `optimized/` segment
+after the engine (`node/optimized/iteration/throughput`), so a plain report and an optimized report
+merge without colliding. The filter still matches the plain benchmark name.
+
+The output directory sits inside the package and outside `node_modules`, so the compiled
+`import "ecstatic"` resolves to `dist/` through the package's `exports`, as the plain suite's does;
+build first. The compile also writes copies of `src/` there, which nothing imports.
+
+The config turns the optimizer's `strict` option on. A benchmark site the optimizer cannot rewrite
+for a reportable reason fails the compile, rather than quietly timing the runtime call. A failed
+compile, from a TypeScript error or a strict optimizer diagnostic, exits 1 before measuring
+anything, with the compiler's diagnostics on stderr and nothing on stdout.
 
 Set `BENCH_GENERATION=<n>` to measure worlds whose tracked entity ids sit at generation `n`: the
 world builder recycles the tracked slots until every tracked id is at that generation and leaves

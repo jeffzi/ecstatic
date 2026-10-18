@@ -2,15 +2,15 @@
  * The `iteration/throughput` and `iteration/frame` systems and their inlined
  * twins, each defined once.
  *
- * Every `each()` system here has an inlined twin: the column loop a compile-time
- * transform would emit for that `each()` call. The `reference/` suite times
+ * Every `each()` system here has an inlined twin: the column loop a build-time
+ * optimizer would emit for that `each()` call. The `reference/` suite times
  * the twins, the `iteration/` suite times the `each()` bodies, and the
  * equivalence test runs both over identical worlds, so what is timed is
  * exactly what is proven equivalent.
  *
  * An inlined twin calls none of `each`, `query`, `get` or `set`. It reads its
  * column arrays from `storage.columns` at the start of every call, because
- * growth replaces a storage's typed columns and the transformed code reads
+ * growth replaces a storage's typed columns and the optimized code reads
  * that same state, then walks rows from `storage.n - 1` down to 0, the order
  * `each` visits them.
  *

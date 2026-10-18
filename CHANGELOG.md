@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Reject `__proto__` as a component name in `archetype()` and `Archetype()`, alongside the other
+  names reserved on archetypes
+
 ## [0.5.0] - 2026-10-16
 
 ### Added

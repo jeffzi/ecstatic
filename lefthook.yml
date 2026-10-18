@@ -1,4 +1,6 @@
 # yaml-language-server: $schema=https://json.schemastore.org/lefthook.json
+glob_matcher: doublestar
+
 pre-commit:
   files: git diff --cached --name-only --diff-filter=ACMR
   commands: &checks
@@ -11,6 +13,14 @@ pre-commit:
       priority: 1
       glob: "**/*.md"
       run: npx markdownlint-cli2 --fix {files}
+      stage_fixed: true
+    gofmt:
+      priority: 1
+      root: optimizer/
+      glob: "optimizer/**/*.go"
+      # The formatters .golangci.yml enables (gofumpt, goimports), so golint never reports a
+      # formatting finding this hook would have fixed.
+      run: go tool golangci-lint fmt {files}
       stage_fixed: true
     fmt:
       priority: 2
@@ -26,9 +36,27 @@ pre-commit:
       priority: 3
       glob: "**/*.{ts,tsx,mts,cts}"
       run: npx oxlint --type-aware
+    govet:
+      priority: 3
+      glob: "optimizer/**/*.go"
+      run: go -C optimizer vet ./...
+    golint:
+      priority: 3
+      glob: "optimizer/**/*.go"
+      # golangci-lint is pinned in optimizer/tools/go.mod, which go.work brings into scope. The
+      # second pass applies the larger file-length cap to _test.go files.
+      run: npm run -s lint:go
+    gotidy:
+      priority: 3
+      glob: "optimizer/tools/go.{mod,sum}"
+      # Only the tools module: the optimizer module requires ttsc shim modules that resolve
+      # through go.work alone, so tidy cannot run there.
+      run: go -C optimizer/tools mod tidy -diff
     spelling:
       priority: 3
-      glob: "**/*.{ts,tsx,mts,cts,md}"
+      glob:
+        - "**/*.{ts,tsx,mts,cts,md,go}"
+        - "**/go.{mod,work}"
       run: npx cspell --no-progress --no-summary --no-must-find-files {files}
     actions:
       priority: 3
@@ -36,7 +64,7 @@ pre-commit:
       run: actionlint {files} && zizmor --persona=pedantic {files}
 
 check:
-  files: git ls-files --cached --others --exclude-standard
+  files: git ls-files --cached --others --exclude-standard --full-name
   commands:
     <<: *checks
     quality:

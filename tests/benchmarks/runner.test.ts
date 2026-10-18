@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   anchoredFilter,
@@ -8,6 +11,8 @@ import {
   ChildReportError,
   type ChildSpawnSpec,
   childSpawnSpec,
+  CompileError,
+  compileOptimized,
   type Engine,
   isDefaultEngines,
   mergeReports,
@@ -20,6 +25,13 @@ import {
   selectBenchmarks,
   UsageError,
 } from "../../benchmarks/runner.js";
+import { createTempDir, removeTempDirs } from "../unit/plugin/tsconfig-fixtures.js";
+import {
+  COMPILE_FAILURES,
+  COMPILE_TIMEOUT_MS,
+  OPTIMIZER_CONFIG,
+  optimizerConfigProject,
+} from "./fixtures.js";
 
 const FILTER = "^access\\.";
 const BENCH = "access.get_1field";
@@ -29,49 +41,73 @@ describe("parseArgs", () => {
     it("defaults to the node engine with no filter when argv is empty", () => {
       const parsed = parseArgs([]);
 
-      expect(parsed).toStrictEqual({ mode: "parent", engines: ["node"] });
+      expect(parsed).toStrictEqual({ mode: "parent", engines: ["node"], optimized: false });
     });
 
     it("reads a lone positional argument as the filter", () => {
       const parsed = parseArgs([FILTER]);
 
-      expect(parsed).toStrictEqual({ mode: "parent", filter: FILTER, engines: ["node"] });
+      expect(parsed).toStrictEqual({
+        mode: "parent",
+        filter: FILTER,
+        engines: ["node"],
+        optimized: false,
+      });
     });
 
     const engineCases: { label: string; argv: string[]; expected: ParsedArgs }[] = [
       {
         label: "a single engine on its own",
         argv: ["--engine", "bun"],
-        expected: { mode: "parent", engines: ["bun"] },
+        expected: { mode: "parent", engines: ["bun"], optimized: false },
       },
       {
         label: "a single engine after the filter",
         argv: [FILTER, "--engine", "bun"],
-        expected: { mode: "parent", filter: FILTER, engines: ["bun"] },
+        expected: { mode: "parent", filter: FILTER, engines: ["bun"], optimized: false },
       },
       {
         label: "a single engine before the filter",
         argv: ["--engine", "bun", FILTER],
-        expected: { mode: "parent", filter: FILTER, engines: ["bun"] },
+        expected: { mode: "parent", filter: FILTER, engines: ["bun"], optimized: false },
       },
       {
         label: "the default engine by name",
         argv: ["--engine", "node"],
-        expected: { mode: "parent", engines: ["node"] },
+        expected: { mode: "parent", engines: ["node"], optimized: false },
       },
       {
         label: "two engines comma-separated",
         argv: ["--engine", "node,bun"],
-        expected: { mode: "parent", engines: ["node", "bun"] },
+        expected: { mode: "parent", engines: ["node", "bun"], optimized: false },
       },
       {
         label: "two engines comma-separated with a filter",
         argv: [FILTER, "--engine", "node,bun"],
-        expected: { mode: "parent", filter: FILTER, engines: ["node", "bun"] },
+        expected: { mode: "parent", filter: FILTER, engines: ["node", "bun"], optimized: false },
       },
     ];
 
     it.each(engineCases)("parses --engine with $label", ({ argv, expected }) => {
+      const parsed = parseArgs(argv);
+
+      expect(parsed).toStrictEqual(expected);
+    });
+
+    const optimizedCases: { label: string; argv: string[]; expected: ParsedArgs }[] = [
+      {
+        label: "on its own",
+        argv: ["--optimized"],
+        expected: { mode: "parent", engines: ["node"], optimized: true },
+      },
+      {
+        label: "with a filter and two engines",
+        argv: ["--engine", "node,bun", "--optimized", FILTER],
+        expected: { mode: "parent", filter: FILTER, engines: ["node", "bun"], optimized: true },
+      },
+    ];
+
+    it.each(optimizedCases)("parses --optimized $label", ({ argv, expected }) => {
       const parsed = parseArgs(argv);
 
       expect(parsed).toStrictEqual(expected);
@@ -100,6 +136,8 @@ describe("parseArgs", () => {
       { label: "--child without a value", argv: ["--child"] },
       { label: "--child alongside a filter", argv: [FILTER, "--child", BENCH] },
       { label: "--child alongside --engine", argv: ["--child", BENCH, "--engine", "bun"] },
+      { label: "--child alongside --optimized", argv: ["--child", BENCH, "--optimized"] },
+      { label: "a repeated --optimized flag", argv: ["--optimized", "--optimized"] },
     ];
 
     it.each(usageCases)("throws UsageError for $label", ({ argv }) => {
@@ -169,6 +207,13 @@ describe("childSpawnSpec", () => {
     execPath: "/usr/bin/node",
     mainPath: "/repo/benchmarks/main.ts",
     benchName: BENCH,
+    compiled: false,
+  };
+
+  const compiledTarget = {
+    ...target,
+    mainPath: "/repo/.bench-optimized/benchmarks/main.js",
+    compiled: true,
   };
 
   const spawnCases: { engine: Engine; expected: ChildSpawnSpec }[] = [
@@ -195,6 +240,32 @@ describe("childSpawnSpec", () => {
 
     expect(spec).toStrictEqual(expected);
   });
+
+  const compiledCases: { engine: Engine; expected: ChildSpawnSpec }[] = [
+    {
+      engine: "node",
+      expected: {
+        command: compiledTarget.execPath,
+        args: ["--expose-gc", compiledTarget.mainPath, "--child", compiledTarget.benchName],
+      },
+    },
+    {
+      engine: "bun",
+      expected: {
+        command: "bun",
+        args: ["--expose-gc", compiledTarget.mainPath, "--child", compiledTarget.benchName],
+      },
+    },
+  ];
+
+  it.each(compiledCases)(
+    "runs the compiled entry under $engine without a TypeScript loader",
+    ({ engine, expected }) => {
+      const spec = childSpawnSpec(engine, compiledTarget);
+
+      expect(spec).toStrictEqual(expected);
+    },
+  );
 });
 
 describe("registerBench", () => {
@@ -378,6 +449,19 @@ describe("namespaceReport", () => {
     ]);
   });
 
+  it("inserts an optimized/ segment after the engine prefix for an optimized run", () => {
+    const input = report({
+      benchmarks: [benchEntry("access.get_1field"), benchEntry("entity.spawn")],
+    });
+
+    const namespaced = namespaceReport(input, "bun", { optimized: true });
+
+    expect(namespaced.benchmarks.map((e) => e.alias)).toStrictEqual([
+      "bun/optimized/access.get_1field",
+      "bun/optimized/entity.spawn",
+    ]);
+  });
+
   it("preserves runs, layout, and context unchanged", () => {
     const customRuns = [
       { stats: { p50: 9999, heap: { avg: 128 } }, args: { size: 500 }, error: null },
@@ -449,6 +533,21 @@ describe("mergeReports", () => {
     });
   });
 
+  describe("when merging a plain and an optimized report from the same engine", () => {
+    it("keeps both entries because the optimized/ segment tells them apart", () => {
+      const measured = report({ benchmarks: [benchEntry("access.get_1field")] });
+      const plain = namespaceReport(measured, "node");
+      const optimized = namespaceReport(measured, "node", { optimized: true });
+
+      const merged = mergeReports([plain, optimized]);
+
+      expect(merged.benchmarks.map((e) => e.alias)).toStrictEqual([
+        "node/access.get_1field",
+        "node/optimized/access.get_1field",
+      ]);
+    });
+  });
+
   it("returns an equivalent document for a single report", () => {
     const only = report();
 
@@ -468,4 +567,35 @@ describe("mergeReports", () => {
   it.each(failingCases)("throws ChildReportError for $label", ({ reports }) => {
     expect(() => mergeReports(reports)).toThrow(ChildReportError);
   });
+});
+
+describe("compileOptimized", () => {
+  afterEach(() => {
+    removeTempDirs();
+  });
+
+  it(
+    "compiles the benchmark sources through the strict optimizer config",
+    async () => {
+      const outDir = createTempDir();
+
+      await compileOptimized({ project: OPTIMIZER_CONFIG, outDir });
+
+      expect(existsSync(join(outDir, "benchmarks", "main.js"))).toBe(true);
+    },
+    COMPILE_TIMEOUT_MS,
+  );
+
+  it.each(COMPILE_FAILURES)(
+    "rejects $label under the benchmarks' optimizer config with CompileError carrying the diagnostics",
+    async ({ source, diagnostic }) => {
+      const project = optimizerConfigProject(source);
+
+      const compiled = compileOptimized({ project, outDir: createTempDir() });
+
+      await expect(compiled).rejects.toThrow(CompileError);
+      await expect(compiled).rejects.toThrow(diagnostic);
+    },
+    COMPILE_TIMEOUT_MS,
+  );
 });

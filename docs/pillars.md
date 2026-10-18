@@ -19,7 +19,7 @@ cover internals. [cookbook.md](cookbook.md) shows the patterns the pillars assum
 - [7. TypedArray SoA storage — never exposed](#7-typedarray-soa-storage--never-exposed)
 - [8. Optionals and tags via bitmask](#8-optionals-and-tags-via-bitmask)
 - [9. No GC-visible allocation on a warm world](#9-no-gc-visible-allocation-on-a-warm-world)
-- [10. Runtime-first: the untransformed runtime is the floor](#10-runtime-first-the-untransformed-runtime-is-the-floor)
+- [10. Runtime-first: the unoptimized runtime is the floor](#10-runtime-first-the-unoptimized-runtime-is-the-floor)
 - [11. No lifecycle hooks, no observers](#11-no-lifecycle-hooks-no-observers)
 - [12. Deterministic](#12-deterministic)
 - [13. Portable: runs wherever JavaScript does](#13-portable-runs-wherever-javascript-does)
@@ -120,7 +120,7 @@ cross-archetype), and one obvious call for everything else. No builder chains, n
 chunk handles, no system classes. Functions take values and return values.
 
 When two APIs could cover a use case, one of them goes. Small surface is a feature: it is what keeps
-a future transform simple (pillar 10) and the docs honest.
+a future optimizer simple (pillar 10) and the docs honest.
 
 ## 5. Generational entity IDs, always on
 
@@ -192,18 +192,18 @@ A few operations carry a nonzero budget: `spawnMany`'s returned ids array is one
 call-site record literal the engine declines to scalar-replace is another. Every nonzero budget
 names what allocates and why it stands.
 
-## 10. Runtime-first: the untransformed runtime is the floor
+## 10. Runtime-first: the unoptimized runtime is the floor
 
-Every call is fully correct, and fast, without a build-time transform. A build-time transform is
+Every call is fully correct, and fast, without a build-time optimizer. A build-time optimizer is
 planned for peak performance: it would inline `each`/`query` loops and other calls at their call
 sites. It will never be needed for correctness. The discipline stated outright: **no API may exist
-whose correctness depends on a transform.**
+whose correctness depends on the optimizer.**
 
-What the transform must do to stay in lockstep with the runtime:
+What the optimizer must do to stay in lockstep with the runtime:
 
 - Extract its codegen bodies from the runtime source. Hand-built syntax trees are reserved for
   call-site inlining, and every hand-built site names the runtime function it mirrors.
-- Pass the same test suite run three ways: untransformed, transformed, and `NDEBUG`-stripped. Any
+- Pass the same test suite run three ways: unoptimized, optimized, and `NDEBUG`-stripped. Any
   behavioral divergence then fails the same assertion twice.
 
 ## 11. No lifecycle hooks, no observers

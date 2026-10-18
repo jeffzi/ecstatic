@@ -19,6 +19,7 @@ import {
 } from "./archetypes.js";
 import {
   benchCreateWorld,
+  DT,
   makeBareWorld,
   makeFrameWorld,
   makeThroughputWorld,
@@ -50,6 +51,23 @@ registerBench(
 // Nine systems in a row, one per storage, each `each()` callback a different
 // shape: what a frame of systems costs when they share the `each()` call site.
 registerBench("iteration/frame", warmedBench(makeFrameWorld, frameEach));
+
+function advance(x: number, dx: number): number {
+  return x + dx * DT;
+}
+
+// The call to a helper is what makes this body hazard-bearing: a call may spawn past
+// capacity and reallocate the columns, so the optimizer's realloc-safe mode re-reads them
+// through the storage on each access. Every other each() body in the suite is hazard-free;
+// inlining `advance` would leave realloc-safe mode untimed.
+registerBench(
+  "iteration/helper_call",
+  warmedBench(makeThroughputWorld, ({ trackedStorage }) => {
+    each(trackedStorage, (e) => {
+      e.Position.x = advance(e.Position.x, e.Velocity.dx);
+    });
+  }),
+);
 
 // Five rounds of despawning every third entity and respawning the same count
 // leave the freelist and row order fragmented the way a running game does.

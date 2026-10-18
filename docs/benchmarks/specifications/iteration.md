@@ -21,6 +21,7 @@ benchmark here ends with `destroyWorld()`. The tracked archetype also declares t
 tag, but no benchmark here enables it.
 
 - [throughput](#throughput)
+- [helper_call](#helper_call)
 - [post_churn_throughput](#post_churn_throughput)
 - [frame](#frame)
 - [each_chained](#each_chained)
@@ -52,6 +53,37 @@ each(storage, (e) => {
 **Rationale:** Establishes the iteration baseline. One archetype, every entity visited, two field
 reads and two writes per entity. Overhead beyond the arithmetic is `each()` dispatch and view
 rebinding. The inlined twin is [`inlined_throughput`](reference.md#inlined_throughput).
+
+---
+
+## helper_call
+
+**Purpose:** Measure `each()` throughput when the callback calls a function, which makes the body
+hazard-bearing.
+
+| Property | Value                                           |
+| -------- | ----------------------------------------------- |
+| Setup    | Bare world with N entities (Position, Velocity) |
+| Warmup   | One `each()` pass                               |
+
+**Operation:**
+
+```text
+function advance(x, dx) {
+    return x + dx * DT
+}
+
+each(storage, (e) => {
+    e.Position.x = advance(e.Position.x, e.Velocity.dx)
+})
+```
+
+**Rationale:** The call to `advance` is what makes this body hazard-bearing. A call in the body
+could spawn past the storage's capacity and reallocate its columns, so the optimizer compiles such a
+body in realloc-safe mode: it re-reads each column through the storage's component record on every
+access instead of holding it in a local. Every other `each()` body in the suite is hazard-free, so
+this is the one benchmark that times realloc-safe mode. `advance` is a module-level function so the
+call stays a call in the source; inlining it by hand would make the body hazard-free again.
 
 ---
 

@@ -57,6 +57,11 @@ export function maskSatisfies(
  * Find or register the storage's matcher for an (all, any, none) mask triple — deduped, so
  * repeated filter resolution against the same storage shares one `matched` cache.
  *
+ * Part of the runtime contract with the optimizer: matchers are only ever added to
+ * `storage.matchers`, never removed or replaced, so a matcher cached per call site stays the
+ * storage's matcher for its triple. Growth replaces `matched` on that same object
+ * ({@link growMatcherArrays}).
+ *
  * @param storage - Storage whose `matchers` and `matcherMatched` lists are searched and, on a
  *   miss, appended to in lockstep.
  * @param allMask - Optional bits every matching row must have set.
@@ -320,10 +325,15 @@ function refreshOneMatcherRows(ctx: RowRefreshCtx, matcher: Matcher, matched: Ui
  * `storage.matcherMatched[i]` the same object as `storage.matchers[i].matched` (the flatColumns
  * pattern: both views rebuilt together on growth).
  *
+ * Part of the runtime contract with the optimizer: the new array is assigned to
+ * `matched` on the existing matcher object; the matcher itself is never replaced, so a cached
+ * matcher reads its current `matched` after growth.
+ *
  * @param storage - Storage being grown; each of its matchers gets a fresh `Uint8Array` with the
  *   old flags copied in, and `matcherMatched` is rewritten in place to alias them.
  * @param capacity - New row capacity (the grown `entities.length`); never smaller than the
- *   current `matched` length, or `TypedArray.set` throws.
+ *   current `matched` length.
+ * @throws RangeError if `capacity` is smaller than a matcher's current `matched` length
  */
 export function growMatcherArrays(storage: Storage, capacity: number): void {
   const matchers = storage.matchers;
