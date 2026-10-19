@@ -29,9 +29,15 @@ also need Go ≥ 1.26 (`optimizer/go.mod`).
 - `npm run test:vitest` — the vitest projects of `npm test` with coverage, without the Go tests; CI
   runs the Go tests in a job of their own
 - `npm run test:types` — type-only tests (`tests/types/*.test-d.ts`)
-- `npm run test:go` — `go test` over the `optimizer/` module with a coverage profile at
-  `coverage/go.out`, then `scripts/check-go-coverage.ts`, which fails naming each package under 95%
-  statement coverage (files named `main.go` are left out).
+- `npm run test:go` — first trims Go's build cache (`scripts/trim-go-cache.ts`), then `go test` over
+  the `optimizer/` module with a coverage profile at `coverage/go.out`, then
+  `scripts/check-go-coverage.ts`, which fails naming each package under 95% statement coverage
+  (files named `main.go` are left out).
+  - The trim works on the cache `go env GOCACHE` names, the one every Go project on the machine
+    shares unless `GOCACHE` is set. Once its entries pass 12 GiB, it deletes the least recently used
+    down to 9 GiB, but never an entry used in the last 2 h, so it can stop above 9 GiB while builds
+    are busy. It prints one line when it deletes anything, and a failing trim stops the command
+    before `go` runs.
 - `npm run examples` — build, then run each `examples/*.ts` with tsx
 - `npm run check` — run before committing.
   - It runs every pre-commit hook over all tracked and untracked files (lint, markdown, formatting,
@@ -43,7 +49,8 @@ also need Go ≥ 1.26 (`optimizer/go.mod`).
     `golangci-lint fmt`.
   - golangci-lint v2 runs through `go tool`, pinned in `optimizer/tools/go.mod`, once with
     `optimizer/.golangci.yml` and again with `optimizer/.golangci.tests.yml` (the `_test.go`
-    file-length cap); `npm run lint:go` runs both passes alone.
+    file-length cap); `npm run lint:go` runs both passes alone. The hook runs `npm run lint:go`,
+    which trims Go's build cache first, the same trim `npm run test:go` describes.
   - Run `npm test` before `check` after editing `src/`: the dead-code hook scores complexity against
     the coverage `npm test` writes and refuses to run when a `src/` file is newer than that report.
     The dead-code hook runs in `check` and `pre-push` (right after `npm test`), never at pre-commit.
