@@ -61,11 +61,15 @@ jobs:
       # setup-go keys its cache on go.sum alone, so it is saved once and never refreshed. Keying
       # on the Go sources saves a new entry whenever they change, and restore-keys starts each
       # miss from the latest entry instead of a cold build. Each job keeps its own entry: they
-      # compile with different flags.
+      # compile with different flags. The npm scripts and hooks build into
+      # node_modules/.cache/go-build, so this step must stay after npm ci, which deletes
+      # node_modules; plain go commands (installing actionlint, the gotidy hook) still build into
+      # go env GOCACHE.
       - name: Cache Go builds
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
+            node_modules/.cache/go-build
             ${{ steps.go-env.outputs.build }}
             ${{ steps.go-env.outputs.modules }}
           key:
@@ -148,11 +152,15 @@ jobs:
       # setup-go keys its cache on go.sum alone, so it is saved once and never refreshed. Keying
       # on the Go sources saves a new entry whenever they change, and restore-keys starts each
       # miss from the latest entry instead of a cold build. Each job keeps its own entry: they
-      # compile with different flags.
+      # compile with different flags. The npm scripts and hooks build into
+      # node_modules/.cache/go-build, so this step must stay after npm ci, which deletes
+      # node_modules; plain go commands (installing actionlint, the gotidy hook) still build into
+      # go env GOCACHE.
       - name: Cache Go builds
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
+            node_modules/.cache/go-build
             ${{ steps.go-env.outputs.build }}
             ${{ steps.go-env.outputs.modules }}
           key:

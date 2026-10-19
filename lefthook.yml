@@ -20,7 +20,7 @@ pre-commit:
       glob: "optimizer/**/*.go"
       # The formatters .golangci.yml enables (gofumpt, goimports), so golint never reports a
       # formatting finding this hook would have fixed.
-      run: go tool golangci-lint fmt {files}
+      run: npx tsx ../scripts/go.ts tool golangci-lint fmt {files}
       stage_fixed: true
     fmt:
       priority: 2
@@ -39,7 +39,7 @@ pre-commit:
     govet:
       priority: 3
       glob: "optimizer/**/*.go"
-      run: go -C optimizer vet ./...
+      run: npx tsx scripts/go.ts -C optimizer vet ./...
     golint:
       priority: 3
       glob: "optimizer/**/*.go"

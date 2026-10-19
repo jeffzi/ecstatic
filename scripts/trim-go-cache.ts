@@ -1,17 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { readdirSync, rmSync, statSync, type Stats } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 const GIB = 2 ** 30;
-const DEFAULT_CAP = 12 * GIB;
-const DEFAULT_TARGET = 9 * GIB;
-/**
- * Go refreshes an entry's mtime on use only when it is at least an hour old, so an entry a running
- * build resolved within the last hour has an mtime under 2 h old. Deleting such an entry fails that
- * build.
- */
-const DEFAULT_PROTECTED_AGE = 2 * 60 * 60 * 1000;
 
 /** Go's cache spreads entries over 256 subdirectories named by the first byte of their key. */
 const BUCKET_NAME = /^[0-9a-f]{2}$/;
@@ -33,7 +23,7 @@ export interface TrimOptions {
   readonly cap: number;
   /** The total entry size, in bytes, the trim deletes down to once past the cap. */
   readonly target: number;
-  /** How long, in milliseconds, an entry stays undeletable after its mtime. */
+  /** How long, in milliseconds, an entry counts as recent after its mtime. */
   readonly protectedAge: number;
   /** Called with each deletion candidate's path after the scan and before its mtime is re-read. */
   readonly beforeDelete?: (path: string) => void;
@@ -146,16 +136,36 @@ function formatSize(bytes: number): string {
   return `${bytes} B`;
 }
 
-function isProtected(mtimeMs: number, options: TrimOptions): boolean {
+function isRecent(mtimeMs: number, options: TrimOptions): boolean {
   return options.now - mtimeMs < options.protectedAge;
 }
 
 /**
- * Delete entries in order until the total reaches the target or an entry is protected.
+ * Find where the spared share of the entries starts: the recent entries, taken newest first, up to
+ * the first one that would push their total past the target.
  *
  * @param entries - The scanned entries, oldest mtime first.
- * @param before - The total size of `entries`, in bytes.
- * @param options - The target, the protection window, the clock, and the pre-deletion hook.
+ * @param options - The target, the protection window, and the clock.
+ * @returns The index of the first spared entry; every entry from it on is spared, and
+ * `entries.length` means none is.
+ */
+function protectedStart(entries: readonly Entry[], options: TrimOptions): number {
+  let spared = 0;
+  let size = 0;
+  for (const entry of entries.toReversed()) {
+    if (!isRecent(entry.mtimeMs, options) || size + entry.size > options.target) break;
+    size += entry.size;
+    spared += 1;
+  }
+  return entries.length - spared;
+}
+
+/**
+ * Delete entries in order until the total reaches the target.
+ *
+ * @param entries - The deletion candidates, oldest mtime first.
+ * @param before - The total size of every scanned entry, in bytes.
+ * @param options - The target and the pre-deletion hook.
  * @returns The total left and the number of entries this call deleted; an entry already gone at its
  * deletion counts toward the total freed but not toward the number deleted.
  * @throws Error naming the path when re-reading or deleting an entry fails for any reason other
@@ -170,12 +180,12 @@ function deleteOldest(
   let total = before;
   let removed = 0;
   for (const entry of entries) {
-    if (total <= options.target || isProtected(entry.mtimeMs, options)) break;
+    if (total <= options.target) break;
     options.beforeDelete?.(entry.path);
     // A build may have refreshed the mtime since the scan read it.
     const current = statPath(entry.path);
     if (current !== undefined) {
-      if (isProtected(current.mtimeMs, options)) continue;
+      if (current.mtimeMs > entry.mtimeMs) continue;
       if (deleteEntry(entry.path)) removed += 1;
     }
     total -= entry.size;
@@ -192,16 +202,20 @@ function deleteOldest(
  * left untouched, so Go's own trim schedule is unchanged.
  *
  * When the entries total more than `options.cap`, entries are deleted oldest mtime first until the
- * total is at or below `options.target`. An entry whose mtime, re-read just before its deletion, is
- * less than `options.protectedAge` before `options.now` is never deleted, even when sparing it
- * leaves the total above the target. Anything that vanishes while the trim runs (another trim, Go's
- * own trim, `go clean -cache`) is not an error: it is left out of the total when the scan misses it,
- * and counts as freed when it is gone at its deletion.
+ * total is at or below `options.target`. An entry is recent when its mtime is less than
+ * `options.protectedAge` before `options.now`. Recent entries are spared newest mtime first while
+ * the spared ones total no more than `options.target`; the first recent entry that would push that
+ * total past the target, and every older recent entry, is a deletion candidate like any other
+ * entry, so the window protects at most one target's worth of the cache. A candidate whose mtime,
+ * re-read just before its deletion, is newer than the scan saw is spared too: a build used it in
+ * the meantime. Anything that vanishes while the trim runs (another trim, Go's own trim,
+ * `go clean -cache`) is not an error: it is left out of the total when the scan misses it, and
+ * counts as freed when it is gone at its deletion.
  *
  * When anything is deleted, one line with the size before, the size after, and the number of
  * entries removed is written to stderr.
  *
- * @param dir - The cache root, as `go env GOCACHE` reports it; a missing directory deletes nothing.
+ * @param dir - The cache root; a missing directory deletes nothing.
  * @param options - The current time, the cap, the target, the protection window, and an optional
  * hook run before each candidate's mtime is re-read.
  * @throws Error naming the path when reading or deleting part of the cache fails for any reason
@@ -214,37 +228,12 @@ export function trimGoCache(dir: string, options: TrimOptions): void {
   if (before <= options.cap) return;
 
   entries.sort((a, b) => a.mtimeMs - b.mtimeMs);
-  const { total, removed } = deleteOldest(entries, before, options);
+  const candidates = entries.slice(0, protectedStart(entries, options));
+  const { total, removed } = deleteOldest(candidates, before, options);
   if (removed > 0) {
     const noun = removed === 1 ? "entry" : "entries";
     process.stderr.write(
       `Trimmed the Go build cache from ${formatSize(before)} to ${formatSize(total)} by removing ${removed} ${noun}\n`,
     );
-  }
-}
-
-function goCacheDir(): string {
-  try {
-    return execFileSync("go", ["env", "GOCACHE"], { encoding: "utf8" }).trim();
-  } catch (error) {
-    throw new Error(`go env GOCACHE failed: ${errorMessage(error)}`, { cause: error });
-  }
-}
-
-if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
-  try {
-    const dir = goCacheDir();
-    // `off` disables the cache; there is nothing to trim.
-    if (dir !== "off") {
-      trimGoCache(dir, {
-        now: Date.now(),
-        cap: DEFAULT_CAP,
-        target: DEFAULT_TARGET,
-        protectedAge: DEFAULT_PROTECTED_AGE,
-      });
-    }
-  } catch (error) {
-    process.stderr.write(`${errorMessage(error)}\n`);
-    process.exitCode = 1;
   }
 }

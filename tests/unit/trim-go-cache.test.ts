@@ -1,4 +1,3 @@
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -12,17 +11,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import { trimGoCache } from "../../scripts/trim-go-cache.js";
-import { packageBin } from "../package-bin.js";
-
-const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const SCRIPT = fileURLToPath(new URL("../../scripts/trim-go-cache.ts", import.meta.url));
-const TSX = packageBin("tsx", "tsx");
 
 /** Paths another process removes just before the trim lists or deletes them. */
 const racing = vi.hoisted(() => new Set<string>());
@@ -59,8 +52,8 @@ const PROTECTED_AGE = 2 * HOUR;
 /** Permission bits only take effect on POSIX systems, and never for root. */
 const PERMISSIONS_ENFORCED = process.platform !== "win32" && process.getuid?.() !== 0;
 /**
- * Unprivileged Windows accounts cannot create symbolic links, npm there cannot run a shell-script
- * `go`, and NTFS allocates the gigabytes a sparse file of that size would leave unallocated.
+ * Unprivileged Windows accounts cannot create symbolic links, and NTFS allocates the gigabytes a
+ * sparse file of that size would leave unallocated.
  */
 const POSIX = process.platform !== "win32";
 
@@ -158,38 +151,6 @@ function survivors(paths: readonly string[]): boolean[] {
   return paths.map((path) => existsSync(path));
 }
 
-/** `env` with every case variant of `PATH` replaced by `path`. */
-function withPath(env: NodeJS.ProcessEnv, path: string): NodeJS.ProcessEnv {
-  const result = Object.fromEntries(
-    Object.entries(env).filter(([key]) => key.toUpperCase() !== "PATH"),
-  );
-  return { ...result, PATH: path };
-}
-
-/** A temp directory holding a shell-script `go` that runs `body`, for use as `PATH`. */
-function fakeGo(body: string): string {
-  const bin = tempDir();
-  const go = join(bin, "go");
-  writeFileSync(go, `#!/bin/sh\n${body}\n`);
-  chmodSync(go, 0o755);
-  return bin;
-}
-
-/** Runs npm `script` with a fake `go` that reports `cache` as GOCACHE and creates `marker` on any other call. */
-function runNpmScript(script: string, cache: string, marker: string): SpawnSyncReturns<string> {
-  const bin = fakeGo(`if [ "$1" = env ]; then echo '${cache}'; exit 0; fi\ntouch '${marker}'`);
-  return spawnSync("npm", ["run", "--silent", script], {
-    cwd: ROOT,
-    env: withPath(process.env, `${bin}${delimiter}${process.env["PATH"] ?? ""}`),
-    encoding: "utf8",
-  });
-}
-
-/** Runs scripts/trim-go-cache.ts as a command in `cwd` with `env`. */
-function runScript(cwd: string, env: NodeJS.ProcessEnv): SpawnSyncReturns<string> {
-  return spawnSync(process.execPath, [TSX, SCRIPT], { cwd, env, encoding: "utf8" });
-}
-
 describe("trimGoCache", () => {
   describe("when the entries total no more than the cap", () => {
     it("deletes nothing", () => {
@@ -231,38 +192,63 @@ describe("trimGoCache", () => {
   });
 
   describe("when entries were used within the protection window", () => {
-    it("spares them even when the total stays above the target", () => {
-      const cache = tempDir();
-      const entries = [
-        writeEntry(cache, "00", 100, 3 * HOUR),
-        writeEntry(cache, "01", 100, PROTECTED_AGE),
-        writeEntry(cache, "02", 100, PROTECTED_AGE - 1000),
-        writeEntry(cache, "03", 100, 10 * MINUTE),
-      ];
+    it.each([
+      {
+        rule: "and deletes the rest oldest first",
+        sizes: [300, 300, 300, 300],
+        ages: [10 * MINUTE, 20 * MINUTE, 30 * MINUTE, 3 * HOUR],
+        limits: { cap: 1000, target: 600 },
+        expected: [true, true, false, false],
+      },
+      {
+        rule: "stopping at the first that would pass it even when an older one fits",
+        sizes: [300, 400, 100],
+        ages: [10 * MINUTE, 20 * MINUTE, 30 * MINUTE],
+        limits: { cap: 700, target: 600 },
+        expected: [true, false, false],
+      },
+    ])(
+      "spares the newest of them while their total stays within the target, $rule",
+      ({ sizes, ages, limits, expected }) => {
+        const cache = tempDir();
+        const entries = sizes.map((size, index) =>
+          writeEntry(cache, `0${index}`, size, ages[index] ?? 0),
+        );
 
-      trim(cache, { cap: 150, target: 100 });
+        trim(cache, limits);
 
-      expect(survivors(entries)).toStrictEqual([false, false, true, true]);
-    });
+        expect(survivors(entries)).toStrictEqual(expected);
+      },
+    );
 
-    it("spares an entry a build refreshed after the scan and deletes the next oldest instead", () => {
-      const cache = tempDir();
-      const refreshed = writeEntry(cache, "00", 100, 4 * HOUR);
-      const entries = [
-        refreshed,
-        writeEntry(cache, "01", 100, 3 * HOUR),
-        writeEntry(cache, "02", 100, 2.5 * HOUR),
-      ];
+    it.each([
+      {
+        seen: "outside the window",
+        ages: [4 * HOUR, 3 * HOUR, 2.5 * HOUR],
+        target: 200,
+      },
+      {
+        seen: "as a recent entry beyond the protected share",
+        ages: [30 * MINUTE, 20 * MINUTE, 10 * MINUTE],
+        target: 100,
+      },
+    ])(
+      "spares an entry a build refreshed after the scan saw it $seen and deletes the next oldest instead",
+      ({ ages, target }) => {
+        const cache = tempDir();
+        const entries = ages.map((age, index) => writeEntry(cache, `0${index}`, 100, age));
+        const [refreshed] = entries;
 
-      trim(cache, { cap: 250, target: 200 }, (path) => {
-        if (path === refreshed) setAge(path, 30 * MINUTE);
-      });
+        trim(cache, { cap: 250, target }, (path) => {
+          if (path === refreshed) setAge(path, MINUTE);
+        });
 
-      expect(survivors(entries)).toStrictEqual([true, false, true]);
-      expect(stderr.mock.calls).toStrictEqual([
-        ["Trimmed the Go build cache from 300 B to 200 B by removing 1 entry\n"],
-      ]);
-    });
+        expect(survivors(entries)).toStrictEqual([true, false, true]);
+        expect(stderr.mock.calls).toStrictEqual([
+          ["Trimmed the Go build cache from 300 B to 200 B by removing 1 entry\n"],
+        ]);
+      },
+    );
   });
 
   describe("when the cache holds files other than entries", () => {
@@ -273,6 +259,7 @@ describe("trimGoCache", () => {
         "README",
         "trim.txt",
         "testexpire.txt",
+        "0a",
         join("fuzz", `${hex}-a`),
         join("zz", `${hex}-a`),
         join("abc", `${hex}-a`),
@@ -526,134 +513,21 @@ describe("trimGoCache", () => {
     });
 
     it.each([
-      { when: "under the cap", age: 5 * HOUR, cap: 100 },
-      { when: "over the cap with every entry protected", age: 30 * MINUTE, cap: 50 },
-    ])("prints nothing when it deletes nothing $when", ({ age, cap }) => {
+      { when: "under the cap", cap: 100, beforeDelete: undefined },
+      {
+        when: "over the cap with its only candidate refreshed by a build",
+        cap: 50,
+        beforeDelete: (path: string) => {
+          setAge(path, MINUTE);
+        },
+      },
+    ])("prints nothing when it deletes nothing $when", ({ cap, beforeDelete }) => {
       const cache = tempDir();
-      writeEntry(cache, "00", 100, age);
+      writeEntry(cache, "00", 100, 5 * HOUR);
 
-      trim(cache, { cap, target: 0 });
+      trim(cache, { cap, target: 0 }, beforeDelete);
 
       expect(stderr.mock.calls).toStrictEqual([]);
     });
   });
-});
-
-describe("scripts/trim-go-cache.ts run as a command", () => {
-  it("exits 0 and leaves a cache under the cap untouched", () => {
-    const cache = tempDir();
-    const entry = writeEntry(cache, "00", 100, 5 * HOUR);
-
-    const result = runScript(tempDir(), { ...process.env, GOCACHE: cache });
-
-    expect(result.status).toBe(0);
-    expect(existsSync(entry)).toBe(true);
-  });
-
-  it("exits non-zero naming the GOCACHE it was given when that is not a directory", () => {
-    const cache = writeSized(join(tempDir(), "cache"), 10, 0);
-
-    const result = runScript(tempDir(), { ...process.env, GOCACHE: cache });
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(cache);
-  });
-
-  it("exits 0 without scanning when GOCACHE is off", () => {
-    const cwd = tempDir();
-    writeSized(join(cwd, "off"), 10, 0);
-
-    const result = runScript(cwd, { ...process.env, GOCACHE: "off" });
-
-    expect(result.status).toBe(0);
-  });
-
-  it("exits non-zero naming the go command when go cannot run", () => {
-    const result = runScript(tempDir(), withPath(process.env, tempDir()));
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("go env GOCACHE");
-  });
-
-  it.runIf(POSIX)("exits non-zero naming the go command when go env fails", () => {
-    const bin = fakeGo("exit 1");
-
-    const result = runScript(tempDir(), withPath(process.env, bin));
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("go env GOCACHE failed");
-  });
-
-  it.runIf(POSIX).each([
-    {
-      total: "exactly 12 GiB",
-      sizes: [3 * GIB, 3 * GIB, 3 * GIB, 3 * GIB],
-      expected: [true, true, true, true],
-    },
-    {
-      total: "1 B over 12 GiB, oldest entry largest",
-      sizes: [3 * GIB + 1, 3 * GIB, 3 * GIB, 3 * GIB],
-      expected: [false, true, true, true],
-    },
-    {
-      total: "1 B over 12 GiB, newest entry largest",
-      sizes: [3 * GIB, 3 * GIB, 3 * GIB, 3 * GIB + 1],
-      expected: [false, false, true, true],
-    },
-  ])("trims a cache of $total against a 12 GiB cap and a 9 GiB target", ({ sizes, expected }) => {
-    const cache = tempDir();
-    const now = Date.now();
-    const ages = [5 * HOUR, 4 * HOUR, 3 * HOUR, 2.5 * HOUR];
-    const entries = sizes.map((size, index) => {
-      const entry = writeEntry(cache, `0${index}`, size, 0);
-      setAge(entry, ages[index] ?? 0, now);
-      return entry;
-    });
-
-    const result = runScript(tempDir(), { ...process.env, GOCACHE: cache });
-
-    expect(result.status).toBe(0);
-    expect(survivors(entries)).toStrictEqual(expected);
-  });
-
-  it.runIf(POSIX)("spares entries used within the last 2 h", () => {
-    const cache = tempDir();
-    const now = Date.now();
-    const unprotected = writeEntry(cache, "00", 1, 0);
-    setAge(unprotected, 2 * HOUR + MINUTE, now);
-    const protectedEntry = writeEntry(cache, "01", 13 * GIB, 0);
-    setAge(protectedEntry, 2 * HOUR - MINUTE, now);
-
-    const result = runScript(tempDir(), { ...process.env, GOCACHE: cache });
-
-    expect(result.status).toBe(0);
-    expect(survivors([unprotected, protectedEntry])).toStrictEqual([false, true]);
-  });
-});
-
-describe("npm scripts", () => {
-  it.runIf(POSIX).each(["test:go", "lint:go"])(
-    "%s stops before running go when the trim fails",
-    (script) => {
-      const cache = writeSized(join(tempDir(), "cache"), 10, 0);
-      const marker = join(tempDir(), "go-ran");
-
-      const result = runNpmScript(script, cache, marker);
-
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain(cache);
-      expect(existsSync(marker)).toBe(false);
-    },
-  );
-
-  it.runIf(POSIX).each(["test:go", "lint:go"])(
-    "%s runs go after a trim that succeeds",
-    (script) => {
-      const marker = join(tempDir(), "go-ran");
-
-      runNpmScript(script, tempDir(), marker);
-
-      expect(existsSync(marker)).toBe(true);
-    },
-  );
 });
