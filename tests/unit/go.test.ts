@@ -300,6 +300,19 @@ describe("runGo", () => {
   );
 });
 
+describe("runGo before go starts", () => {
+  it.runIf(POSIX)("has already trimmed the project folder", () => {
+    const cache = join(tempDir(), "go-build");
+    const stale = writeEntry(cache, "00", 8 * GIB + 1, 5 * HOUR);
+    const record = join(tempDir(), "call");
+    const bin = fakeGo(`if [ -e '${stale}' ]; then echo kept; else echo trimmed; fi > '${record}'`);
+
+    runGo(["version"], environment(bin), cache);
+
+    expect(readFileSync(record, "utf8")).toBe("trimmed\n");
+  });
+});
+
 describe("npm scripts", () => {
   it.runIf(POSIX).each([
     { script: "lint:go", calls: 2 },

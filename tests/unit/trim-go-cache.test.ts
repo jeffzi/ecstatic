@@ -249,6 +249,20 @@ describe("trimGoCache", () => {
         ]);
       },
     );
+
+    it("counts an entry exactly the protection window old as outside it", () => {
+      const cache = tempDir();
+      const entries = [3 * HOUR, PROTECTED_AGE, 10 * MINUTE].map((age, index) =>
+        writeEntry(cache, `0${index}`, 100, age),
+      );
+      const [refreshed] = entries;
+
+      trim(cache, { cap: 250, target: 200 }, (path) => {
+        if (path === refreshed) setAge(path, MINUTE);
+      });
+
+      expect(survivors(entries)).toStrictEqual([true, false, true]);
+    });
   });
 
   describe("when the cache holds files other than entries", () => {
@@ -264,6 +278,9 @@ describe("trimGoCache", () => {
         join("zz", `${hex}-a`),
         join("abc", `${hex}-a`),
         join("00", `${"1".repeat(63)}-a`),
+        join("00", `${"1".repeat(65)}-a`),
+        join("00", `${"A".repeat(64)}-a`),
+        join("AB", `${hex}-a`),
         join("00", `${hex}-b`),
         join("00", `${hex}-a.tmp`),
         join("00", "nested", `${hex}-a`),
