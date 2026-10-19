@@ -18,34 +18,44 @@ interface StatementCount {
 }
 
 function parseProfile(profilePath: string, content: string): Map<string, StatementCount> {
-  const lines = content.split(/\r?\n/).filter((line) => line !== "");
-  const modeLine = lines.shift();
+  const [modeLine, ...lines] = content.split(/\r?\n/);
   if (modeLine?.startsWith("mode: ") !== true) {
     throw new Error(`${profilePath} is not a Go coverage profile: the first line is not "mode: …"`);
   }
 
   const packages = new Map<string, StatementCount>();
   for (const [index, line] of lines.entries()) {
+    if (line === "") {
+      continue;
+    }
     const groups = BLOCK_LINE.exec(line)?.groups;
-    if (groups?.["file"] === undefined) {
+    const file = groups?.["file"];
+    if (groups === undefined || file === undefined) {
       // +1 for the skipped mode line, +1 for 1-based numbering
       throw new Error(`${profilePath}:${index + 2} is not a coverage block: ${line}`);
     }
-    const file = groups["file"];
-    const separator = file.lastIndexOf("/");
-    if (file.slice(separator + 1) === ENTRY_POINT_FILE) {
-      continue;
-    }
-    const statements = Number(groups["statements"]);
-    const pkg = file.slice(0, separator);
-    const totals = packages.get(pkg) ?? { covered: 0, total: 0 };
-    totals.total += statements;
-    if (Number(groups["count"]) > 0) {
-      totals.covered += statements;
-    }
-    packages.set(pkg, totals);
+    addBlock(packages, file, Number(groups["statements"]), Number(groups["count"]));
   }
   return packages;
+}
+
+function addBlock(
+  packages: Map<string, StatementCount>,
+  file: string,
+  statements: number,
+  count: number,
+): void {
+  const separator = file.lastIndexOf("/");
+  if (file.slice(separator + 1) === ENTRY_POINT_FILE) {
+    return;
+  }
+  const pkg = file.slice(0, separator);
+  const totals = packages.get(pkg) ?? { covered: 0, total: 0 };
+  totals.total += statements;
+  if (count > 0) {
+    totals.covered += statements;
+  }
+  packages.set(pkg, totals);
 }
 
 /**
@@ -58,7 +68,8 @@ function parseProfile(profilePath: string, content: string): Map<string, Stateme
  * @param profilePath - Path to the coverage profile; the CLI passes its first argument, or
  * `coverage/go.out`.
  * @throws Error naming every package below 95% with its percentage.
- * @throws Error naming the file when it is missing or is not a coverage profile.
+ * @throws Error naming the file when it cannot be read, with the filesystem error as its cause.
+ * @throws Error naming the file when it is not a coverage profile.
  */
 export function checkGoCoverage(profilePath: string): void {
   let content: string;

@@ -13,7 +13,6 @@ import (
 type Table struct {
 	ids   map[*ast.Node]facts.NodeID
 	nodes []*ast.Node
-	next  facts.NodeID
 }
 
 // NewTable returns an empty table.
@@ -27,8 +26,7 @@ func (t *Table) Register(node *ast.Node) facts.NodeID {
 	if id, ok := t.ids[node]; ok {
 		return id
 	}
-	id := t.next
-	t.next++
+	id := facts.NodeID(len(t.nodes)) //nolint:gosec // a source file never holds 2^31 nodes, so the length fits in int32
 	t.ids[node] = id
 	t.nodes = append(t.nodes, node)
 	return id

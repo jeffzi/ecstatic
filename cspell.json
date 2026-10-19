@@ -61,6 +61,7 @@
     "parameterless",
     "precheck",
     "rebinder",
+    "realpaths",
     "reentrancy",
     "respawn",
     "respawned",

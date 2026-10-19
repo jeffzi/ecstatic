@@ -26,6 +26,7 @@ const (
 	nodesPath       = "internal/nodes"
 	analysisPath    = "internal/analysis"
 	ttscadapterPath = "internal/ttscadapter"
+	emitPath        = "internal/emit"
 )
 
 // Packages returns the import paths of the packages the rules name. A rule keyed on a path no
@@ -37,6 +38,7 @@ func Packages() []string {
 		modulePrefix + nodesPath,
 		modulePrefix + analysisPath,
 		modulePrefix + ttscadapterPath,
+		modulePrefix + emitPath,
 	}
 }
 
@@ -54,6 +56,9 @@ const (
 	RuleCheckerImporter
 	// RuleDriverImporter: only ttscadapter imports the ttsc driver.
 	RuleDriverImporter
+	// RuleEmitClosure: emit depends on no checker shim and no ttsc package,
+	// so it builds output from the AST and the plan alone.
+	RuleEmitClosure
 )
 
 // String describes the boundary. A value that is not a declared rule, the zero value included,
@@ -68,6 +73,8 @@ func (r Rule) String() string {
 		return "only analysis may import the checker shim"
 	case RuleDriverImporter:
 		return "only ttscadapter may import the ttsc driver"
+	case RuleEmitClosure:
+		return "emit must not depend on the checker shim or ttsc"
 	default:
 		return fmt.Sprintf("Rule(%d)", uint8(r))
 	}
@@ -135,6 +142,8 @@ func checkPackage(pkg listedPackage) []Violation {
 		report(pkg.Deps, RulePureClosure, isCompilerPackage)
 	case nodesPath:
 		report(pkg.Deps, RuleNodesClosure, isChecker)
+	case emitPath:
+		report(pkg.Deps, RuleEmitClosure, func(path string) bool { return isChecker(path) || inModule(path, ttscModule) })
 	}
 	if rel != analysisPath {
 		report(pkg.Imports, RuleCheckerImporter, isChecker)

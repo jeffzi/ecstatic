@@ -7,10 +7,17 @@ import { assert, describe, expect, it, vi } from "vitest";
 const FIXTURES_DIR = fileURLToPath(new URL("fixtures", import.meta.url));
 const INPUT_FILE = "input.ts";
 
-/** Every fixture directory under `fixtures/`, as `category/case`, found by its `input.ts`. */
+/**
+ * The category whose golden files diverge from their inputs by design: a cast lies about the storage's shape, so the
+ * guard throws where the runtime does not. `shape-guard.test.ts` covers it.
+ */
+const DIVERGENT = "divergent/";
+
+/** Every fixture directory under `fixtures/` but the divergent ones, as `category/case`, found by its `input.ts`. */
 const FIXTURES = readdirSync(FIXTURES_DIR, { recursive: true, encoding: "utf8" })
   .filter((path) => path.endsWith(`${sep}${INPUT_FILE}`))
   .map((path) => dirname(path).split(sep).join("/"))
+  .filter((fixture) => !fixture.startsWith(DIVERGENT))
   .toSorted();
 
 /** Imports `file` against a fresh module registry and returns the trace its `scenario()` builds. */

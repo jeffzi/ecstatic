@@ -1,3 +1,6 @@
+import * as ecstatic_internal from "ecstatic/internal";
+const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
+const shapeKey = "c8:Position{1:x=n,1:y=n}c8:Velocity{2:dx=n,2:dy=n}|";
 import { Archetype, createWorld, each, get, register, spawn } from "ecstatic";
 
 import { Position, Velocity } from "../../schema.js";
@@ -14,10 +17,19 @@ export function scenario(): unknown {
   ];
   const visited: number[] = [];
 
-  each(runners, (e) => {
-    visited.push(e.id);
-    e.Position.y += e.Velocity.dy;
-  });
+  {
+      const storage = runners;
+      DEBUG && ecstatic_internal.assertShape(storage, shapeKey);
+      const n = storage.n;
+      if (n > 0) {
+          const PositionRecord = storage.Position, VelocityRecord = storage.Velocity;
+          let value;
+          for (let i = n - 1; i >= 0; i--) {
+              visited.push(storage.entities[i]);
+              (value = PositionRecord.y[i], value = value + (VelocityRecord.dy[i]), PositionRecord.y[i] = value);
+          }
+      }
+  }
 
   return { visited, ys: ids.map((id) => get(runners, id, Position.y)) };
 }

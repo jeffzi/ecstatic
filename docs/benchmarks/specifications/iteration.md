@@ -81,9 +81,10 @@ each(storage, (e) => {
 **Rationale:** The call to `advance` is what makes this body hazard-bearing. A call in the body
 could spawn past the storage's capacity and reallocate its columns, so the optimizer compiles such a
 body in realloc-safe mode: it re-reads each column through the storage's component record on every
-access instead of holding it in a local. Every other `each()` body in the suite is hazard-free, so
-this is the one benchmark that times realloc-safe mode. `advance` is a module-level function so the
-call stays a call in the source; inlining it by hand would make the body hazard-free again.
+access instead of holding it in a local. The call is the body's only hazard, so set beside
+[throughput](#throughput) this benchmark shows what realloc-safe mode costs a plain field update.
+`advance` is a module-level function so the call stays a call in the source; inlining it by hand
+would make the body hazard-free again.
 
 ---
 

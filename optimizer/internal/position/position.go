@@ -5,9 +5,13 @@
 package position
 
 import (
+	"cmp"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf16"
+
+	"github.com/microsoft/typescript-go/shim/core"
 
 	"github.com/jeffzi/ecstatic/optimizer/internal/facts"
 )
@@ -15,15 +19,22 @@ import (
 // Of returns the position of offset, a byte offset into source, in the file named file.
 //
 // Lines count from 1, and columns count UTF-16 code units from 1, as TypeScript's own diagnostics
-// do.
+// do. Lines end where tsgo's line map ends them (LF, CRLF, CR, LS and PS), so Of agrees with the
+// positions the analysis reports.
 func Of(file, source string, offset int) facts.Position {
-	before := source[:offset]
-	lineStart := strings.LastIndex(before, "\n") + 1
+	starts := core.ComputeECMALineStarts(source)
+	line, found := slices.BinarySearchFunc(starts, offset, func(start core.TextPos, offset int) int {
+		return cmp.Compare(int(start), offset)
+	})
+	if !found {
+		line--
+	}
+	lineStart := int(starts[line])
 	return facts.Position{
 		File:   file,
 		Offset: offset,
-		Line:   strings.Count(before, "\n") + 1,
-		Column: len(utf16.Encode([]rune(before[lineStart:]))) + 1,
+		Line:   line + 1,
+		Column: len(utf16.Encode([]rune(source[lineStart:offset]))) + 1,
 	}
 }
 

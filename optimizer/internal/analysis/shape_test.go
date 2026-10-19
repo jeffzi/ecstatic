@@ -1,7 +1,6 @@
 package analysis_test
 
 import (
-	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -10,46 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/jeffzi/ecstatic/optimizer/internal/facts"
-	"github.com/jeffzi/ecstatic/optimizer/internal/project"
 )
-
-const positionSource = `import { component } from "../src/index.js";
-
-export const Position = component("Position", { x: 0, y: 0 });
-`
-
-const componentsSource = `import { component, f32, ref, relation } from "../src/index.js";
-
-export const Velocity = component("Velocity", { dx: f32(0), dy: 0 });
-export const Shield = component("Shield", { hp: 0, active: true, label: "", owner: ref<number>() });
-export const Stunned = component("Stunned");
-export const Boost = component("Boost", {});
-export const ChildOf = relation("ChildOf", { order: 0, pinned: false });
-`
-
-const archetypesSource = `import { Archetype, archetype } from "../src/index.js";
-import { Boost, ChildOf, Shield, Stunned, Velocity } from "./components.js";
-import { Position } from "./position.js";
-
-export const Enemy = archetype([Position, Velocity], [Shield, Stunned]);
-export class Ship extends Archetype([Position], [Shield, Stunned, Boost]) {}
-export class Hull extends Archetype([Position], [Shield, Stunned, Boost]) {}
-export const Linked = archetype([Position, ChildOf]);
-`
-
-const storagesSource = `import { createWorld, register } from "../src/index.js";
-import { Enemy } from "./archetypes.js";
-
-export const enemies = register(createWorld(), Enemy);
-`
-
-// casePrelude opens every case file: the runtime API and the shared archetypes and components.
-const casePrelude = `import { archetype, component, createWorld, each, getStorage, register, type Storage, type World } from "../../src/index.js";
-import type { ArchetypeDescriptor, ComponentDescriptor } from "../../src/archetype.js";
-import { Enemy, Hull, Linked, Ship } from "../archetypes.js";
-import { Position } from "../position.js";
-import { Velocity } from "../components.js";
-`
 
 // shapeCase is one each call written in a case file of its own.
 type shapeCase struct {
@@ -61,29 +21,15 @@ type shapeCase struct {
 	reason           facts.Reason
 }
 
+// shapeName is the name of the test run for c.
+func shapeName(c shapeCase) string { return c.name }
+
+// shapeSource is the case source of c.
+func shapeSource(c shapeCase) string { return c.source }
+
 // eachOver is a case source that declares s with storageType and calls each over it.
 func eachOver(storageType string) string {
 	return "declare const s: " + storageType + ";\neach(s, () => {});\n"
-}
-
-// caseFile is the slash-separated path of the ith case file.
-func caseFile(i int) string {
-	return fmt.Sprintf("app/case/case%d.ts", i)
-}
-
-// shapeProject is the real runtime plus shared components, archetypes, and storages, and one file per case.
-func shapeProject(t *testing.T, cases []shapeCase) *testProgram {
-	t.Helper()
-	files := project.Runtime(t, fixture{
-		"app/position.ts":   positionSource,
-		"app/components.ts": componentsSource,
-		"app/archetypes.ts": archetypesSource,
-		"app/storages.ts":   storagesSource,
-	})
-	for i, c := range cases {
-		files[caseFile(i)] = casePrelude + c.source
-	}
-	return loadProgram(t, files)
 }
 
 // eachSite returns the one each site of sites, at any depth.
@@ -236,27 +182,24 @@ each([register(world, Joined), register(world, Split)], () => {});
 func TestAnalyze_ResolvesStorageShapes(t *testing.T) {
 	t.Parallel()
 	cases := slices.Concat(resolvedStorageCases(), arrayLiteralCases())
-	program := shapeProject(t, cases)
-	// The cases run one at a time: they share program, and its checker is not safe for concurrent use.
-	for i, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			wantFiles := projectFiles(program, tt.declarationFiles...)
+	program := caseProject(t, "", valuesOf(cases, shapeSource))
+	runCases(t, cases, shapeName, func(t *testing.T, i int, tt shapeCase) {
+		wantFiles := projectFiles(program, tt.declarationFiles...)
 
-			site := analyzeCase(t, program, i)
+		site := analyzeCase(t, program, i)
 
-			if len(site.Reasons) != 0 {
-				t.Fatalf("Analyze(%s) reasons = %v, want none", tt.name, site.Reasons)
+		if len(site.Reasons) != 0 {
+			t.Fatalf("Analyze(%s) reasons = %v, want none", tt.name, site.Reasons)
+		}
+		if diff := cmp.Diff(tt.want, site.Shapes, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("Analyze(%s) shapes mismatch (-want +got):\n%s", tt.name, diff)
+		}
+		for _, want := range wantFiles {
+			if !slices.Contains(site.DeclarationFiles, want) {
+				t.Errorf("Analyze(%s) DeclarationFiles = %q, want it to include %s", tt.name, site.DeclarationFiles, want)
 			}
-			if diff := cmp.Diff(tt.want, site.Shapes, cmpopts.EquateEmpty()); diff != "" {
-				t.Errorf("Analyze(%s) shapes mismatch (-want +got):\n%s", tt.name, diff)
-			}
-			for _, want := range wantFiles {
-				if !slices.Contains(site.DeclarationFiles, want) {
-					t.Errorf("Analyze(%s) DeclarationFiles = %q, want it to include %s", tt.name, site.DeclarationFiles, want)
-				}
-			}
-		})
-	}
+		}
+	})
 }
 
 // unresolvedStorageCases holds one each call per storage form whose shape cannot resolve.
@@ -359,25 +302,22 @@ func failedResolutionCases() []shapeCase {
 func TestAnalyze_WhenStorageShapeUnresolved_RecordsReason(t *testing.T) {
 	t.Parallel()
 	cases := failedResolutionCases()
-	program := shapeProject(t, cases)
-	// The cases run one at a time: they share program, and its checker is not safe for concurrent use.
-	for i, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			site := analyzeCase(t, program, i)
+	program := caseProject(t, "", valuesOf(cases, shapeSource))
+	runCases(t, cases, shapeName, func(t *testing.T, i int, tt shapeCase) {
+		site := analyzeCase(t, program, i)
 
-			if want := []facts.Reason{tt.reason}; !slices.Equal(site.Reasons, want) {
-				t.Errorf("Analyze(%s) reasons = %v, want %v", tt.name, site.Reasons, want)
-			}
-			if len(site.Shapes) != 0 {
-				t.Errorf("Analyze(%s) shapes = %+v, want none", tt.name, site.Shapes)
-			}
-		})
-	}
+		if want := []facts.Reason{tt.reason}; !slices.Equal(site.Reasons, want) {
+			t.Errorf("Analyze(%s) reasons = %v, want %v", tt.name, site.Reasons, want)
+		}
+		if len(site.Shapes) != 0 {
+			t.Errorf("Analyze(%s) shapes = %+v, want none", tt.name, site.Shapes)
+		}
+	})
 }
 
 func TestAnalyze_WhenEachStorageResolves_ListsConsultedDeclarationFiles(t *testing.T) {
 	t.Parallel()
-	program := shapeProject(t, []shapeCase{{source: eachOver("Storage<Ship>")}})
+	program := caseProject(t, "", []string{eachOver("Storage<Ship>")})
 	want := projectFiles(program,
 		"app/archetypes.ts",
 		"app/components.ts",

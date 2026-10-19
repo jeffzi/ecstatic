@@ -5,9 +5,24 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createVitest, type TestProject, type Vitest } from "vitest/node";
 
+import { archetype, component, each, type Storage } from "../../src/index.js";
 import { packageBin } from "../package-bin.js";
 
 const execFileAsync = promisify(execFile);
+
+// The projects whose plugin list carries the optimizer. A test passes there whether or not a module
+// was rewritten, since a rewrite keeps the runtime's behavior, so only the module text tells.
+const OPTIMIZED_PROJECTS: ReadonlySet<string> = new Set(["unit-optimized", "unit-ndebug"]);
+
+const ConfigProbe = component("ConfigProbe", { hits: 0 });
+const ConfigProbeArch = archetype([ConfigProbe]);
+
+/** An inline `each` the optimizer rewrites into a loop guarded by `assertShape`. */
+function countHits(storage: Storage<typeof ConfigProbeArch>): void {
+  each(storage, (e) => {
+    e.ConfigProbe.hits += 1;
+  });
+}
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
@@ -58,6 +73,14 @@ describe("vitest config", () => {
     );
 
     expect(actual).toStrictEqual(expected);
+  });
+
+  it("rewrites test modules through the optimizer in exactly the optimized projects", ({
+    task,
+  }) => {
+    const rewritten = countHits.toString().includes("assertShape");
+
+    expect(rewritten).toBe(OPTIMIZED_PROJECTS.has(task.file.projectName ?? ""));
   });
 
   it("type-checks every type test file of the types project", async () => {

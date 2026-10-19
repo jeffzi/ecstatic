@@ -169,12 +169,14 @@ describe("assertShape", () => {
   });
 
   describe("when the value has no archetype", () => {
-    it("throws naming the expected shape and the missing archetype", () => {
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the cast is the misuse under test
-      const notAStorage = [] as unknown as Storage;
-
+    it.each([
+      { name: "an array", value: [] },
+      { name: "a number", value: 42 },
+      { name: "null", value: null },
+      { name: "undefined", value: undefined },
+    ])("throws naming the expected shape and the missing archetype for $name", ({ value }) => {
       const error = errorFrom(() => {
-        assertShape(notAStorage, "c1:A{}|");
+        assertShape(value, "c1:A{}|");
       });
 
       expect(error.message).toBe(

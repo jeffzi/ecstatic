@@ -1,6 +1,7 @@
 package analysis_test
 
 import (
+	"fmt"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -193,14 +194,14 @@ func nodeOffsets(t *testing.T, table *nodes.Table, file *ast.SourceFile, ids []f
 
 // siteOps lists the Op of each site, in order.
 func siteOps(sites []facts.Site) []facts.Op {
-	return siteValues(sites, func(s facts.Site) facts.Op { return s.Op })
+	return valuesOf(sites, func(s facts.Site) facts.Op { return s.Op })
 }
 
-// siteValues lists value of each site, in order.
-func siteValues[T any](sites []facts.Site, value func(facts.Site) T) []T {
-	values := make([]T, 0, len(sites))
-	for _, s := range sites {
-		values = append(values, value(s))
+// valuesOf lists value of each of items, in order.
+func valuesOf[S, T any](items []S, value func(S) T) []T {
+	values := make([]T, 0, len(items))
+	for _, item := range items {
+		values = append(values, value(item))
 	}
 	return values
 }
@@ -220,6 +221,79 @@ func flatten(sites []facts.Site) []facts.Site {
 		out = append(out, flatten(s.Nested)...)
 	}
 	return out
+}
+
+const positionSource = `import { component } from "../src/index.js";
+
+export const Position = component("Position", { x: 0, y: 0 });
+`
+
+const componentsSource = `import { component, f32, ref, relation } from "../src/index.js";
+
+export const Velocity = component("Velocity", { dx: f32(0), dy: 0 });
+export const Shield = component("Shield", { hp: 0, active: true, label: "", owner: ref<number>() });
+export const Stunned = component("Stunned");
+export const Boost = component("Boost", {});
+export const ChildOf = relation("ChildOf", { order: 0, pinned: false });
+`
+
+const archetypesSource = `import { Archetype, archetype } from "../src/index.js";
+import { Boost, ChildOf, Shield, Stunned, Velocity } from "./components.js";
+import { Position } from "./position.js";
+
+export const Enemy = archetype([Position, Velocity], [Shield, Stunned]);
+export class Ship extends Archetype([Position], [Shield, Stunned, Boost]) {}
+export class Hull extends Archetype([Position], [Shield, Stunned, Boost]) {}
+export const Linked = archetype([Position, ChildOf]);
+`
+
+const storagesSource = `import { createWorld, register } from "../src/index.js";
+import { Enemy } from "./archetypes.js";
+
+export const enemies = register(createWorld(), Enemy);
+`
+
+// casePrelude opens every case file: the runtime API and the shared archetypes and components.
+const casePrelude = `import { archetype, component, createWorld, each, getStorage, register, type Storage, type World } from "../../src/index.js";
+import type { ArchetypeDescriptor, ComponentDescriptor } from "../../src/archetype.js";
+import { Enemy, Hull, Linked, Ship } from "../archetypes.js";
+import { Position } from "../position.js";
+import { Velocity } from "../components.js";
+`
+
+// caseFile is the slash-separated path of the ith case file.
+func caseFile(i int) string {
+	return fmt.Sprintf("app/case/case%d.ts", i)
+}
+
+// caseStart is the offset in a case file opened by prelude at which its case source starts.
+func caseStart(prelude string) int {
+	return len(casePrelude) + len(prelude)
+}
+
+// caseProject is the real runtime plus shared components, archetypes, and storages, and one case file per source,
+// each opened by casePrelude and prelude.
+func caseProject(t *testing.T, prelude string, sources []string) *testProgram {
+	t.Helper()
+	files := project.Runtime(t, fixture{
+		"app/position.ts":   positionSource,
+		"app/components.ts": componentsSource,
+		"app/archetypes.ts": archetypesSource,
+		"app/storages.ts":   storagesSource,
+	})
+	for i, source := range sources {
+		files[caseFile(i)] = casePrelude + prelude + source
+	}
+	return loadProgram(t, files)
+}
+
+// runCases runs run over each of cases, the ith written to caseFile(i), as a nested test named by name. The nested
+// tests run one at a time: the cases share one program, and its checker is not safe for concurrent use.
+func runCases[C any](t *testing.T, cases []C, name func(C) string, run func(t *testing.T, i int, c C)) {
+	t.Helper()
+	for i, c := range cases {
+		t.Run(name(c), func(t *testing.T) { run(t, i, c) })
+	}
 }
 
 func TestLoadProgram_WhenAFixtureFileHasAnError_FailsNamingFileAndLine(t *testing.T) {
@@ -245,4 +319,16 @@ func TestLoadProgram_WhenAFixtureFileHasAnError_FailsNamingFileAndLine(t *testin
 			}
 		})
 	}
+}
+
+// firstEachSite returns the first top-level each site of sites.
+func firstEachSite(t *testing.T, sites []facts.Site) facts.Site {
+	t.Helper()
+	for _, s := range sites {
+		if s.Op == facts.OpEach {
+			return s
+		}
+	}
+	t.Fatal("no top-level each site")
+	return facts.Site{}
 }

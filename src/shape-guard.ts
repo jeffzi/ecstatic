@@ -12,7 +12,7 @@ import type { Storage } from "./world.js";
  * Shape key of each storage already checked. An archetype never changes shape after creation, so a
  * storage's key is computed once and a warm call is one lookup and one string comparison.
  */
-const shapeKeys = new WeakMap<Storage, string>();
+const shapeKeys = new WeakMap<object, string>();
 
 /**
  * Column kind code of one field default.
@@ -61,24 +61,36 @@ function archetypeShapeKey(arch: ArchetypeDescriptor): string {
 }
 
 /**
+ * Error for a value handed to the guard that carries no archetype.
+ *
+ * @param key - Shape key the call site expected.
+ * @returns The error naming `key` and the missing archetype.
+ */
+function noArchetypeError(key: string): Error {
+  return new Error(`ecstatic: shape guard expected ${key}, got a value with no archetype`);
+}
+
+/**
  * Check that a storage's archetype has the shape an optimized call site was compiled against.
  *
  * Checks regardless of `NDEBUG`: generated code gates the call behind its own `DEBUG` copy.
  *
- * @param storage - Storage the call site reads; only its `archetype` metadata is consulted.
+ * The input is untrusted: generated code passes whatever value the call site holds, and a cast in
+ * user code can make that value anything, `null` and `undefined` included.
+ *
+ * @param storage - Value the call site reads as a storage; only its `archetype` metadata is
+ *   consulted.
  * @param key - Shape key the optimizer computed for the site.
  * @throws Error naming the expected and the actual shape when they differ.
  * @throws Error naming the expected shape when `storage` carries no archetype.
  */
-export function assertShape(storage: Storage, key: string): void {
+export function assertShape(storage: unknown, key: string): void {
+  if (typeof storage !== "object" || storage === null) throw noArchetypeError(key);
   let actual = shapeKeys.get(storage);
   if (actual === undefined) {
-    // Generated code may hand over any value; widen so a missing archetype is checked, not assumed.
     const meta: Partial<Pick<Storage, "archetype">> = storage;
     const arch = meta.archetype;
-    if (arch === undefined) {
-      throw new Error(`ecstatic: shape guard expected ${key}, got a value with no archetype`);
-    }
+    if (arch === undefined) throw noArchetypeError(key);
     actual = archetypeShapeKey(arch);
     shapeKeys.set(storage, actual);
   }

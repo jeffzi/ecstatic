@@ -2,6 +2,8 @@ package ttscadapter
 
 import (
 	"cmp"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -17,7 +20,6 @@ import (
 	"github.com/microsoft/typescript-go/shim/printer"
 	"github.com/samchon/ttsc/packages/ttsc/driver"
 
-	"github.com/jeffzi/ecstatic/optimizer/internal/analysis"
 	"github.com/jeffzi/ecstatic/optimizer/internal/facts"
 	"github.com/jeffzi/ecstatic/optimizer/internal/plan"
 	"github.com/jeffzi/ecstatic/optimizer/internal/version"
@@ -103,12 +105,7 @@ func flagSyntax(f cliFlag) string {
 // another failure also occurs, such as closing the Program, that failure is reported as it would be
 // alone and its status of 1 or 3 is returned instead of 2.
 func Run(argv []string, stdout, stderr io.Writer) int {
-	return runPlugin(argv, streams{stdout: stdout, stderr: stderr}, defaultPluginRun())
-}
-
-// defaultPluginRun is the pluginRun that Run uses; tests build their own through runPlugin.
-func defaultPluginRun() pluginRun {
-	return pluginRun{analyze: analyzeProgram, emitTransform: transformFile}
+	return runPlugin(argv, streams{stdout: stdout, stderr: stderr}, pluginRun{})
 }
 
 // runPlugin runs as Run does, with plugin's seams in place of the defaults.
@@ -139,27 +136,35 @@ func reportFailure(err error, stderr io.Writer) int {
 	return status
 }
 
-// withoutReported is err with errReported dropped from the errors joined into it, or nil when
-// nothing else is left. An error that does not hold errReported is returned as it is: a
-// multi-%w error also unwraps to a list, and rebuilding it would lose its message.
+// withoutReported is err with errReported dropped from the errors that errors.Join joined into it,
+// through joins nested in joins, or nil when nothing else is left. Every other error is returned as
+// it is, including one that wraps errReported with %w, alone or beside other errors: a multi-%w
+// error also unwraps to a list, but rebuilding it would lose its message, and its own message and
+// whatever it wraps beside errReported are still to be reported.
 func withoutReported(err error) error {
 	if !errors.Is(err, errReported) {
 		return err
 	}
-	joined, ok := err.(interface{ Unwrap() []error })
-	if !ok {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		if reflect.TypeOf(err) != reflect.TypeOf(errors.Join(errReported)) {
+			return err
+		}
+		var kept []error
+		for _, e := range joined.Unwrap() {
+			kept = append(kept, withoutReported(e))
+		}
+		return errors.Join(kept...)
+	}
+	// errors.Is matched an error that wraps nothing, so err is errReported itself.
+	if errors.Unwrap(err) == nil {
 		return nil
 	}
-	var kept []error
-	for _, e := range joined.Unwrap() {
-		kept = append(kept, withoutReported(e))
-	}
-	return errors.Join(kept...)
+	return err
 }
 
 // run runs the subcommand argv names with plugin's seams, filling in its project directory and
 // options from argv.
-func run(argv []string, out streams, plugin pluginRun) error {
+func run(argv []string, out streams, plugin pluginRun) (err error) {
 	args, err := parseArgs(argv)
 	if err != nil {
 		return err
@@ -179,19 +184,23 @@ func run(argv []string, out streams, plugin pluginRun) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if closeErr := prog.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close the program for %s: %w", args.Tsconfig, closeErr))
+		}
+	}()
 	plugin.cwd = args.Cwd
 	plugin.opts = opts
 	switch args.Subcommand {
 	case subcommandTransform:
-		err = plugin.transform(prog, out)
+		return plugin.transform(prog, out)
 	case subcommandCheck:
-		err = plugin.check(prog, out.stderr)
+		return plugin.check(prog, out.stderr)
 	case subcommandBuild:
-		err = plugin.build(prog, args, out)
+		return plugin.build(prog, args, out)
 	default:
 		panic(fmt.Sprintf("subcommand %q passed parseArgs but run has no case for it", args.Subcommand))
 	}
-	return errors.Join(err, prog.Close())
 }
 
 // resolveCwd is cwd as ttsc's own host resolves it: absolute and cleaned, against the working
@@ -206,6 +215,8 @@ func resolveCwd(cwd string) (string, error) {
 
 // failureReport is what stderr says about err, and the status it exits with.
 func failureReport(err error) (string, int) {
+	// Before the errLoad case: a *loadDiagnosticsError also wraps errLoad, and its diagnostics
+	// replace the one-line reason.
 	if loadErr, ok := errors.AsType[*loadDiagnosticsError](err); ok {
 		return loadErr.report(), exitDiagnostics
 	}
@@ -230,8 +241,324 @@ func write(w io.Writer, stream, text string) error {
 	return nil
 }
 
+// errLoad marks a Program the driver could not load: a missing tsconfig, or a driver failure
+// before the tsconfig was parsed. The command exits 2 on it.
+var errLoad = errors.New("cannot load the program")
+
+// loadDiagnosticsError reports a Program that did not load because its tsconfig has errors. It
+// wraps errLoad.
+type loadDiagnosticsError struct {
+	cwd         string
+	diagnostics []driver.Diagnostic
+}
+
+func (e *loadDiagnosticsError) Error() string {
+	return fmt.Sprintf("%v: the tsconfig has %d error(s)", errLoad, driver.CountErrors(e.diagnostics))
+}
+
+func (e *loadDiagnosticsError) Unwrap() error {
+	return errLoad
+}
+
+// report renders the diagnostics the way ttsc's own commands write them to stderr, which is the
+// text ttsc parses a failed sidecar's diagnostics from.
+func (e *loadDiagnosticsError) report() string {
+	return renderDiagnostics(e.diagnostics, e.cwd)
+}
+
+// loadProgram loads the Program that args.Tsconfig, resolved against args.Cwd, describes, with
+// args.OutDir as its output directory when set and, when forceEmit is true, with noEmit cleared.
+// The caller closes it.
+//
+// When ttsc type-checks through a generated wrapper tsconfig, it names the user's tsconfig in
+// driver.SemanticConfigPathEnv, and its own commands load with it as the semantic config; the
+// driver does not read the variable itself, so the sidecar passes it on to type-check the project
+// as ttsc does. A tsconfig with errors fails with a *loadDiagnosticsError carrying them; that
+// error and any other failure wrap errLoad.
+func loadProgram(args sidecarArgs, forceEmit bool) (*driver.Program, error) {
+	prog, diagnostics, err := driver.LoadProgram(args.Cwd, args.Tsconfig, driver.LoadProgramOptions{
+		ForceEmit:          forceEmit,
+		OutDir:             args.OutDir,
+		SemanticConfigPath: os.Getenv(driver.SemanticConfigPathEnv),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w for %s: %w", errLoad, args.Tsconfig, err)
+	}
+	if len(diagnostics) > 0 {
+		return nil, &loadDiagnosticsError{cwd: args.Cwd, diagnostics: diagnostics}
+	}
+	return prog, nil
+}
+
 // ---------------------------------------------------------------------------
-// Check, build and emit
+// Plugin options
+// ---------------------------------------------------------------------------
+
+// descriptorSubpath is the package subpath a tsconfig names the descriptor by; it must match the
+// `./optimizer` subpath in package.json `exports`.
+const descriptorSubpath = "ecstatic/optimizer"
+
+// descriptorName is the `name` the descriptor in src/plugin/optimizer.ts declares, which ttsc reports
+// beside every entry it loaded from that descriptor.
+const descriptorName = "ecstatic"
+
+const (
+	keyEnabled   = "enabled"
+	keyStrict    = "strict"
+	keyTransform = "transform"
+)
+
+// validKeys lists the keys the ecstatic entry accepts, as usage errors name them; it must name
+// every key entryOptions accepts.
+const validKeys = keyEnabled + ", " + keyStrict + ", " + keyTransform
+
+// pluginOptions are the plugin's options, read from its tsconfig plugin entry.
+type pluginOptions struct {
+	// Strict reports every strict-category bail as an error; off by default.
+	Strict bool
+}
+
+// parseOptions reads the ecstatic entry's options from pluginsJSON, the --plugins-json array.
+// Each element decodes as ttsc's own projection of a tsconfig plugin entry, driver.PluginEntry,
+// whose Config holds the entry as the tsconfig wrote it.
+//
+// The ecstatic entry is the one the descriptor rule of src/plugin/plugin-entry.ts accepts, as far
+// as the sidecar can see it: its `enabled` is not false, and its `transform` is either the
+// `ecstatic/optimizer` subpath or a relative or absolute path that ttsc loaded the ecstatic descriptor
+// from (the entry's name is the descriptor's). The sidecar cannot resolve the path itself: ttsc
+// resolves it against the tsconfig that declared it, which may be an `extends` base the sidecar
+// never sees. Other plugins' entries are skipped whatever keys they hold, and no ecstatic entry
+// yields the defaults.
+//
+// The error wraps errUsage when pluginsJSON is not a JSON array of entries, when more than one
+// entry is the ecstatic one, or when that entry holds a key other than strict, transform, and
+// enabled, or a strict that is not a boolean; every one of these errors lists the valid keys.
+func parseOptions(pluginsJSON string) (pluginOptions, error) {
+	var entries []driver.PluginEntry
+	if err := json.Unmarshal([]byte(pluginsJSON), &entries); err != nil {
+		return pluginOptions{}, optionsError("--plugins-json is not a JSON array of plugin entries: %w", err)
+	}
+	var found *driver.PluginEntry
+	for i := range entries {
+		if !isEcstaticEntry(entries[i]) {
+			continue
+		}
+		if found != nil {
+			return pluginOptions{}, optionsError("more than one %s plugin entry; keep one", descriptorSubpath)
+		}
+		found = &entries[i]
+	}
+	if found == nil {
+		return pluginOptions{}, nil
+	}
+	return entryOptions(found.Config)
+}
+
+func isEcstaticEntry(entry driver.PluginEntry) bool {
+	if enabled, ok := entry.Config[keyEnabled].(bool); ok && !enabled {
+		return false
+	}
+	transform, ok := entry.Config[keyTransform].(string)
+	if !ok {
+		return false
+	}
+	return transform == descriptorSubpath || (isPathSpecifier(transform) && entry.Name == descriptorName)
+}
+
+// isPathSpecifier reports whether transform names a file rather than a package: what ttsc's
+// isRelativePluginSpecifier accepts, plus absolute paths. Keep it in step with ttsc, or the
+// name check in isEcstaticEntry skips an entry ttsc loads by path.
+func isPathSpecifier(transform string) bool {
+	return transform == "." || transform == ".." ||
+		strings.HasPrefix(transform, "./") || strings.HasPrefix(transform, "../") ||
+		strings.HasPrefix(transform, `.\`) || strings.HasPrefix(transform, `..\`) ||
+		filepath.IsAbs(transform)
+}
+
+func entryOptions(config map[string]any) (pluginOptions, error) {
+	var opts pluginOptions
+	for _, key := range slices.Sorted(maps.Keys(config)) {
+		switch key {
+		case keyTransform, keyEnabled:
+		case keyStrict:
+			strict, ok := config[key].(bool)
+			if !ok {
+				return pluginOptions{}, optionsError("%s option %s must be a boolean, got %v", descriptorSubpath, keyStrict, config[key])
+			}
+			opts.Strict = strict
+		default:
+			return pluginOptions{}, optionsError("unknown %s option %q", descriptorSubpath, key)
+		}
+	}
+	return opts, nil
+}
+
+// optionsError is a usage error for format and a that wraps errUsage and lists the valid keys.
+func optionsError(format string, a ...any) error {
+	return fmt.Errorf("%w: %w; valid keys: %s", errUsage, fmt.Errorf(format, a...), validKeys)
+}
+
+// ---------------------------------------------------------------------------
+// Analysis and transform
+// ---------------------------------------------------------------------------
+
+// envelope is the transform envelope ttsc reads from stdout (transformResult in ttsc's
+// utility/host.go). DependenciesComplete is never declared: omitting it keeps ttsc's host-owned
+// dependency bound. HostInputs lists, by absolute path, every runtime source a rewrite copied from;
+// HostInputHashes holds the SHA-256 of the text each was copied from, and HostInputPhysical the
+// physical path it was read through, the two witnesses ttsc requires of every host input before it
+// reuses a transform.
+type envelope struct {
+	Graph             *driver.TransformGraph     `json:"graph,omitempty"`
+	Dependencies      map[string][]string        `json:"dependencies,omitempty"`
+	HostInputHashes   map[string]*string         `json:"hostInputHashes,omitempty"`
+	HostInputPhysical map[string]*string         `json:"hostInputRealpaths,omitempty"`
+	SourceMaps        map[string]json.RawMessage `json:"sourceMaps,omitempty"`
+	TypeScript        map[string]string          `json:"typescript"`
+	HostInputs        []string                   `json:"hostInputs,omitempty"`
+	Diagnostics       []diagnostic               `json:"diagnostics,omitempty"`
+}
+
+// pluginRun runs the plugin over one project. analyze, inline, physical, and emitTransform are the
+// seams a test replaces: analyze to make one file's analysis panic (see analyzer), inline to make
+// one site's emit panic (see inliner), physical to make resolving a src/debug.ts fail after it was
+// read (see physicalResolver), and emitTransform to observe what build hands the plugin's
+// transform. A nil analyze analyzes with analysis.Analyze, a nil physical resolves with
+// filepath.EvalSymlinks, and a nil emitTransform rewrites each project file as rewriteTransform
+// does.
+type pluginRun struct {
+	analyze       analyzer
+	inline        inliner
+	physical      physicalResolver
+	emitTransform driver.PluginTransform
+	cwd           string
+	opts          pluginOptions
+}
+
+// projectFile is one project file the plugin analyzed: its envelope key, and its rewrite.
+type projectFile struct {
+	file    *ast.SourceFile
+	key     string
+	rewrite rewrittenFile
+}
+
+// isProjectFile returns file's envelope key and whether file lies under r.cwd, as the envelope's
+// files do.
+func (r pluginRun) isProjectFile(file *ast.SourceFile) (string, bool) {
+	key := driver.TransformOutputKey(r.cwd, file.FileName())
+	return key, !filepath.IsAbs(filepath.FromSlash(key))
+}
+
+// analyzeProject rewrites every non-declaration file of prog under r.cwd, each through an emit
+// context of its own, and returns the files with the plugin's diagnostics for them.
+//
+// Without strict, each INTERNAL bail writes one line to stderr instead of becoming a diagnostic;
+// the error wraps errIO when that write fails.
+func (r pluginRun) analyzeProject(prog *driver.Program, stderr io.Writer) ([]projectFile, []diagnostic, error) {
+	w := r.newRewriter(prog)
+	var files []projectFile
+	var bails []plan.Bail
+	for _, file := range prog.SourceFiles() {
+		key, ok := r.isProjectFile(file)
+		if !ok {
+			continue
+		}
+		rewrite := w.rewrite(printer.NewEmitContext(), file)
+		bails = append(bails, rewrite.bails...)
+		files = append(files, projectFile{file: file, key: key, rewrite: rewrite})
+	}
+	diagnostics, err := bailDiagnostics(bails, r.opts, stderr)
+	if err != nil {
+		return nil, nil, err
+	}
+	return files, diagnostics, nil
+}
+
+// rewriteTransform is the plugin's transform in tsgo's emit chain over prog: it rewrites each
+// project file through the emit context tsgo prints it with, and returns every other file
+// unchanged. Its bails are not reported again: build reports those of the same rewrite before it
+// emits.
+func (r pluginRun) rewriteTransform(prog *driver.Program) driver.PluginTransform {
+	w := r.newRewriter(prog)
+	return func(ctx *printer.EmitContext, file *ast.SourceFile) *ast.SourceFile {
+		if _, ok := r.isProjectFile(file); !ok {
+			return file
+		}
+		if output := w.rewrite(ctx, file).output; output != nil {
+			return output.SourceFile()
+		}
+		return file
+	}
+}
+
+// transform writes the project envelope of prog to out.stdout. A file with no rewrite is its
+// original text; a rewritten file is its original text with each inlined loop and the preamble
+// spliced in, printed with the emit context that built them, with an inline-sources source map,
+// and depends on the src/debug.ts its DEBUG copy came from, which is also a host input.
+//
+// The error wraps errIO when a write fails, and is errReported when a diagnostic is an error. A
+// failure to encode the envelope is returned wrapping neither.
+func (r pluginRun) transform(prog *driver.Program, out streams) error {
+	env := envelope{
+		Graph:             driver.NewTransformGraph(prog, r.cwd),
+		Dependencies:      map[string][]string{},
+		HostInputHashes:   map[string]*string{},
+		HostInputPhysical: map[string]*string{},
+		SourceMaps:        map[string]json.RawMessage{},
+		TypeScript:        map[string]string{},
+	}
+	files, diagnostics, err := r.analyzeProject(prog, out.stderr)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		env.add(r.cwd, f)
+	}
+	env.HostInputs = slices.Sorted(maps.Keys(env.HostInputHashes))
+	env.Diagnostics = diagnostics
+	encoded, err := json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("encode the transform envelope: %w", err)
+	}
+	if err := write(out.stdout, "stdout", string(encoded)+"\n"); err != nil {
+		return err
+	}
+	if slices.ContainsFunc(diagnostics, isError) {
+		return errReported
+	}
+	return nil
+}
+
+// add records f in env, with its dependencies keyed relative to cwd.
+func (env *envelope) add(cwd string, f projectFile) {
+	if len(f.rewrite.consulted) > 0 {
+		env.Dependencies[f.key] = outputKeys(cwd, f.rewrite.consulted)
+	}
+	if f.rewrite.output == nil {
+		env.TypeScript[f.key] = f.file.Text()
+		return
+	}
+	text, sourceMap := f.rewrite.output.Print()
+	env.TypeScript[f.key] = text
+	env.SourceMaps[f.key] = json.RawMessage(sourceMap)
+	gate := f.rewrite.debug
+	sum := sha256.Sum256(gate.debug.Source)
+	env.HostInputHashes[gate.debug.Path] = new(hex.EncodeToString(sum[:]))
+	env.HostInputPhysical[gate.debug.Path] = new(gate.physical)
+}
+
+// outputKeys is files keyed like the envelope, sorted and without duplicates.
+func outputKeys(cwd string, files []string) []string {
+	keys := make([]string, 0, len(files))
+	for _, file := range files {
+		keys = append(keys, driver.TransformOutputKey(cwd, file))
+	}
+	slices.Sort(keys)
+	return slices.Compact(keys)
+}
+
+// ---------------------------------------------------------------------------
+// Check and build
 // ---------------------------------------------------------------------------
 
 // output is one file the emit produced, held until the build knows it may write.
@@ -276,10 +603,11 @@ func (r pluginRun) check(prog *driver.Program, stderr io.Writer) error {
 // build only to emit. Nothing is written unless no TypeScript, plugin, or emit diagnostic is an
 // error: every output is held until the emit finishes, so a failing build leaves no partial output
 // behind. The error is errReported when a diagnostic is an error, and wraps errIO when the emit or
-// a write fails. When the forced reload fails, the error is its load error: a
-// *loadDiagnosticsError, or an error wrapping errLoad.
-func (r pluginRun) build(prog *driver.Program, args sidecarArgs, out streams) error {
-	if err := r.check(prog, out.stderr); err != nil {
+// a write fails. When the forced reload fails, the error is its load error, which wraps errLoad:
+// a *loadDiagnosticsError, or another load failure. A failure to close the reloaded Program is
+// joined to the error.
+func (r pluginRun) build(prog *driver.Program, args sidecarArgs, out streams) (err error) {
+	if err = r.check(prog, out.stderr); err != nil {
 		return err
 	}
 	if !args.Emit && !prog.ParsedConfig.ParsedConfig.CompilerOptions.NoEmit.IsTrue() {
@@ -289,11 +617,17 @@ func (r pluginRun) build(prog *driver.Program, args sidecarArgs, out streams) er
 	if err != nil {
 		return err
 	}
-	return errors.Join(r.emit(emitting, out), emitting.Close())
+	defer func() {
+		if closeErr := emitting.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close the program reloaded to emit %s: %w", args.Tsconfig, closeErr))
+		}
+	}()
+	return r.emit(emitting, out)
 }
 
-// emit emits prog with r.emitTransform first in tsgo's transform chain and, when no emit
-// diagnostic is an error, writes every output. Emit diagnostics go to out.stderr.
+// emit emits prog with the plugin's rewrite (see rewriteTransform), or r.emitTransform when set,
+// first in tsgo's transform chain and, when no emit diagnostic is an error, writes every output.
+// Emit diagnostics go to out.stderr.
 //
 // The driver reports an emit diagnostic that is an error, such as a declaration it cannot emit,
 // both in the returned diagnostics and as a *driver.PluginEmitError; that error is a diagnostic
@@ -305,7 +639,11 @@ func (r pluginRun) emit(prog *driver.Program, out streams) error {
 		outputs = append(outputs, output{name: name, text: text})
 		return nil
 	}
-	diagnostics, err := prog.EmitWithPluginTransformers([]driver.PluginTransform{r.emitTransform}, hold)
+	transform := r.emitTransform
+	if transform == nil {
+		transform = r.rewriteTransform(prog)
+	}
+	diagnostics, err := prog.EmitWithPluginTransformers([]driver.PluginTransform{transform}, hold)
 	if _, reported := errors.AsType[*driver.PluginEmitError](err); err != nil && !reported {
 		return fmt.Errorf("%w: emit the project at %s: %w", errIO, r.cwd, err)
 	}
@@ -321,194 +659,6 @@ func (r pluginRun) emit(prog *driver.Program, out streams) error {
 		}
 	}
 	return nil
-}
-
-// transformFile is the plugin's transform in tsgo's emit chain; it returns file unchanged.
-func transformFile(_ *printer.EmitContext, file *ast.SourceFile) *ast.SourceFile {
-	return file
-}
-
-// errLoad marks a Program the driver could not load: a missing tsconfig, or a driver failure
-// before the tsconfig was parsed. The command exits 2 on it.
-var errLoad = errors.New("cannot load the program")
-
-// loadDiagnosticsError reports a Program that did not load because its tsconfig has errors.
-type loadDiagnosticsError struct {
-	cwd         string
-	diagnostics []driver.Diagnostic
-}
-
-func (e *loadDiagnosticsError) Error() string {
-	return fmt.Sprintf("%v: the tsconfig has %d error(s)", errLoad, driver.CountErrors(e.diagnostics))
-}
-
-// report renders the diagnostics the way ttsc's own commands write them to stderr, which is the
-// text ttsc parses a failed sidecar's diagnostics from.
-func (e *loadDiagnosticsError) report() string {
-	return renderDiagnostics(e.diagnostics, e.cwd)
-}
-
-// loadProgram loads the Program that args.Tsconfig, resolved against args.Cwd, describes, with
-// args.OutDir as its output directory when set and, when forceEmit is true, with noEmit cleared.
-// The caller closes it.
-//
-// When ttsc type-checks through a generated wrapper tsconfig, it names the user's tsconfig in
-// driver.SemanticConfigPathEnv, and its own commands load with it as the semantic config; the
-// driver does not read the variable itself, so the sidecar passes it on to type-check the project
-// as ttsc does. A tsconfig with errors fails with a *loadDiagnosticsError carrying them; any
-// other failure wraps errLoad.
-func loadProgram(args sidecarArgs, forceEmit bool) (*driver.Program, error) {
-	prog, diagnostics, err := driver.LoadProgram(args.Cwd, args.Tsconfig, driver.LoadProgramOptions{
-		ForceEmit:          forceEmit,
-		OutDir:             args.OutDir,
-		SemanticConfigPath: os.Getenv(driver.SemanticConfigPathEnv),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("%w for %s: %w", errLoad, args.Tsconfig, err)
-	}
-	if len(diagnostics) > 0 {
-		return nil, &loadDiagnosticsError{cwd: args.Cwd, diagnostics: diagnostics}
-	}
-	return prog, nil
-}
-
-// ---------------------------------------------------------------------------
-// Analysis and transform
-// ---------------------------------------------------------------------------
-
-// analyzer analyzes one file of a loaded Program. It is the seam a test replaces to make one
-// file's analysis panic. It takes the Program rather than its checker so that this package never
-// imports the checker shim, which only analysis may.
-type analyzer = func(*driver.Program, *ast.SourceFile, *analysis.PackageRoots) []facts.Site
-
-func analyzeProgram(prog *driver.Program, file *ast.SourceFile, roots *analysis.PackageRoots) []facts.Site {
-	sites, _ := analysis.Analyze(prog.Checker, file, roots)
-	return sites
-}
-
-// envelope is the transform envelope ttsc reads from stdout (transformResult in ttsc's
-// utility/host.go). DependenciesComplete is never declared: omitting it keeps ttsc's host-owned
-// dependency bound.
-type envelope struct {
-	Graph        *driver.TransformGraph     `json:"graph,omitempty"`
-	Dependencies map[string][]string        `json:"dependencies,omitempty"`
-	SourceMaps   map[string]json.RawMessage `json:"sourceMaps,omitempty"`
-	TypeScript   map[string]string          `json:"typescript"`
-	Diagnostics  []diagnostic               `json:"diagnostics,omitempty"`
-}
-
-// pluginRun runs the plugin over one project. analyze and emitTransform are the seams a test
-// replaces: analyze to make one file's analysis panic (see analyzer), emitTransform to observe
-// what build hands the plugin's transform (see transformFile).
-type pluginRun struct {
-	analyze       analyzer
-	emitTransform driver.PluginTransform
-	cwd           string
-	opts          pluginOptions
-}
-
-// projectFile is one project file the plugin analyzed: its envelope key and the declaration files
-// its shape resolution consulted.
-type projectFile struct {
-	file      *ast.SourceFile
-	key       string
-	consulted []string
-}
-
-// analyzeProject analyzes every non-declaration file of prog under r.cwd, plans its sites, and
-// returns the files with the plugin's diagnostics for them.
-//
-// A panic while analyzing one file drops that file's sites and reports it as one INTERNAL bail.
-// Without strict, each INTERNAL bail writes one line to stderr instead of becoming a diagnostic;
-// the error wraps errIO when that write fails.
-func (r pluginRun) analyzeProject(prog *driver.Program, stderr io.Writer) ([]projectFile, []diagnostic, error) {
-	roots := analysis.NewPackageRoots()
-	var files []projectFile
-	var bails []plan.Bail
-	for _, file := range prog.SourceFiles() {
-		key := driver.TransformOutputKey(r.cwd, file.FileName())
-		if filepath.IsAbs(filepath.FromSlash(key)) {
-			continue
-		}
-		fileBails, consulted := analyzeFile(prog, file, roots, r.analyze)
-		bails = append(bails, fileBails...)
-		files = append(files, projectFile{file: file, key: key, consulted: consulted})
-	}
-	diagnostics, err := bailDiagnostics(bails, r.opts, stderr)
-	if err != nil {
-		return nil, nil, err
-	}
-	return files, diagnostics, nil
-}
-
-// transform writes the project envelope of prog to out.stdout, with every project file as its
-// original text and no source map.
-//
-// The error wraps errIO when a write fails, and is errReported when a diagnostic is an error. A
-// failure to encode the envelope is returned wrapping neither.
-func (r pluginRun) transform(prog *driver.Program, out streams) error {
-	env := envelope{
-		Graph:        driver.NewTransformGraph(prog, r.cwd),
-		Dependencies: map[string][]string{},
-		TypeScript:   map[string]string{},
-	}
-	files, diagnostics, err := r.analyzeProject(prog, out.stderr)
-	if err != nil {
-		return err
-	}
-	for _, f := range files {
-		env.TypeScript[f.key] = f.file.Text()
-		if len(f.consulted) > 0 {
-			env.Dependencies[f.key] = outputKeys(r.cwd, f.consulted)
-		}
-	}
-	env.Diagnostics = diagnostics
-	encoded, err := json.Marshal(env)
-	if err != nil {
-		return fmt.Errorf("encode the transform envelope: %w", err)
-	}
-	if err := write(out.stdout, "stdout", string(encoded)+"\n"); err != nil {
-		return err
-	}
-	if slices.ContainsFunc(diagnostics, isError) {
-		return errReported
-	}
-	return nil
-}
-
-// analyzeFile returns the bails of file's sites and the declaration files their shape resolution
-// consulted. A panic makes the whole file one INTERNAL bail, at its start, that consulted nothing.
-func analyzeFile(
-	prog *driver.Program, file *ast.SourceFile, roots *analysis.PackageRoots, analyze analyzer,
-) (bails []plan.Bail, consulted []string) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			fileStart := plan.Bail{Op: facts.OpNone, Pos: facts.Position{File: file.FileName(), Line: 1, Column: 1}}
-			bails = []plan.Bail{fileStart.Internal(recovered)}
-			consulted = nil
-		}
-	}()
-	sites := analyze(prog, file, roots)
-	return plan.Plan(sites), declarationFiles(sites, nil)
-}
-
-// declarationFiles appends to files the declaration files of sites and of their nested sites.
-func declarationFiles(sites []facts.Site, files []string) []string {
-	for _, site := range sites {
-		files = append(files, site.DeclarationFiles...)
-		files = declarationFiles(site.Nested, files)
-	}
-	return files
-}
-
-// outputKeys is files keyed like the envelope, sorted and without duplicates.
-func outputKeys(cwd string, files []string) []string {
-	keys := make([]string, 0, len(files))
-	for _, file := range files {
-		keys = append(keys, driver.TransformOutputKey(cwd, file))
-	}
-	slices.Sort(keys)
-	return slices.Compact(keys)
 }
 
 // ---------------------------------------------------------------------------
@@ -615,10 +765,7 @@ func bailDiagnostic(bail plan.Bail, strict bool) diagnostic {
 
 func bailMessage(bail plan.Bail, strict bool) string {
 	info := bail.Reason.Info()
-	reason := info.Text
-	if bail.Reason == facts.ReasonInternal {
-		reason = strings.Replace(reason, facts.DetailPlaceholder, bail.Detail, 1)
-	}
+	reason := strings.Replace(info.Text, facts.DetailPlaceholder, bail.Detail, 1)
 	var message strings.Builder
 	if isFileBail(bail) {
 		fmt.Fprintf(&message, messagePrefix+"%s could not be analyzed (%s). Its calls compile to the runtime calls",
@@ -632,120 +779,8 @@ func bailMessage(bail plan.Bail, strict bool) string {
 	}
 	message.WriteString(".")
 	if info.Hint != "" {
-		message.WriteString(" " + info.Hint)
+		message.WriteString(" ")
+		message.WriteString(info.Hint)
 	}
 	return message.String()
-}
-
-// ---------------------------------------------------------------------------
-// Plugin options
-// ---------------------------------------------------------------------------
-
-// descriptorSubpath is the package subpath a tsconfig names the descriptor by; it must match the
-// `./optimizer` subpath in package.json `exports`.
-const descriptorSubpath = "ecstatic/optimizer"
-
-// descriptorName is the `name` the descriptor in src/plugin/optimizer.ts declares, which ttsc reports
-// beside every entry it loaded from that descriptor.
-const descriptorName = "ecstatic"
-
-const (
-	keyEnabled   = "enabled"
-	keyStrict    = "strict"
-	keyTransform = "transform"
-)
-
-// validKeys lists the keys the ecstatic entry accepts, as usage errors name them; it must name
-// every key entryOptions accepts.
-const validKeys = keyEnabled + ", " + keyStrict + ", " + keyTransform
-
-// pluginOptions are the plugin's options, read from its tsconfig plugin entry.
-type pluginOptions struct {
-	// Strict reports every strict-category bail as an error; off by default.
-	Strict bool
-}
-
-// pluginEntry is the part of one --plugins-json element the sidecar reads: ttsc's projection of a
-// tsconfig plugin entry, with Config holding the entry as the tsconfig wrote it.
-type pluginEntry struct {
-	Config map[string]any `json:"config"`
-	Name   string         `json:"name"`
-}
-
-// parseOptions reads the ecstatic entry's options from pluginsJSON, the --plugins-json array.
-//
-// The ecstatic entry is the one the descriptor rule of src/plugin/plugin-entry.ts accepts, as far
-// as the sidecar can see it: its `enabled` is not false, and its `transform` is either the
-// `ecstatic/optimizer` subpath or a relative or absolute path that ttsc loaded the ecstatic descriptor
-// from (the entry's name is the descriptor's). The sidecar cannot resolve the path itself: ttsc
-// resolves it against the tsconfig that declared it, which may be an `extends` base the sidecar
-// never sees. Other plugins' entries are skipped whatever keys they hold, and no ecstatic entry
-// yields the defaults.
-//
-// The error wraps errUsage when pluginsJSON is not a JSON array of entries, when more than one
-// entry is the ecstatic one, or when that entry holds a key other than strict, transform, and
-// enabled, or a strict that is not a boolean; every one of these errors lists the valid keys.
-func parseOptions(pluginsJSON string) (pluginOptions, error) {
-	var entries []pluginEntry
-	if err := json.Unmarshal([]byte(pluginsJSON), &entries); err != nil {
-		return pluginOptions{}, optionsError("--plugins-json is not a JSON array of plugin entries: %w", err)
-	}
-	var found *pluginEntry
-	for i := range entries {
-		if !isEcstaticEntry(entries[i]) {
-			continue
-		}
-		if found != nil {
-			return pluginOptions{}, optionsError("more than one %s plugin entry; keep one", descriptorSubpath)
-		}
-		found = &entries[i]
-	}
-	if found == nil {
-		return pluginOptions{}, nil
-	}
-	return entryOptions(found.Config)
-}
-
-func isEcstaticEntry(entry pluginEntry) bool {
-	if enabled, ok := entry.Config[keyEnabled].(bool); ok && !enabled {
-		return false
-	}
-	transform, ok := entry.Config[keyTransform].(string)
-	if !ok {
-		return false
-	}
-	return transform == descriptorSubpath || (isPathSpecifier(transform) && entry.Name == descriptorName)
-}
-
-// isPathSpecifier reports whether transform names a file rather than a package: what ttsc's
-// isRelativePluginSpecifier accepts, plus absolute paths. Keep it in step with ttsc, or the
-// name check in isEcstaticEntry skips an entry ttsc loads by path.
-func isPathSpecifier(transform string) bool {
-	return transform == "." || transform == ".." ||
-		strings.HasPrefix(transform, "./") || strings.HasPrefix(transform, "../") ||
-		strings.HasPrefix(transform, `.\`) || strings.HasPrefix(transform, `..\`) ||
-		filepath.IsAbs(transform)
-}
-
-func entryOptions(config map[string]any) (pluginOptions, error) {
-	var opts pluginOptions
-	for _, key := range slices.Sorted(maps.Keys(config)) {
-		switch key {
-		case keyTransform, keyEnabled:
-		case keyStrict:
-			strict, ok := config[key].(bool)
-			if !ok {
-				return pluginOptions{}, optionsError("%s option %s must be a boolean, got %v", descriptorSubpath, keyStrict, config[key])
-			}
-			opts.Strict = strict
-		default:
-			return pluginOptions{}, optionsError("unknown %s option %q", descriptorSubpath, key)
-		}
-	}
-	return opts, nil
-}
-
-// optionsError is a usage error for format and a that wraps errUsage and lists the valid keys.
-func optionsError(format string, a ...any) error {
-	return fmt.Errorf("%w: %w; valid keys: %s", errUsage, fmt.Errorf(format, a...), validKeys)
 }

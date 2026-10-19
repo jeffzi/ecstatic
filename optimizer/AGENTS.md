@@ -26,8 +26,9 @@ Run these from `optimizer/`.
 ## Packages
 
 `ttscadapter` loads the program and calls `analysis`, which reports the ecstatic calls as `facts`;
-`plan` decides each site's outcome from them, and `ttscadapter` reports the bails as diagnostics.
-The import-boundary rules and the checks that enforce them are under Project facts, Seam tests.
+`plan` decides each site's outcome from them, `emit` builds the rewritten file from the plan, and
+`ttscadapter` reports the bails as diagnostics. The import-boundary rules and the checks that
+enforce them are under Project facts, Seam tests.
 
 - The module root (`main.go`) — the ttsc sidecar's entry point; calls `ttscadapter.Run`.
 - `internal/ttscadapter` — the ttsc sidecar protocol: arguments, program loading,
@@ -35,6 +36,9 @@ The import-boundary rules and the checks that enforce them are under Project fac
 - `internal/analysis` — recognizes ecstatic calls in a type-checked file and reports them as facts.
 - `internal/facts` — the facts `analysis` produces and `plan` consumes; standard library only.
 - `internal/plan` — decides each site's outcome from the facts.
+- `internal/emit` — builds the inlined loops and the file preamble of a rewritten file through the
+  tsgo factory, prints the file as its source text with them spliced in, with its source map, and
+  extracts the `DEBUG` initializer it copies from the runtime's `src/debug.ts`.
 - `internal/nodes` — the AST node table that maps node IDs back to AST nodes.
 - `internal/version` — the release version, kept in sync with `package.json` by `npm version`.
 - `internal/importcheck` — the package-boundary rules.
@@ -47,6 +51,9 @@ The import-boundary rules and the checks that enforce them are under Project fac
   helper fails. Only test files import it.
 - `internal/position` — locates text in a TypeScript source and gives its position as `analysis`
   reports it, columns in UTF-16 code units. Only test files import it.
+- `internal/printed` — recognizes what a rewrite adds to a file's printed text: the preamble's
+  namespace import and shape-key constants, a loop's shape guard and row loop, and the names the
+  file declares. Only test files import it.
 
 ## Module layout
 
@@ -57,9 +64,9 @@ The import-boundary rules and the checks that enforce them are under Project fac
   module that pins golangci-lint and govulncheck for `go tool`).
 - `main()` parses flags, builds dependencies, and calls one testable entry point — nothing else.
 - No `context.Context`. The sidecar is a one-shot process. Its only post-analysis side effect is the
-  output-write loop in `emit` (`internal/ttscadapter/run.go`), and a ctx can't make that safer than
-  Go's default exit-on-SIGINT. The ttsc driver APIs (`LoadProgram`, `EmitWithPluginTransformers`)
-  take no ctx. Revisit if the sidecar gains a long-lived mode.
+  output-write loop in `pluginRun.emit` (`internal/ttscadapter/run.go`), and a ctx can't make that
+  safer than Go's default exit-on-SIGINT. The ttsc driver APIs (`LoadProgram`,
+  `EmitWithPluginTransformers`) take no ctx. Revisit if the sidecar gains a long-lived mode.
 
 ## Package and file layout
 
@@ -149,13 +156,13 @@ other files also use is placed by those users alone. The same holds between pack
 - **Fold limit:** 540 code lines; 900 for a `_test.go` file.
 - **Stand floor:** 120 code lines.
 - **Seam tests:** a fold or a move that breaks either is blocked.
-  - The import-boundary test (`boundary_test.go`, rules in `internal/importcheck`). It enforces four
+  - The import-boundary test (`boundary_test.go`, rules in `internal/importcheck`). It enforces five
     rules: `internal/facts` and `internal/plan` depend on no TypeScript-go or ttsc package;
-    `internal/nodes` does not depend on the checker shim; only `internal/analysis` imports the
-    checker shim; only `internal/ttscadapter` imports the ttsc driver. It also fails when a package
-    the rules name (`facts`, `plan`, `nodes`, `analysis`, `ttscadapter`) no longer exists, so
-    folding or renaming one is blocked, and when a package with tests does not import
-    `internal/golden`.
+    `internal/nodes` does not depend on the checker shim; `internal/emit` depends on no checker shim
+    and no ttsc package; only `internal/analysis` imports the checker shim; only
+    `internal/ttscadapter` imports the ttsc driver. It also fails when a package the rules name
+    (`facts`, `plan`, `nodes`, `analysis`, `ttscadapter`, `emit`) no longer exists, so folding or
+    renaming one is blocked, and when a package with tests does not import `internal/golden`.
   - The symbol-accessor tests (`internal/analysis/symbols_test.go`). Within `internal/analysis`,
     only `symbols.go` reads a field or method of `*ast.Symbol`, calls a method of
     `*checker.Checker`, `*checker.Type`, or `*ast.SourceFile` that takes or returns an

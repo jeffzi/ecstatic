@@ -26,14 +26,15 @@ func TestRecorder_Run_WhenHelperCallsFatalf_StopsItReturningTheMessage(t *testin
 	}
 }
 
-func TestRecorder_Run_WhenHelperReturns_ReturnsEmpty(t *testing.T) {
+func TestRecorder_Run_WhenReusedAfterAFailure_ReturnsEmptyForAHelperThatReturns(t *testing.T) {
 	t.Parallel()
 	recorder := &fatal.Recorder{TB: t}
+	recorder.Run(func(tb testing.TB) { tb.Fatalf("banana") })
 
 	got := recorder.Run(func(testing.TB) {})
 
 	if got != "" {
-		t.Errorf("Run() = %q, want empty", got)
+		t.Errorf("second Run() = %q, want empty", got)
 	}
 }
 

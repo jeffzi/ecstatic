@@ -36,7 +36,7 @@ function viaReturn() {
 
 	sites := analyzeFixture(t, files, mainFile)
 
-	got := siteValues(sites, func(s facts.Site) facts.StmtContext { return s.Context })
+	got := valuesOf(sites, func(s facts.Site) facts.StmtContext { return s.Context })
 	if !slices.Equal(got, want) {
 		t.Errorf("Analyze() contexts = %v, want %v", got, want)
 	}
@@ -128,7 +128,6 @@ func TestAnalyze_WhenCallbackHoldsEcstaticCalls_ReportsThemAsNestedSites(t *test
 	program := loadProgram(t, installedMain(nestedSource))
 	file := program.file(t, mainFile)
 	starts := nestedSourceCallStarts(t)
-	wantPositions := positionsIn(file.FileName(), nestedSource, starts)
 	want := []siteSummary{
 		{
 			Op: facts.OpEach,
@@ -148,14 +147,10 @@ func TestAnalyze_WhenCallbackHoldsEcstaticCalls_ReportsThemAsNestedSites(t *test
 		t.Errorf("Analyze() sites mismatch (-want +got):\n%s", diff)
 	}
 	flat := flatten(sites)
-	calls := siteValues(flat, func(s facts.Site) facts.NodeID { return s.Call })
+	calls := valuesOf(flat, func(s facts.Site) facts.NodeID { return s.Call })
 	checkCallExpressions(t, table, calls)
 	if got := nodeOffsets(t, table, file, calls); !slices.Equal(got, starts) {
 		t.Errorf("start offsets of the site calls = %v, want %v", got, starts)
-	}
-	got := siteValues(flat, func(s facts.Site) facts.Position { return s.Pos })
-	if diff := cmp.Diff(wantPositions, got); diff != "" {
-		t.Errorf("site positions mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -191,7 +186,7 @@ func TestAnalyze_WhenCallFollowsNonASCIITextOnItsLine_CountsItsColumnInUTF16Code
 
 	sites, _ := program.analyze(t, mainFile)
 
-	got := siteValues(sites, func(s facts.Site) facts.Position { return s.Pos })
+	got := valuesOf(sites, func(s facts.Site) facts.Position { return s.Pos })
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("site positions mismatch (-want +got):\n%s", diff)
 	}
@@ -199,19 +194,63 @@ func TestAnalyze_WhenCallFollowsNonASCIITextOnItsLine_CountsItsColumnInUTF16Code
 
 func TestAnalyze_WhenRunTwiceWithOneRootCache_ReturnsEqualSites(t *testing.T) {
 	t.Parallel()
-	program := shapeProject(t, []shapeCase{{source: eachOver("Storage<Ship>")}})
+	program := caseProject(t, "", []string{eachOver("Storage<Ship>")})
 	file := program.file(t, caseFile(0))
 	roots := analysis.NewPackageRoots()
 	first, _ := analysis.Analyze(program.program.Checker, file, roots)
-	if site := eachSite(t, first); len(site.Shapes) == 0 || len(site.DeclarationFiles) == 0 {
-		t.Fatalf("first Analyze() each site = %+v, want a resolved shape with declaration files", site)
-	}
 
 	second, _ := analysis.Analyze(program.program.Checker, file, roots)
 
+	if site := eachSite(t, first); len(site.Shapes) == 0 || len(site.DeclarationFiles) == 0 {
+		t.Fatalf("first Analyze() each site = %+v, want a resolved shape with declaration files", site)
+	}
 	if diff := cmp.Diff(first, second); diff != "" {
 		t.Errorf("second Analyze() mismatch (-first +second):\n%s", diff)
 	}
+}
+
+// storageForm is the part of an each site that says how its storage and filter arguments are written.
+type storageForm struct {
+	Filtered     bool
+	ArrayLiteral bool
+}
+
+// storageFormCase is an each call written in a case file of its own, with how it passes its storages and filter.
+type storageFormCase struct {
+	name   string
+	source string
+	want   storageForm
+}
+
+func TestAnalyze_RecordsHowAnEachCallPassesItsStoragesAndFilter(t *testing.T) {
+	t.Parallel()
+	tests := []storageFormCase{
+		{name: "one storage", source: "each(register(createWorld(), Enemy), () => {});\n"},
+		{
+			name:   "one storage with a filter",
+			source: "each(register(createWorld(), Enemy), { all: [Position] }, () => {});\n",
+			want:   storageForm{Filtered: true},
+		},
+		{
+			name:   "array literal of one storage",
+			source: "each([register(createWorld(), Enemy)], () => {});\n",
+			want:   storageForm{ArrayLiteral: true},
+		},
+		{
+			name:   "array literal with a filter",
+			source: "each([register(createWorld(), Enemy)], { all: [Position] }, () => {});\n",
+			want:   storageForm{Filtered: true, ArrayLiteral: true},
+		},
+	}
+	program := caseProject(t, "", valuesOf(tests, func(c storageFormCase) string { return c.source }))
+	runCases(t, tests, func(c storageFormCase) string { return c.name }, func(t *testing.T, i int, tt storageFormCase) {
+		site := analyzeCase(t, program, i)
+
+		got := storageForm{Filtered: site.Filtered, ArrayLiteral: site.ArrayLiteral}
+		if got != tt.want {
+			t.Errorf("Analyze(%q) form = %+v, want %+v", tt.source, got, tt.want)
+		}
+	})
 }
 
 type recognitionCase struct {
@@ -441,7 +480,7 @@ func TestPackageRoots_Root_WhenDirectoriesAlreadyLooked_ReturnsEachFilesNearestR
 	}
 
 	got := map[string]string{}
-	for file := range want {
+	for _, file := range []string{"inner/dist/index.d.ts", "inner/a.ts", "sub/b.ts", "a.ts"} {
 		got[file], _ = roots.Root(treePath(dir, file))
 	}
 

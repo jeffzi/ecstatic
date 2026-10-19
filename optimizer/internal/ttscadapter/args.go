@@ -14,12 +14,11 @@ var errUsage = errors.New("usage error")
 // subcommandName is the verb ttsc runs the sidecar with.
 type subcommandName string
 
-// ttsc never spawns subcommandVersion; it is a smoke test.
 const (
 	subcommandTransform subcommandName = "transform"
 	subcommandCheck     subcommandName = "check"
 	subcommandBuild     subcommandName = "build"
-	subcommandVersion   subcommandName = "version"
+	subcommandVersion   subcommandName = "version" // ttsc never spawns it; it is a smoke test.
 )
 
 type subcommandUsage struct {

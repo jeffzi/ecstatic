@@ -24,6 +24,10 @@ const (
 	ContextOtherExpression
 )
 
+// ---------------------------------------------------------------------------
+// Ops
+// ---------------------------------------------------------------------------
+
 // Op identifies a public ecstatic function a call site invokes.
 type Op uint8
 
@@ -176,6 +180,10 @@ func OpByName(name string) (Op, bool) {
 	return OpNone, false
 }
 
+// ---------------------------------------------------------------------------
+// Call sites and callbacks
+// ---------------------------------------------------------------------------
+
 // Position locates a call in its source file for diagnostics.
 type Position struct {
 	File string
@@ -206,10 +214,19 @@ type Site struct {
 	// files shape resolution consulted; the build reports them as
 	// dependencies. Add to it with AddDeclarationFile.
 	DeclarationFiles []string
-	Pos              Position
-	Call             NodeID
-	Op               Op
-	Context          StmtContext
+	// Root is the ecstatic package root whose runtime declares the called
+	// function, in the file system's own spelling: the src/debug.ts a rewrite
+	// copies DEBUG from is under it.
+	Root    string
+	Pos     Position
+	Call    NodeID
+	Op      Op
+	Context StmtContext
+	// Filtered is set for an each call that passes a filter argument.
+	Filtered bool
+	// ArrayLiteral is set for an each call whose storages argument is an
+	// array literal, whatever its element count.
+	ArrayLiteral bool
 }
 
 // AddDeclarationFile adds file to DeclarationFiles, keeping the list sorted
@@ -249,6 +266,32 @@ type Callback struct {
 	// arrow function, whose `this` and `arguments` belong to the enclosing
 	// scope.
 	FunctionLocal []NodeID
+	// ViewUses lists, in source order, the references to the view parameter,
+	// and to the aliases of its slots, that lower.
+	ViewUses []ViewUse
+	// Escapes lists, in source order, the references to the view parameter,
+	// and to the aliases of its slots, that do not lower, and the direct
+	// `eval` calls: the call keeps its runtime form while any is listed, bar
+	// the EscapeNestedLoop ones that plan finds lowered.
+	Escapes []ViewEscape
+	// Returns lists, in source order, the return statements of the callback
+	// itself, not those of nested functions.
+	Returns []Return
+	// VarDecls lists, in source order, the declarations of every `var`
+	// statement or `for` head that belongs to the callback, not to a nested
+	// function or a class static block.
+	VarDecls []NodeID
+	// ParamRedeclarations lists, in source order, the VarDecls that declare a
+	// name the first parameter's object pattern binds: such a `var` starts
+	// with the parameter's value, which a fresh per-row binding would lose.
+	ParamRedeclarations []NodeID
+	// DirectEval lists, in source order, the direct `eval` calls anywhere in
+	// the callback, nested functions included: each can reach the view.
+	DirectEval []NodeID
+	// Hazards lists, in source order, the hazard points of everything the
+	// callback evaluates when it runs: every node outside the
+	// allowlist of nodes that cannot run user code able to grow a storage.
+	Hazards []NodeID
 	// Params counts the declared parameters; a TypeScript `this` parameter
 	// is a type annotation, not a parameter, and is not counted.
 	Params     int
@@ -260,6 +303,145 @@ type Callback struct {
 	// body is always a block.
 	ExprBody bool
 }
+
+// ---------------------------------------------------------------------------
+// View uses, escapes, and returns
+// ---------------------------------------------------------------------------
+
+// UseKind is the role of a reference to a callback's view parameter.
+type UseKind uint8
+
+// The view-use kinds. The zero UseKind names no kind.
+const (
+	// UseID reads `e.id`.
+	UseID UseKind = iota + 1
+	// UseFieldRead reads a field, `e.C.f`.
+	UseFieldRead
+	// UseFieldAssign assigns a field with `=`, a compound operator, `&&=`,
+	// `||=`, or `??=`.
+	UseFieldAssign
+	// UseFieldUpdate increments or decrements a field, prefix or postfix.
+	UseFieldUpdate
+	// UseOptionalRead reads a field through an optional chain, `e.C?.f`,
+	// that ends at the field.
+	UseOptionalRead
+	// UsePresence tests a slot in a test position: a condition, the operand
+	// of `!`, or an operand of `&&` or `||` that is itself in one.
+	UsePresence
+	// UseCompare compares a slot with `undefined` or `null`.
+	UseCompare
+	// UseCoalesce is `e.C ?? x` in a test position.
+	UseCoalesce
+	// UseTag reads a tag slot's value, `true` or `undefined`.
+	UseTag
+	// UseAlias declares `const p = e.C` or `const p = e.C!` for a data
+	// slot, or binds p to the data slot C in a pattern destructuring the
+	// view; every reference to p is a use with Alias set.
+	UseAlias
+	// UseDestructure destructures the view, when Comp is empty, or the data
+	// slot Comp with an object pattern every property of which lowers:
+	// in the callback's parameter, in a `const` or `let`
+	// declaration, or nested in a pattern of the view. Each property is a
+	// use of its own, in pattern order: of the view, UseID, UseTag,
+	// UseAlias, or a UseDestructure of the slot it binds to a pattern; of a
+	// slot, UseFieldRead.
+	UseDestructure
+)
+
+// ViewUse is one reference to a callback's view parameter, or to an alias of
+// one of its slots.
+type ViewUse struct {
+	// Comp names the component of every use but UseID. Field names the field
+	// of a field use, and is empty for every other kind.
+	Comp  string
+	Field string
+	// Node is the outermost expression the use spans: the property access
+	// of a read, the assignment of an assign, the update of an update, the
+	// slot of a presence test or a tag, the comparison of a compare, the
+	// `??` of a coalesce, and the variable declaration of an alias. Inside a
+	// pattern it is the binding element of the property. A UseDestructure
+	// spans the variable declaration of a `const` or `let`, and otherwise the
+	// pattern itself.
+	Node NodeID
+	Kind UseKind
+	// Alias is set when the use reaches the slot through an alias, `p.f`
+	// rather than `e.C.f`.
+	Alias bool
+}
+
+// EscapeKind is the role of a reference to the view that does not lower.
+type EscapeKind uint8
+
+// The escape kinds. The zero EscapeKind names no kind.
+const (
+	// EscapeView uses the view itself as a value: passed, stored, compared,
+	// or returned.
+	EscapeView EscapeKind = iota + 1
+	// EscapeComputed reads the view or a slot with a computed key, in an
+	// access or a pattern.
+	EscapeComputed
+	// EscapeSlotValue uses a data slot, or an alias of one, as a value
+	// outside a field, test, or comparison position.
+	EscapeSlotValue
+	// EscapeKey names a key that is neither `id`, a component of the shape,
+	// nor a data field of the component.
+	EscapeKey
+	// EscapeSlotAssign assigns or updates a slot or `id`.
+	EscapeSlotAssign
+	// EscapeChain continues an optional chain past the field, `e.C?.f.g`.
+	EscapeChain
+	// EscapeNested references the view, or an alias, inside a nested
+	// function.
+	EscapeNested
+	// EscapeNestedLoop references the view, or an alias, inside the inline
+	// callback of a nested iteration call, which only loop composition can
+	// lower.
+	EscapeNestedLoop
+	// EscapeTarget writes a field as a destructuring-assignment or for…of
+	// target, or deletes it.
+	EscapeTarget
+	// EscapeDestructure destructures the view or a slot in a form that does
+	// not lower: a rest element, a default on a slot, `id`, or a
+	// tag, an array pattern, a `var` declaration, or an assignment.
+	EscapeDestructure
+	// EscapeFieldCall calls a field as a method, which runs with the field
+	// record as `this`.
+	EscapeFieldCall
+	// EscapeBooleanArithmetic applies an arithmetic compound operator or an
+	// update to a boolean field.
+	EscapeBooleanArithmetic
+	// EscapeEval is a direct `eval` call anywhere in the callback, nested
+	// functions included: the evaluated code can reach the view.
+	EscapeEval
+)
+
+// ViewEscape is one reference to the view, or to an alias of one of its
+// slots, that does not lower.
+type ViewEscape struct {
+	// Pos locates the first token of Node.
+	Pos Position
+	// Node is the expression that escapes: the view or alias identifier, the
+	// access that reads the slot, key, or field, or the `eval` call.
+	Node NodeID
+	// Loop is the call of the innermost nested iteration call whose inline
+	// callback holds the reference, for an EscapeNestedLoop escape; the
+	// reference lowers only if that call and every iteration call enclosing
+	// it within the callback are inlined.
+	Loop NodeID
+	Kind EscapeKind
+}
+
+// Return is one return statement of a callback.
+type Return struct {
+	Node NodeID
+	// Nested is set when an iteration statement or a switch lies between the
+	// return and the callback's body.
+	Nested bool
+}
+
+// ---------------------------------------------------------------------------
+// Archetype shapes and shape keys
+// ---------------------------------------------------------------------------
 
 // FieldKind is the column kind a component field is stored in.
 type FieldKind uint8
@@ -290,12 +472,32 @@ type Component struct {
 	Relation bool
 }
 
+// Field returns c's field named name, and false when c has none.
+func (c Component) Field(name string) (Field, bool) {
+	i := slices.IndexFunc(c.Fields, func(f Field) bool { return f.Name == name })
+	if i < 0 {
+		return Field{}, false
+	}
+	return c.Fields[i], true
+}
+
 // ArchShape mirrors an archetype descriptor's component lists, each in
 // declaration order.
 type ArchShape struct {
 	Required []Component
 	// Optional[k] has presence bit 1 << k.
 	Optional []Component
+}
+
+// Component returns the required or optional component of s named name, and
+// false when s has none.
+func (s ArchShape) Component(name string) (Component, bool) {
+	for _, c := range slices.Concat(s.Required, s.Optional) {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return Component{}, false
 }
 
 // Key returns the shape-guard key the DEBUG shape guard compares a storage's
@@ -371,6 +573,10 @@ func fieldKindCode(k FieldKind) byte {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Reason catalog
+// ---------------------------------------------------------------------------
+
 // Category decides when a reason is reported.
 type Category uint8
 
@@ -404,6 +610,8 @@ const (
 	ReasonCallbackAsync
 	ReasonCallbackGenerator
 	ReasonCallbackFunctionBindings
+	ReasonViewEscapes
+	ReasonUnsupportedAssignment
 	ReasonInternal
 	ReasonArgCount
 	ReasonNotStatement
@@ -411,7 +619,7 @@ const (
 )
 
 // DetailPlaceholder marks where the diagnostic writer substitutes a bail's
-// detail in ReasonInternal's text.
+// detail in the text of ReasonInternal and ReasonViewEscapes.
 const DetailPlaceholder = "<detail>"
 
 // ReasonInfo is a reason's row in the catalog.
@@ -477,6 +685,19 @@ var reasonTable = [...]ReasonInfo{ //nolint:gochecknoglobals // read-only lookup
 		Text:     "the callback uses `this`, `arguments`, `new.target`, or its own name",
 		Hint:     "Use an arrow function.",
 	},
+	ReasonViewEscapes: {
+		Code:     99918,
+		ID:       "VIEW_ESCAPES",
+		Category: CategoryStrict,
+		Text:     "the view `e` is used as a value (`" + DetailPlaceholder + "`)",
+		Hint:     "Read fields on `e`, or keep `e.id`.",
+	},
+	ReasonUnsupportedAssignment: {
+		Code:     99919,
+		ID:       "UNSUPPORTED_ASSIGNMENT",
+		Category: CategoryStrict,
+		Text:     "a field is the target of a destructuring assignment or a `for…of` head",
+	},
 	ReasonInternal: {
 		Code:     99920,
 		ID:       "INTERNAL",
@@ -496,7 +717,7 @@ var reasonTable = [...]ReasonInfo{ //nolint:gochecknoglobals // read-only lookup
 	ReasonOpNotRewritten: {
 		ID:       "OP_NOT_REWRITTEN",
 		Category: CategorySilent,
-		Text:     "the op has no rewrite in this version",
+		Text:     "the call form has no rewrite in this version",
 	},
 }
 

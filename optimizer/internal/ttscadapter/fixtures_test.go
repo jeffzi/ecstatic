@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/samchon/ttsc/packages/ttsc/driver"
 
 	"github.com/jeffzi/ecstatic/optimizer/internal/analysis"
+	"github.com/jeffzi/ecstatic/optimizer/internal/emit"
 	"github.com/jeffzi/ecstatic/optimizer/internal/facts"
 	"github.com/jeffzi/ecstatic/optimizer/internal/golden"
 	"github.com/jeffzi/ecstatic/optimizer/internal/plan"
@@ -31,10 +33,9 @@ import (
 const fixtureRoot = "../../../tests/optimizer/fixtures"
 
 const (
-	fixtureInput   = "input.ts"
-	fixtureGolden  = "expected.ts.golden"
-	bailCorpus     = "bail"
-	eligibleCorpus = "eligible"
+	fixtureInput  = "input.ts"
+	fixtureGolden = "expected.ts.golden"
+	bailCorpus    = "bail"
 )
 
 // sampleFixture is the name of the sample bail fixture the harness tests feed their inputs.
@@ -81,15 +82,7 @@ type corpusRun struct {
 // corpusRoot is the absolute, slash-separated path of the fixture corpus, as the compiler spells file names.
 func corpusRoot(t *testing.T) string {
 	t.Helper()
-	abs, err := filepath.Abs(fixtureRoot)
-	if err != nil {
-		t.Fatalf("filepath.Abs(%q) error = %v, want nil", fixtureRoot, err)
-	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		t.Fatalf("filepath.EvalSymlinks(%q) error = %v, want nil", abs, err)
-	}
-	return filepath.ToSlash(resolved)
+	return resolvedDir(t, fixtureRoot)
 }
 
 // fixtureDirs is every directory of the corpus that holds an input.ts, slash-separated relative to root, sorted.
@@ -115,26 +108,26 @@ func fixtureDirs(t *testing.T, root string) []string {
 	return dirs
 }
 
-// assertCorpusRan fails the test now unless the corpus transform exited OK or with diagnostics.
-func assertCorpusRan(t *testing.T, got result) {
+// corpusOf is what got, one transform over a corpus, reported, failing the test now unless it exited OK or with
+// diagnostics.
+func corpusOf(t *testing.T, got result) corpusRun {
 	t.Helper()
 	if got.status != statusOK && got.status != statusDiagnostics {
 		t.Fatalf("Run(transform) over the fixture corpus = %d, want %d or %d; stderr = %q",
 			got.status, statusOK, statusDiagnostics, got.stderr)
 	}
+	return corpusRun{env: decodeEnvelope(t, got.stdout), status: got.status}
 }
 
 // transformCorpus runs the transform subcommand once over the corpus at root with pluginsJSON, analyzing each file
 // with analyze.
 func transformCorpus(t *testing.T, root, pluginsJSON string, analyze analyzer) corpusRun {
 	t.Helper()
-	got := runArgv(sidecarArgv("transform", root, pluginsJSON), analyze)
-	assertCorpusRan(t, got)
-	return corpusRun{env: decodeEnvelope(t, got.stdout), status: got.status}
+	return corpusOf(t, runArgv(sidecarArgv("transform", root, pluginsJSON), analyze))
 }
 
 // planRecorder analyzes as Run does and records the plan of each file it analyzes in planned, keyed by file name.
-func planRecorder(planned map[string][]plan.Bail) analyzer {
+func planRecorder(planned map[string]plan.Result) analyzer {
 	return func(prog *driver.Program, file *ast.SourceFile, roots *analysis.PackageRoots) []facts.Site {
 		sites := analyzeProgram(prog, file, roots)
 		planned[file.FileName()] = plan.Plan(sites)
@@ -142,12 +135,8 @@ func planRecorder(planned map[string][]plan.Bail) analyzer {
 	}
 }
 
-func plansNotRewrittenEach(b plan.Bail) bool {
-	return b.Op == facts.OpEach && b.Reason == facts.ReasonOpNotRewritten
-}
-
 // assertAnalyzed fails t unless fixture's input was analyzed as a project file of the corpus at root.
-func assertAnalyzed(t *testing.T, planned map[string][]plan.Bail, root, fixture string) {
+func assertAnalyzed(t *testing.T, planned map[string]plan.Result, root, fixture string) {
 	t.Helper()
 	if _, analyzed := planned[path.Join(root, fixture, fixtureInput)]; !analyzed {
 		t.Fatalf("fixture %s: %s was not analyzed as a project file; the corpus tsconfig.json leaves it out",
@@ -155,28 +144,53 @@ func assertAnalyzed(t *testing.T, planned map[string][]plan.Bail, root, fixture 
 	}
 }
 
-// assertPlansNotRewritten fails t unless some each site of fixture's input in the corpus at root plans
-// OP_NOT_REWRITTEN.
-func assertPlansNotRewritten(t *testing.T, planned map[string][]plan.Bail, root, fixture string) {
+// assertPlansRewrite fails t unless some each site of fixture's input in the corpus at root plans an inlining.
+func assertPlansRewrite(t *testing.T, planned map[string]plan.Result, root, fixture string) {
 	t.Helper()
-	if !slices.ContainsFunc(planned[path.Join(root, fixture, fixtureInput)], plansNotRewrittenEach) {
-		t.Errorf("fixture %s: no each site of %s plans %s",
-			fixture, fixtureInput, facts.ReasonOpNotRewritten.Info().ID)
+	if len(planned[path.Join(root, fixture, fixtureInput)].Rewrites) == 0 {
+		t.Errorf("fixture %s: no each site of %s plans a rewrite, yet the fixture expects no diagnostic, so its sites "+
+			"keep their runtime call silently", fixture, fixtureInput)
 	}
 }
 
-// runPlanChecks registers the plan checks for one fixture as separate t.Run cases: its input was analyzed as a project
-// file and, for an eligible fixture, some each site of it plans not rewritten.
-func runPlanChecks(t *testing.T, planned map[string][]plan.Bail, root, fixture string) {
+// plannedRun is a transform over the corpus at root, with the plan of each file it analyzed and the output it printed.
+type plannedRun struct {
+	planned    map[string]plan.Result
+	typescript map[string]string
+	root       string
+}
+
+// assertRewrittenAsPlanned fails t unless the output of fixture differs from its input exactly when some each site of
+// the input plans a rewrite, so that a file with no rewrite is printed byte-identical.
+func assertRewrittenAsPlanned(t *testing.T, run plannedRun, fixture string) {
+	t.Helper()
+	input := path.Join(run.root, fixture, fixtureInput)
+	rewrites := len(run.planned[input].Rewrites)
+	rewritten := run.typescript[outputKey(fixture)] != fileText(t, filepath.FromSlash(input))
+	if rewritten != (rewrites > 0) {
+		t.Errorf("fixture %s: output differs from %s = %t with %d rewrites planned, want it to differ exactly when a "+
+			"rewrite is planned", fixture, fixtureInput, rewritten, rewrites)
+	}
+}
+
+// runPlanChecks registers the plan checks for one fixture, whose expect-diagnostic comments are all, as separate t.Run
+// cases: its input was analyzed as a project file, its output is rewritten exactly when a site plans a rewrite, and,
+// when it expects no diagnostic, some each site of it plans a rewrite. A fixture whose sites all bail therefore names
+// a diagnostic, so a site that starts bailing silently fails its fixture even after its golden is regenerated.
+func runPlanChecks(t *testing.T, run plannedRun, fixture string, all []expected) {
 	t.Helper()
 	t.Run("input is analyzed as a project file", func(t *testing.T) {
 		t.Parallel()
-		assertAnalyzed(t, planned, root, fixture)
+		assertAnalyzed(t, run.planned, run.root, fixture)
 	})
-	if strings.HasPrefix(fixture, eligibleCorpus+"/") {
-		t.Run("eligible each site plans not rewritten", func(t *testing.T) {
+	t.Run("output is rewritten exactly when a site plans a rewrite", func(t *testing.T) {
+		t.Parallel()
+		assertRewrittenAsPlanned(t, run, fixture)
+	})
+	if len(all) == 0 {
+		t.Run("fixture with no expected diagnostic plans a rewrite", func(t *testing.T) {
 			t.Parallel()
-			assertPlansNotRewritten(t, planned, root, fixture)
+			assertPlansRewrite(t, run.planned, run.root, fixture)
 		})
 	}
 }
@@ -413,10 +427,11 @@ func TestRun_WhenTransformingTheFixtureCorpus_MatchesTheFixtureExpectations(t *t
 	root := corpusRoot(t)
 	fixtures := fixtureDirs(t, root)
 
-	planned := map[string][]plan.Bail{}
+	planned := map[string]plan.Result{}
+	recorder := &appliedRules{byFile: map[string]map[emit.Rule]bool{}}
 
 	strict := transformCorpus(t, root, strictPlugins, planRecorder(planned))
-	lenient := transformCorpus(t, root, lenientPlugins, analyzeProgram)
+	lenient := corpusOf(t, runInlining(sidecarArgv("transform", root, lenientPlugins), recorder.inliner()))
 
 	strictFound := diagnosticsByFixture(root, strict.env.Diagnostics)
 	lenientFound := diagnosticsByFixture(root, lenient.env.Diagnostics)
@@ -445,7 +460,7 @@ func TestRun_WhenTransformingTheFixtureCorpus_MatchesTheFixtureExpectations(t *t
 				t.Parallel()
 				assertDiagnostics(t, fixture, lenientFound[fixture], wanted(all, false))
 			})
-			runPlanChecks(t, planned, root, fixture)
+			runPlanChecks(t, plannedRun{planned: planned, typescript: strict.env.TypeScript, root: root}, fixture, all)
 		})
 	}
 	t.Run("no diagnostic outside a fixture directory", func(t *testing.T) {
@@ -458,6 +473,66 @@ func TestRun_WhenTransformingTheFixtureCorpus_MatchesTheFixtureExpectations(t *t
 		t.Parallel()
 		if lenient.status != statusOK {
 			t.Errorf("Run(transform) without strict = %d, want %d", lenient.status, statusOK)
+		}
+	})
+	t.Run("every rule of the catalog has a fixture whose rewrite applies it", func(t *testing.T) {
+		t.Parallel()
+		claimed, applied := corpusRules(t, root, fixtures, recorder)
+
+		assertCatalogCovered(t, claimed, applied)
+	})
+}
+
+// benchmarkRoot is the benchmark suite, relative to this package.
+const benchmarkRoot = "../../../benchmarks"
+
+// helperCall matches the call of the opaque helper in the body of the iteration/helper_call benchmark.
+var helperCall = regexp.MustCompile(`=\s*advance\(`)
+
+// helperCallLine is the line on which the each call of the iteration/helper_call benchmark starts in text.
+func helperCallLine(t *testing.T, text string) int {
+	t.Helper()
+	call := helperCall.FindStringIndex(text)
+	if call == nil {
+		t.Fatalf("iteration-bench.ts holds no match for %s", helperCall)
+	}
+	each := strings.LastIndex(text[:call[0]], "each(")
+	if each < 0 {
+		t.Fatalf("iteration-bench.ts has no each call ahead of its helper call at line %d", lineOf(text, call[0]))
+	}
+	return lineOf(text, each)
+}
+
+func TestRun_WhenTransformingTheBenchmarks_PlansTheModesTheExitCriterionTimes(t *testing.T) {
+	t.Parallel()
+	root := resolvedDir(t, benchmarkRoot)
+	planned := map[string]plan.Result{}
+
+	transformCorpus(t, root, lenientPlugins, planRecorder(planned))
+
+	t.Run("every each call of the systems compiles hoisted", func(t *testing.T) {
+		t.Parallel()
+		systems := planned[path.Join(root, "systems.ts")]
+		if len(systems.Bails) > 0 || len(systems.Rewrites) == 0 {
+			t.Fatalf("Plan(systems.ts) bails = %+v, rewrites = %d, want no bail and a rewrite", systems.Bails, len(systems.Rewrites))
+		}
+		for _, r := range systems.Rewrites {
+			if r.Mode != plan.ModeHoisted {
+				t.Errorf("Plan(systems.ts) mode of the each call at line %d = %d, want ModeHoisted (%d)", r.Pos.Line, r.Mode, plan.ModeHoisted)
+			}
+		}
+	})
+	t.Run("the helper_call each call compiles realloc-safe", func(t *testing.T) {
+		t.Parallel()
+		file := path.Join(root, "iteration-bench.ts")
+		line := helperCallLine(t, fileText(t, file))
+		modes := map[int]plan.Mode{}
+		for _, r := range planned[file].Rewrites {
+			modes[r.Pos.Line] = r.Mode
+		}
+		if got, ok := modes[line]; !ok || got != plan.ModeReallocSafe {
+			t.Errorf("Plan(iteration-bench.ts) mode of the each call at line %d = %d (planned %t), want ModeReallocSafe (%d)",
+				line, got, ok, plan.ModeReallocSafe)
 		}
 	})
 }
@@ -482,6 +557,308 @@ func TestReasons_WhenReported_HaveABailFixture(t *testing.T) {
 			t.Errorf("reason %s (%d) has no %s fixture whose expect-diagnostic comment names it",
 				info.ID, info.Code, bailCorpus)
 		}
+	}
+}
+
+func TestShapeRows_WhenListed_HaveAFixtureThatExpectsTheirOutcome(t *testing.T) {
+	t.Parallel()
+	rows := []struct {
+		row      string
+		fixture  string
+		resolves bool
+	}{
+		{row: "local storage", fixture: "eligible/local-storage", resolves: true},
+		{row: "class-form archetype", fixture: "eligible/class-archetype", resolves: true},
+		{row: "parameter typed Storage<typeof X>", fixture: "eligible/typed-parameter", resolves: true},
+		{row: "parameter typed Storage<X>", fixture: "shape/class-storage-parameter", resolves: true},
+		{row: "storage imported from another module", fixture: "eligible/imported-storage", resolves: true},
+		{row: "class field", fixture: "shape/class-field", resolves: true},
+		{row: "property chain", fixture: "shape/property-chain", resolves: true},
+		{row: "call result", fixture: "shape/call-result", resolves: true},
+		{row: "getStorage", fixture: "shape/get-storage", resolves: true},
+		{row: "generic constrained to a storage type", fixture: "shape/constrained-generic", resolves: true},
+		{row: "as cast", fixture: "shape/as-cast", resolves: true},
+		{row: "wide Storage", fixture: "shape/wide-storage"},
+		{row: "union of storages of different shapes", fixture: "shape/union-of-shapes"},
+		{row: "any", fixture: "shape/any-storage"},
+		{row: "unknown", fixture: "shape/unknown-storage"},
+		{row: "unconstrained type parameter", fixture: "shape/unconstrained-type-parameter"},
+		{row: "component tuple built by a conditional type", fixture: "shape/conditional-components"},
+		{row: "component tuple built by a mapped type", fixture: "shape/mapped-components"},
+		{row: "optional tuple element", fixture: "shape/optional-element"},
+		{row: "rest tuple element", fixture: "shape/rest-element"},
+		{row: "variadic tuple element", fixture: "shape/variadic-element"},
+		{row: "union-typed tuple element", fixture: "shape/union-component-element"},
+	}
+	root := corpusRoot(t)
+	fixtures := fixtureDirs(t, root)
+
+	for _, tt := range rows {
+		t.Run(tt.row, func(t *testing.T) {
+			t.Parallel()
+			if !slices.Contains(fixtures, tt.fixture) {
+				t.Fatalf("shape row %q has no fixture %s", tt.row, tt.fixture)
+			}
+
+			var got []string
+			for _, e := range expectations(t, root, tt.fixture) {
+				got = append(got, e.id)
+			}
+
+			var want []string
+			if !tt.resolves {
+				want = []string{facts.ReasonShapeUnresolved.Info().ID}
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("shape row %q: fixture %s expect-diagnostic IDs mismatch (-want +got):\n%s", tt.row, tt.fixture, diff)
+			}
+		})
+	}
+}
+
+// claimPrefix starts a rewrite claim: a comment saying the fixture's rewrite applies the rule it names.
+const claimPrefix = "// rewrite-applies:"
+
+// claimMarker matches a comment that reads as a rewrite claim, near misses included, so that a misspelled one fails
+// its fixture instead of going uncounted.
+var claimMarker = regexp.MustCompile(`(?i)^//\s*rewrite[-_ ]?(apply|applies)\b`)
+
+// claimComment is the grammar of a rewrite claim: the name of one rule of the rewrite catalog.
+var claimComment = regexp.MustCompile(`^// rewrite-applies: ([a-z-]+)$`)
+
+// claim is one rule a fixture's rewrite claim says its rewrite applies, with the file and line of the claim.
+type claim struct {
+	file string
+	line int
+	rule emit.Rule
+}
+
+// rulesByName is the rewrite catalog's rule for each name.
+func rulesByName() map[string]emit.Rule {
+	byName := map[string]emit.Rule{}
+	for _, r := range emit.Rules() {
+		byName[r.Name()] = r
+	}
+	return byName
+}
+
+// readClaims is every rule the rewrite claims in the input.ts of fixture in corpus name, in line order. It errors,
+// naming fixture and line, when the file cannot be read, or a comment that reads as a claim is malformed or names no
+// rule of the catalog.
+func readClaims(corpus fs.FS, fixture string) ([]claim, error) {
+	content, err := fs.ReadFile(corpus, path.Join(fixture, fixtureInput))
+	if err != nil {
+		return nil, fmt.Errorf("read fixture %s: %w", fixture, err)
+	}
+	byName := rulesByName()
+	var all []claim
+	for i, text := range strings.Split(string(content), "\n") {
+		comment := strings.TrimSpace(text)
+		if !claimMarker.MatchString(comment) {
+			continue
+		}
+		at := fmt.Sprintf("fixture %s: %s:%d", fixture, fixtureInput, i+1)
+		match := claimComment.FindStringSubmatch(comment)
+		if match == nil {
+			return nil, fmt.Errorf("%s: %q does not read %q", at, comment, claimPrefix+" <rule>")
+		}
+		rule, known := byName[match[1]]
+		if !known {
+			return nil, fmt.Errorf("%s: %s names no rule of the rewrite catalog", at, match[1])
+		}
+		all = append(all, claim{file: fixtureInput, line: i + 1, rule: rule})
+	}
+	return all, nil
+}
+
+// appliedRules records, for each file the transform rewrites, every rule its inlined loops apply.
+type appliedRules struct {
+	byFile map[string]map[emit.Rule]bool
+	mu     sync.Mutex
+}
+
+// inliner emits each planned rewrite as Run does, then records the rules the rewritten file's loops apply.
+func (a *appliedRules) inliner() ttscadapter.Inliner {
+	return func(file *emit.File, rewrite plan.EachInlining, uses []facts.ViewUse) {
+		file.Inline(rewrite, uses)
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		rules := a.byFile[rewrite.Pos.File]
+		if rules == nil {
+			rules = map[emit.Rule]bool{}
+			a.byFile[rewrite.Pos.File] = rules
+		}
+		for _, r := range file.Applied() {
+			rules[r] = true
+		}
+	}
+}
+
+// claimGap is a claim of fixture whose rewrite does not apply the rule the claim names.
+type claimGap struct {
+	fixture string
+	claim   claim
+}
+
+// catalogGaps is every claim of claimed whose fixture's rewrite does not apply its rule by applied, both keyed by
+// fixture, in fixture then claim order; then every rule of the catalog that no claim the rewrite bears out names.
+func catalogGaps(claimed map[string][]claim, applied map[string]map[emit.Rule]bool) ([]claimGap, []emit.Rule) {
+	covered := map[emit.Rule]bool{}
+	var gaps []claimGap
+	for _, fixture := range slices.Sorted(maps.Keys(claimed)) {
+		for _, c := range claimed[fixture] {
+			if !applied[fixture][c.rule] {
+				gaps = append(gaps, claimGap{fixture: fixture, claim: c})
+				continue
+			}
+			covered[c.rule] = true
+		}
+	}
+	var uncovered []emit.Rule
+	for _, r := range emit.Rules() {
+		if !covered[r] {
+			uncovered = append(uncovered, r)
+		}
+	}
+	return gaps, uncovered
+}
+
+// assertCatalogCovered fails t for each claim of claimed whose fixture's rewrite does not apply its rule by applied,
+// and for each rule of the catalog that no claim the rewrite bears out names.
+func assertCatalogCovered(t *testing.T, claimed map[string][]claim, applied map[string]map[emit.Rule]bool) {
+	t.Helper()
+	gaps, uncovered := catalogGaps(claimed, applied)
+	for _, g := range gaps {
+		t.Errorf("fixture %s: %s:%d claims rule %s, which its rewrite does not apply",
+			g.fixture, g.claim.file, g.claim.line, g.claim.rule.Name())
+	}
+	for _, r := range uncovered {
+		t.Errorf("rule %s has no fixture whose rewrite applies it; add one whose input.ts reads %s %s",
+			r.Name(), claimPrefix, r.Name())
+	}
+}
+
+// corpusRules is the claims of each of fixtures, in the corpus at root, and the rules recorder saw each one's rewrite
+// apply, both keyed by fixture.
+func corpusRules(t *testing.T, root string, fixtures []string, recorder *appliedRules) (map[string][]claim, map[string]map[emit.Rule]bool) {
+	t.Helper()
+	claimed := map[string][]claim{}
+	applied := map[string]map[emit.Rule]bool{}
+	for _, fixture := range fixtures {
+		claims, err := readClaims(os.DirFS(root), fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		claimed[fixture] = claims
+		applied[fixture] = recorder.byFile[path.Join(root, fixture, fixtureInput)]
+	}
+	return claimed, applied
+}
+
+func TestCatalogGaps(t *testing.T) {
+	t.Parallel()
+	rules := emit.Rules()
+	if len(rules) < 2 {
+		t.Fatalf("emit.Rules() = %d rules, want at least 2", len(rules))
+	}
+	all := map[emit.Rule]bool{}
+	var everyClaim []claim
+	for i, r := range rules {
+		all[r] = true
+		everyClaim = append(everyClaim, claim{file: fixtureInput, line: i + 1, rule: r})
+	}
+	first := claim{file: fixtureInput, line: 1, rule: rules[0]}
+	tests := []struct {
+		claimed       map[string][]claim
+		applied       map[string]map[emit.Rule]bool
+		name          string
+		wantGaps      []claimGap
+		wantUncovered []emit.Rule
+	}{
+		{
+			name:          "a claim its fixture's rewrite does not apply is a gap and covers nothing",
+			claimed:       map[string][]claim{sampleFixture: {first}},
+			applied:       map[string]map[emit.Rule]bool{sampleFixture: {rules[1]: true}},
+			wantGaps:      []claimGap{{fixture: sampleFixture, claim: first}},
+			wantUncovered: rules,
+		},
+		{
+			name:          "a rule applied only by another fixture's rewrite does not bear the claim out",
+			claimed:       map[string][]claim{sampleFixture: {first}, "each/banana": nil},
+			applied:       map[string]map[emit.Rule]bool{"each/banana": {rules[0]: true}},
+			wantGaps:      []claimGap{{fixture: sampleFixture, claim: first}},
+			wantUncovered: rules,
+		},
+		{
+			name:          "a rule no fixture claims is uncovered even when a rewrite applies it",
+			claimed:       map[string][]claim{sampleFixture: everyClaim[1:]},
+			applied:       map[string]map[emit.Rule]bool{sampleFixture: all},
+			wantUncovered: rules[:1],
+		},
+		{
+			name:    "every rule claimed and applied leaves no gap",
+			claimed: map[string][]claim{sampleFixture: everyClaim},
+			applied: map[string]map[emit.Rule]bool{sampleFixture: all},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gaps, uncovered := catalogGaps(tt.claimed, tt.applied)
+
+			if diff := cmp.Diff(tt.wantGaps, gaps, cmp.AllowUnexported(claimGap{}, claim{})); diff != "" {
+				t.Errorf("catalogGaps() gaps mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(tt.wantUncovered, uncovered); diff != "" {
+				t.Errorf("catalogGaps() uncovered mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestReadClaims_WhenEachCommentNamesOneRule_ReadsThemInLineOrder(t *testing.T) {
+	t.Parallel()
+	rules := emit.Rules()
+	source := "export const banana = 1;\n" + claimPrefix + " " + rules[0].Name() + "\n  " + claimPrefix + " " +
+		rules[1].Name() + "\n"
+	corpus := fstest.MapFS{sampleFixture + "/" + fixtureInput: {Data: []byte(source)}}
+	want := []claim{{file: fixtureInput, line: 2, rule: rules[0]}, {file: fixtureInput, line: 3, rule: rules[1]}}
+
+	got, err := readClaims(corpus, sampleFixture)
+	if err != nil {
+		t.Fatalf("readClaims() error = %v, want nil", err)
+	}
+
+	if diff := cmp.Diff(want, got, cmp.AllowUnexported(claim{})); diff != "" {
+		t.Errorf("readClaims() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestReadClaims_RejectsNamingTheFixtureLine(t *testing.T) {
+	t.Parallel()
+	rules := emit.Rules()
+	tests := []struct {
+		name    string
+		comment string
+	}{
+		{name: "a name outside the catalog", comment: claimPrefix + " banana"},
+		{name: "two rules on one line", comment: claimPrefix + " " + rules[0].Name() + ", " + rules[1].Name()},
+		{name: "no colon", comment: "// rewrite-applies " + rules[0].Name()},
+		{name: "singular keyword", comment: "// rewrite-apply: " + rules[0].Name()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			source := "export const banana = 1;\n" + tt.comment + "\n"
+			corpus := fstest.MapFS{sampleFixture + "/" + fixtureInput: {Data: []byte(source)}}
+
+			_, err := readClaims(corpus, sampleFixture)
+
+			if err == nil || !strings.Contains(err.Error(), "fixture bail/sample: input.ts:2:") {
+				t.Errorf("readClaims(%q) error = %v, want one naming fixture bail/sample: input.ts:2", tt.comment, err)
+			}
+		})
 	}
 }
 

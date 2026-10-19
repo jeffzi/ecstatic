@@ -168,6 +168,26 @@ describe("checkGoCoverage", () => {
       }).toThrow(path);
     });
   });
+
+  describe("when the profile holds blank lines", () => {
+    it.each([
+      {
+        name: "a malformed block line after a blank line, naming its file line",
+        content: `mode: set\n\n${blockLines({ pkg: "facts", covered: 5, total: 5 })[0]}\nbanana\n`,
+        expected: (path: string) => `${path}:4 is not a coverage block: banana`,
+      },
+      {
+        name: "a blank line before the mode line",
+        content: `\n${coverageProfile({ pkg: "facts", covered: 5, total: 5 })}`,
+        expected: (path: string) =>
+          `${path} is not a Go coverage profile: the first line is not "mode: …"`,
+      },
+    ])("throws for $name", ({ content, expected }) => {
+      const path = writeProfile(content);
+
+      expect(failureMessage(path)).toBe(expected(path));
+    });
+  });
 });
 
 describe("scripts/check-go-coverage.ts run as a command", () => {

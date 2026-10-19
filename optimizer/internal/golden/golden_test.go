@@ -22,6 +22,7 @@ func TestUpdate(t *testing.T) {
 	}{
 		{name: "flag set to true", value: "true", want: true},
 		{name: "flag set to false", value: "false", want: false},
+		{name: "flag left at its default", value: registered.DefValue, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

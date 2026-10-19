@@ -22,6 +22,8 @@ func TestOf(t *testing.T) {
 	}{
 		{name: "start of the first line", source: "has(s, s);\n", offset: 0, want: facts.Position{File: "main.ts", Offset: 0, Line: 1, Column: 1}},
 		{name: "after a line break", source: "declare const s: any;\n\thas(s, s);\n", offset: 23, want: facts.Position{File: "main.ts", Offset: 23, Line: 2, Column: 2}},
+		{name: "after a lone carriage return", source: "a\rb", offset: 2, want: facts.Position{File: "main.ts", Offset: 2, Line: 2, Column: 1}},
+		{name: "after a line separator", source: "a b", offset: len("a "), want: facts.Position{File: "main.ts", Offset: len("a "), Line: 2, Column: 1}},
 		{
 			name:   "after text longer in UTF-8 bytes than in UTF-16 code units",
 			source: "const label = \"é🚀\"; has(s, s);\n",

@@ -9,6 +9,8 @@ import (
 
 	"github.com/jeffzi/ecstatic/optimizer/internal/facts"
 	"github.com/jeffzi/ecstatic/optimizer/internal/plan"
+	"github.com/jeffzi/ecstatic/optimizer/internal/position"
+	"github.com/jeffzi/ecstatic/optimizer/internal/project"
 	"github.com/jeffzi/ecstatic/optimizer/internal/ttscadapter"
 )
 
@@ -45,6 +47,7 @@ func internalText(detail string) string {
 	return "internal error (`" + detail + "`); please report it"
 }
 
+// at is the position in file at offset, on line and column.
 func at(file string, offset, line, column int) facts.Position {
 	return facts.Position{File: file, Offset: offset, Line: line, Column: column}
 }
@@ -77,6 +80,7 @@ func asyncWarningReport() report {
 // internalDetail is the detail of the internal bails the tests report.
 const internalDetail = "nil storage"
 
+// bailAt is a bail of the op call at pos for reason.
 func bailAt(op facts.Op, reason facts.Reason, pos facts.Position) plan.Bail {
 	return plan.Bail{Op: op, Reason: reason, Pos: pos}
 }
@@ -205,5 +209,37 @@ func TestDiagnostic_WhenMarshaled_EncodesTtscFieldNames(t *testing.T) {
 
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("json.Marshal(%+v) fields mismatch (-want +got):\n%s", diagnostic, diff)
+	}
+}
+
+// escapeSource is a module whose each callback reads a field, then passes the view to a call on line 10.
+const escapeSource = `import { archetype, each, type Storage } from "../src/index.js";
+import { Position, Velocity } from "./components.js";
+
+const Mover = archetype([Position, Velocity]);
+declare const movers: Storage<typeof Mover>;
+declare function visit(value: unknown): void;
+
+each(movers, (e) => {
+	e.Position.x += e.Velocity.dx;
+	visit(e);
+});
+`
+
+func TestRun_WhenAViewEscapesUnderStrict_ReportsTheLineColumnAndUseOfTheEscapingReference(t *testing.T) {
+	t.Parallel()
+	dir := project.Write(t, runtimeProject(t, escapeSource))
+	want := []ttscadapter.Diagnostic{{
+		File: absolute(dir, mainFile), Category: categoryError, Code: 99918,
+		Start: position.Occurrence(t, escapeSource, "each(movers", 0), Line: 8, Character: 1,
+		MessageText: "ecstatic: The each() call cannot be optimized (the view `e` is used as a value " +
+			"(`line 10, column 8: the view as a value`)). It compiles to the runtime call (strict mode). " +
+			"Read fields on `e`, or keep `e.id`.",
+	}}
+
+	got := runTransform(dir, strictPlugins)
+
+	if diff := cmp.Diff(want, decodeEnvelope(t, got.stdout).Diagnostics); diff != "" {
+		t.Errorf("Run(transform) diagnostics mismatch (-want +got):\n%s", diff)
 	}
 }

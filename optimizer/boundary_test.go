@@ -36,7 +36,7 @@ func goList(t *testing.T, cmd *exec.Cmd) *bytes.Buffer {
 	return &stdout
 }
 
-func TestModule_RespectsImportBoundaries(t *testing.T) {
+func TestModule_WhenListedWithDeps_RespectsImportBoundaries(t *testing.T) {
 	t.Parallel()
 	listed := goList(t, exec.CommandContext(t.Context(), "go", "list", "-deps", "-json", "./..."))
 
@@ -50,7 +50,7 @@ func TestModule_RespectsImportBoundaries(t *testing.T) {
 	}
 }
 
-func TestModule_HasEveryPackageTheRulesName(t *testing.T) {
+func TestModule_WhenListed_HasEveryPackageTheRulesName(t *testing.T) {
 	t.Parallel()
 	listed := goList(t, exec.CommandContext(t.Context(), "go", "list", "./..."))
 
@@ -86,7 +86,7 @@ func testBinaryDeps(t *testing.T, r io.Reader) map[string][]string {
 	}
 }
 
-func TestModule_EveryTestBinaryLinksTheUpdateFlag(t *testing.T) {
+func TestModule_WhenListedWithTests_EveryTestBinaryLinksTheUpdateFlag(t *testing.T) {
 	t.Parallel()
 
 	binaries := testBinaryDeps(t, goList(t, exec.CommandContext(t.Context(), "go", "list", "-test", "-json", "./...")))

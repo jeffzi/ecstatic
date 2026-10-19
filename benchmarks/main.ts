@@ -167,7 +167,8 @@ function collectChildReport(spec: ChildSpawnSpec, engine: Engine): Promise<strin
  *
  * @param optimized - Whether children run from the optimizer's compiled output.
  * @returns This module's own path, or the compiled `benchmarks/main.js` under the output directory.
- * @throws `CompileError` when the optimized compile fails.
+ * @throws `CompileError` when the optimized compile fails; Error when `ttsc` cannot be located;
+ * and the spawn error when `ttsc` cannot be started.
  */
 async function childEntry(optimized: boolean): Promise<string> {
   if (!optimized) return fileURLToPath(import.meta.url);
@@ -190,8 +191,9 @@ async function childEntry(optimized: boolean): Promise<string> {
  * @param filter - Unanchored regex source selecting benchmarks by name; `undefined` runs every
  * registered benchmark.
  * @throws Error when the filter matches no benchmark; `UsageError` on an invalid filter regex;
- * `CompileError` when the optimized compile fails, before any child is spawned;
- * `ChildReportError` on an unusable child report; and the spawn or exit error of the first child
+ * `CompileError` when the optimized compile fails, before any child is spawned; Error when `ttsc`
+ * cannot be located, and the spawn error when `ttsc` cannot be started, both before any child is
+ * spawned; `ChildReportError` on an unusable child report; and the spawn or exit error of the first child
  * that fails.
  */
 async function runParent(

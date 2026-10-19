@@ -50,6 +50,12 @@ func refersToArguments(c *checker.Checker, name *ast.Node) bool {
 	return c.IsArgumentsSymbol(valueSymbolAt(c, name))
 }
 
+// valueDeclaration returns the declaration of the value symbol names, nil
+// when it declares none.
+func valueDeclaration(symbol *ast.Symbol) *ast.Node {
+	return symbol.ValueDeclaration
+}
+
 func symbolName(symbol *ast.Symbol) string {
 	return symbol.Name
 }
@@ -92,4 +98,31 @@ func declarationFileNames(symbol *ast.Symbol) []string {
 		names = append(names, nodeFileName(declaration))
 	}
 	return names
+}
+
+func isAccessorProperty(c *checker.Checker, t *checker.Type, name string) bool {
+	return isAccessorSymbol(propertyOfType(c, t, name))
+}
+
+// isAccessorSymbol reports whether symbol is a get or set accessor; false for
+// a nil symbol.
+func isAccessorSymbol(symbol *ast.Symbol) bool {
+	return symbol != nil && symbol.Flags&ast.SymbolFlagsAccessor != 0
+}
+
+// isAnonymousObjectSymbol reports whether symbol, a type's symbol, names an
+// object literal or a type literal, or no declaration at all: an object type
+// with no class or interface behind it.
+func isAnonymousObjectSymbol(symbol *ast.Symbol) bool {
+	return symbol == nil || symbol.Flags&(ast.SymbolFlagsObjectLiteral|ast.SymbolFlagsTypeLiteral) != 0
+}
+
+// isGlobalValue reports whether expr is an identifier that refers to the
+// global value named name, not to a local binding that shadows it.
+func isGlobalValue(c *checker.Checker, expr *ast.Node, name string) bool {
+	if expr.Kind != ast.KindIdentifier || expr.Text() != name {
+		return false
+	}
+	global := c.GetGlobalSymbol(name, ast.SymbolFlagsValue, nil)
+	return global != nil && resolveSymbol(c, expr) == global
 }

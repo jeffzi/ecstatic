@@ -1,0 +1,40 @@
+// rewrite-applies: destructure-view
+// rewrite-applies: destructure-view-nested
+// rewrite-applies: destructure-id
+// rewrite-applies: destructure-optional-tag
+import { archetype, component, createWorld, each, get, register, spawn } from "ecstatic";
+
+const Spot = component("PartsSpot", { x: 0 });
+const Lamp = component("PartsLamp", { on: false });
+const Fixed = component("PartsFixed");
+const Lit = component("PartsLit");
+
+/**
+ * Destructures the view in the body: `id`, a slot alias whose writes reach the column, a depth-one read of a
+ * boolean field, a required tag, and an optional tag, on a row whose optional tag is enabled and one where it is
+ * not.
+ *
+ * @returns What the body bound, with each id as its index in spawn order, and each row's `x` after the loop.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Spot, Lamp, Fixed], [Lit]));
+  const ids = [
+    spawn(storage, { PartsSpot: { x: 1 }, PartsLamp: { on: true }, PartsLit: true }),
+    spawn(storage, { PartsSpot: { x: 2 } }),
+  ];
+  const trace: unknown[] = [];
+
+  each(storage, (e) => {
+    const {
+      id,
+      PartsSpot,
+      PartsLamp: { on },
+      PartsFixed,
+      PartsLit,
+    } = e;
+    PartsSpot.x += 10;
+    trace.push(ids.indexOf(id), PartsSpot.x, on, PartsFixed, PartsLit);
+  });
+
+  return { trace, xs: ids.map((id) => get(storage, id, Spot.x)) };
+}

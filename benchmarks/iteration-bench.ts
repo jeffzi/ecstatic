@@ -58,8 +58,9 @@ function advance(x: number, dx: number): number {
 
 // The call to a helper is what makes this body hazard-bearing: a call may spawn past
 // capacity and reallocate the columns, so the optimizer's realloc-safe mode re-reads them
-// through the storage on each access. Every other each() body in the suite is hazard-free;
-// inlining `advance` would leave realloc-safe mode untimed.
+// through the storage on each access. The call is the body's only hazard, so set beside
+// `iteration/throughput` it shows what realloc-safe mode costs a plain field update;
+// inlining `advance` would make the body hazard-free and lose that measurement.
 registerBench(
   "iteration/helper_call",
   warmedBench(makeThroughputWorld, ({ trackedStorage }) => {

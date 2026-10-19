@@ -1,0 +1,38 @@
+import * as ecstatic_internal from "ecstatic/internal";
+const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
+const shapeKey = "c9:FenceRail{1:x=n}|";
+// rewrite-applies: outer-binding
+import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
+
+const Rail = component("FenceRail", { x: 0 });
+
+/**
+ * Reads and writes bindings outside the callback that are named like the row count and the row index the inlined
+ * loop declares, which keep pointing at the outer bindings.
+ *
+ * @returns What the body read on each row, and the outer index after the loop.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Rail]));
+  for (const x of [1, 2, 3]) {
+    spawn(storage, { FenceRail: { x } });
+  }
+  const n = 10;
+  let i = 0;
+  const seen: number[] = [];
+
+  {
+      const storage_1 = storage;
+      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      const n_1 = storage_1.n;
+      if (n_1 > 0) {
+          const FenceRailRecord = storage_1.FenceRail;
+          for (let i_1 = n_1 - 1; i_1 >= 0; i_1--) {
+              i += 1;
+              seen.push(FenceRailRecord.x[i_1] * n + i);
+          }
+      }
+  }
+
+  return { seen, i };
+}

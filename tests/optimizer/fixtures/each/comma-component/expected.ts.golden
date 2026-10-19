@@ -1,0 +1,40 @@
+import * as ecstatic_internal from "ecstatic/internal";
+const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
+const shapeKey = "c9:Grid,Cell{1:n=n}c8:GridMark{1:x=n}|";
+// rewrite-applies: mode-hoisted
+// rewrite-applies: read-required-field
+// rewrite-applies: write-required-field
+import { archetype, component, createWorld, each, get, register, spawn } from "ecstatic";
+
+const Cell = component("Grid,Cell", { n: 0 });
+const Mark = component("GridMark", { x: 0 });
+
+/**
+ * Moves every row of a storage holding a component whose name is no identifier, `"Grid,Cell"`, which the shape
+ * guard keys as one component and the body reaches by its string key.
+ *
+ * @returns Each row's fields after the loop.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Cell, Mark]));
+  const ids = [
+    spawn(storage, { "Grid,Cell": { n: 1 }, GridMark: { x: 2 } }),
+    spawn(storage, { "Grid,Cell": { n: 3 }, GridMark: { x: 4 } }),
+  ];
+
+  {
+      const storage_1 = storage;
+      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      const n_1 = storage_1.n;
+      if (n_1 > 0) {
+          const GridMarkRecord = storage_1.GridMark, record = storage_1["Grid,Cell"];
+          const xColumn = GridMarkRecord.x, nColumn = record.n;
+          for (let i = n_1 - 1; i >= 0; i--) {
+              xColumn[i] = xColumn[i] * 10 + nColumn[i];
+              nColumn[i] += xColumn[i];
+          }
+      }
+  }
+
+  return ids.map((id) => [get(storage, id, Cell.n), get(storage, id, Mark.x)]);
+}

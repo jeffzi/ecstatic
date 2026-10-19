@@ -37,6 +37,7 @@ func (r *Recorder) TempDir() string {
 // Run runs helper with r on its own goroutine, so Fatalf ends that goroutine and not the test's,
 // and returns the message helper failed with, or "" when it returned without failing.
 func (r *Recorder) Run(helper func(testing.TB)) string {
+	r.message = ""
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

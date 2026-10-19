@@ -41,8 +41,8 @@ type walker struct {
 // collect appends the sites in node's subtree to sites, in source order.
 func (w *walker) collect(node *ast.Node, sites []facts.Site) []facts.Site {
 	if node.Kind == ast.KindCallExpression {
-		if op, ok := recognize(w.checker, w.roots, node); ok {
-			return w.collectSite(node, op, sites)
+		if op, root, ok := recognize(w.checker, w.roots, node); ok {
+			return w.collectSite(node, op, root, sites)
 		}
 	}
 	node.ForEachChild(func(child *ast.Node) bool {
@@ -55,23 +55,27 @@ func (w *walker) collect(node *ast.Node, sites []facts.Site) []facts.Site {
 // collectSite appends the site of call, then the sites in its operands. Sites
 // in an iteration callback become the call's nested sites; any other operand's
 // sites follow the call's own at the same level.
-func (w *walker) collectSite(call *ast.Node, op facts.Op, sites []facts.Site) []facts.Site {
+func (w *walker) collectSite(call *ast.Node, op facts.Op, root string, sites []facts.Site) []facts.Site {
 	site := facts.Site{
 		Call:    w.table.Register(call),
 		Op:      op,
 		Context: statementContext(call),
-		Pos:     w.position(call),
+		Pos:     nodePosition(w.file, call),
+		Root:    root,
 	}
 	switch {
 	case op.Iterates() && !op.MatchesArgCount(len(call.Arguments())):
 		// The call already stays a runtime call, so its shape is never needed.
 		site.Reasons = append(site.Reasons, facts.ReasonArgCount)
 	case op == facts.OpEach:
-		resolveShapes(w.checker, &site, call.Arguments()[0])
+		args := call.Arguments()
+		site.Filtered = len(args) == 3
+		site.ArrayLiteral = args[0].Kind == ast.KindArrayLiteralExpression
+		resolveShapes(w.checker, &site, args[0])
 	}
 	callback := inlineCallback(call, op)
 	if callback != nil {
-		site.Callback = summarizeCallback(w.checker, w.table, callback)
+		site.Callback = w.summarizeCallback(&site, callback)
 	}
 	index := len(sites)
 	sites = append(sites, site)
@@ -88,13 +92,14 @@ func (w *walker) collectSite(call *ast.Node, op facts.Op, sites []facts.Site) []
 	return sites
 }
 
-// position locates the first token of call, leading trivia excluded. The
-// column counts UTF-16 code units, as TypeScript's own diagnostics do.
-func (w *walker) position(call *ast.Node) facts.Position {
-	offset := scanner.GetTokenPosOfNode(call, w.file, false)
-	line, character := scanner.GetECMALineAndUTF16CharacterOfPosition(w.file, offset)
+// nodePosition locates the first token of node in file, leading trivia
+// excluded. The column counts UTF-16 code units, as TypeScript's own
+// diagnostics do.
+func nodePosition(file *ast.SourceFile, node *ast.Node) facts.Position {
+	offset := scanner.GetTokenPosOfNode(node, file, false)
+	line, character := scanner.GetECMALineAndUTF16CharacterOfPosition(file, offset)
 	return facts.Position{
-		File:   sourceFileName(w.file),
+		File:   sourceFileName(file),
 		Offset: offset,
 		Line:   line + 1,
 		Column: int(character) + 1,
@@ -127,23 +132,28 @@ func statementContext(call *ast.Node) facts.StmtContext {
 	}
 }
 
-// recognize returns the op call invokes, and false when its callee does not
-// resolve to a function an ecstatic package's runtime declares. A callee
-// reached through a variable (`const myEach = each`) resolves to that
-// variable, which no runtime declares, so the call stays a runtime call.
-func recognize(c *checker.Checker, roots *PackageRoots, call *ast.Node) (facts.Op, bool) {
+// recognize returns the op call invokes and the root of the first ecstatic
+// package whose runtime declares its callee, and false when its callee does
+// not resolve to a function any ecstatic runtime declares. A callee reached
+// through a variable (`const myEach = each`) resolves to that variable, which
+// no runtime declares, so the call stays a runtime call.
+func recognize(c *checker.Checker, roots *PackageRoots, call *ast.Node) (op facts.Op, root string, ok bool) {
 	name := calleeName(call)
 	if name == nil {
-		return facts.OpNone, false
+		return facts.OpNone, "", false
 	}
 	symbol := resolveSymbol(c, name)
 	if symbol == nil {
-		return facts.OpNone, false
+		return facts.OpNone, "", false
 	}
-	if !slices.ContainsFunc(declarationFileNames(symbol), roots.inRuntime) {
-		return facts.OpNone, false
+	files := declarationFileNames(symbol)
+	runtime := slices.IndexFunc(files, roots.inRuntime)
+	if runtime < 0 {
+		return facts.OpNone, "", false
 	}
-	return facts.OpByName(symbolName(symbol))
+	op, ok = facts.OpByName(symbolName(symbol))
+	root, _ = roots.Root(files[runtime])
+	return op, root, ok
 }
 
 // calleeName returns the identifier naming call's callee: the callee itself
@@ -163,7 +173,9 @@ func calleeName(call *ast.Node) *ast.Node {
 
 // PackageRoots finds ecstatic package roots: the directories whose
 // package.json is named "ecstatic". It caches each directory's answer, so one
-// value should serve a whole run. It is safe for concurrent use.
+// value should serve a whole run. It is safe for concurrent use. Build one
+// with NewPackageRoots: the zero value is not usable, and its first Root call
+// panics.
 type PackageRoots struct {
 	byDir map[string]packageRoot
 	mu    sync.Mutex

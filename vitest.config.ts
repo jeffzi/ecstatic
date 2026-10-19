@@ -12,6 +12,12 @@ const OPTIMIZER_OPTIONS = { project: OPTIMIZER_TSCONFIG, projectRoot: "." };
 // The Vite smoke test's builds run in a child process the `NDEBUG` define never reaches, so an
 // `NDEBUG` run only repeats them.
 const VITE_SMOKE_TEST = "tests/optimizer/vite-smoke.test.ts";
+// Tests and benchmark modules import the package by name. The `paths` in `tests/` and `benchmarks/`
+// tsconfigs resolve that name to the sources, not to the `dist/` the package's `exports` point at,
+// so tests never run against a stale or missing build. Without this, the name still resolves, to
+// `dist/`, and the tests pass against whatever was last built. The root tsconfig carries no `paths`:
+// tsx reads it, and the benchmark suite must measure `dist/`.
+const SOURCE_RESOLVE = { tsconfigPaths: true };
 
 export default defineConfig({
   test: {
@@ -55,13 +61,7 @@ export default defineConfig({
       },
       {
         extends: true,
-        // Tests and benchmark modules import the package by name. The `paths` in `tests/` and
-        // `benchmarks/` tsconfigs resolve that name to the sources, not to the `dist/` the
-        // package's `exports` point at, so tests never run against a stale or missing build.
-        // Without this, the name still resolves, to `dist/`, and the tests pass against whatever
-        // was last built. The root tsconfig carries no `paths`: tsx reads it, and the benchmark
-        // suite must measure `dist/`.
-        resolve: { tsconfigPaths: true },
+        resolve: SOURCE_RESOLVE,
         test: {
           name: "unit",
           include: [...UNIT_TESTS, "tests/benchmarks/**/*.test.ts"],
@@ -69,26 +69,26 @@ export default defineConfig({
       },
       {
         extends: true,
-        resolve: { tsconfigPaths: true },
+        resolve: SOURCE_RESOLVE,
         plugins: [ecstatic(OPTIMIZER_OPTIONS)],
         test: { name: "unit-optimized", include: UNIT_TESTS },
       },
       {
         extends: true,
-        resolve: { tsconfigPaths: true },
+        resolve: SOURCE_RESOLVE,
         plugins: [ecstatic(OPTIMIZER_OPTIONS)],
         define: { NDEBUG: "true" },
         test: { name: "unit-ndebug", include: UNIT_TESTS, setupFiles: ["tests/skip-checked.ts"] },
       },
       {
         extends: true,
-        resolve: { tsconfigPaths: true },
+        resolve: SOURCE_RESOLVE,
         plugins: [goldenLoader()],
         test: { name: "fixtures", include: FIXTURE_TESTS },
       },
       {
         extends: true,
-        resolve: { tsconfigPaths: true },
+        resolve: SOURCE_RESOLVE,
         plugins: [goldenLoader()],
         define: { NDEBUG: "true" },
         test: {

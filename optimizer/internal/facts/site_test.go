@@ -49,11 +49,16 @@ func TestSite_AddDeclarationFile(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Archetype shapes and shape keys
+// ---------------------------------------------------------------------------
+
 // tag returns a non-relation component with no fields.
 func tag(name string) facts.Component {
 	return facts.Component{Name: name}
 }
 
+// numberField returns a field named name of the number kind.
 func numberField(name string) facts.Field {
 	return facts.Field{Name: name, Kind: facts.FieldNumber}
 }
@@ -176,6 +181,62 @@ func TestArchShape_Key(t *testing.T) {
 	}
 }
 
+func TestArchShape_Component(t *testing.T) {
+	t.Parallel()
+	pos := facts.Component{Name: "Pos", Fields: []facts.Field{numberField("x")}}
+	frozen := facts.Component{Name: "Frozen"}
+	shape := facts.ArchShape{Required: []facts.Component{pos}, Optional: []facts.Component{frozen}}
+	tests := []struct {
+		name   string
+		lookup string
+		want   facts.Component
+		wantOK bool
+	}{
+		{name: "required component", lookup: "Pos", want: pos, wantOK: true},
+		{name: "optional component", lookup: "Frozen", want: frozen, wantOK: true},
+		{name: "absent component", lookup: "Vel", want: facts.Component{}, wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := shape.Component(tt.lookup)
+
+			if ok != tt.wantOK {
+				t.Errorf("Component(%q) ok = %t, want %t", tt.lookup, ok, tt.wantOK)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("Component(%q) mismatch (-want +got):\n%s", tt.lookup, diff)
+			}
+		})
+	}
+}
+
+func TestComponent_Field(t *testing.T) {
+	t.Parallel()
+	comp := facts.Component{Name: "Pos", Fields: []facts.Field{numberField("x"), {Name: "on", Kind: facts.FieldBoolean}}}
+	tests := []struct {
+		name   string
+		lookup string
+		want   facts.Field
+		wantOK bool
+	}{
+		{name: "declared field", lookup: "on", want: facts.Field{Name: "on", Kind: facts.FieldBoolean}, wantOK: true},
+		{name: "absent field", lookup: "y", want: facts.Field{}, wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := comp.Field(tt.lookup)
+
+			if got != tt.want || ok != tt.wantOK {
+				t.Errorf("Field(%q) = %+v, %t, want %+v, %t", tt.lookup, got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
 func TestArchShape_Key_WhenFieldsUnsorted_LeavesShapeFieldsInDeclarationOrder(t *testing.T) {
 	t.Parallel()
 	shape := requiredOnly(facts.Component{
@@ -190,6 +251,10 @@ func TestArchShape_Key_WhenFieldsUnsorted_LeavesShapeFieldsInDeclarationOrder(t 
 		t.Errorf("Fields after Key() mismatch, want declaration order (-want +got):\n%s", diff)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Reason catalog
+// ---------------------------------------------------------------------------
 
 // reasonRows is the expected reason catalog, in catalog order.
 var reasonRows = []struct { //nolint:gochecknoglobals // read-only table shared by the catalog tests
@@ -266,6 +331,25 @@ var reasonRows = []struct { //nolint:gochecknoglobals // read-only table shared 
 		},
 	},
 	{
+		reason: facts.ReasonViewEscapes,
+		want: facts.ReasonInfo{
+			Code:     99918,
+			ID:       "VIEW_ESCAPES",
+			Category: facts.CategoryStrict,
+			Text:     "the view `e` is used as a value (`<detail>`)",
+			Hint:     "Read fields on `e`, or keep `e.id`.",
+		},
+	},
+	{
+		reason: facts.ReasonUnsupportedAssignment,
+		want: facts.ReasonInfo{
+			Code:     99919,
+			ID:       "UNSUPPORTED_ASSIGNMENT",
+			Category: facts.CategoryStrict,
+			Text:     "a field is the target of a destructuring assignment or a `for…of` head",
+		},
+	},
+	{
 		reason: facts.ReasonInternal,
 		want: facts.ReasonInfo{
 			Code:     99920,
@@ -295,7 +379,7 @@ var reasonRows = []struct { //nolint:gochecknoglobals // read-only table shared 
 		want: facts.ReasonInfo{
 			ID:       "OP_NOT_REWRITTEN",
 			Category: facts.CategorySilent,
-			Text:     "the op has no rewrite in this version",
+			Text:     "the call form has no rewrite in this version",
 		},
 	},
 }
@@ -344,6 +428,10 @@ func TestReasons_WhenReasonsCarryACode_NoTwoShareIt(t *testing.T) {
 		seen[info.Code] = info.ID
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Ops and the runtime's exports
+// ---------------------------------------------------------------------------
 
 // The public API is read from the TypeScript source with two line-shaped
 // patterns rather than a parser:
@@ -507,6 +595,10 @@ func TestOp_Iterates_AgreesWithTheOverloadData(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Overload argument counts
+// ---------------------------------------------------------------------------
 
 // The accepted argument counts of an iteration op are read from the overload
 // signatures of its declaration, with a bracket-balancing scan rather than a

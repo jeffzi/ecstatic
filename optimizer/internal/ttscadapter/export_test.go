@@ -18,9 +18,7 @@ func RunAnalyzing(
 	stdout, stderr io.Writer,
 	analyze analyzer,
 ) int {
-	p := defaultPluginRun()
-	p.analyze = analyze
-	return runPlugin(argv, streams{stdout: stdout, stderr: stderr}, p)
+	return runPlugin(argv, streams{stdout: stdout, stderr: stderr}, pluginRun{analyze: analyze})
 }
 
 // ErrReported is the error a subcommand returns once its diagnostics reported an error.
@@ -73,15 +71,30 @@ func ReportFailure(err error, stderr io.Writer) int {
 // Analyzer is the analysis of one file of a loaded Program.
 type Analyzer = analyzer
 
-// AnalyzeProgram is the analysis Run applies to each file by default.
+// AnalyzeProgram returns the sites analysis.Analyze reports for file, the analysis Run applies to
+// each file by default, so a test that supplies an Analyzer can fall back to it.
 func AnalyzeProgram(prog *driver.Program, file *ast.SourceFile, roots *analysis.PackageRoots) []facts.Site {
-	return analyzeProgram(prog, file, roots)
+	sites, _ := analysis.Analyze(prog.Checker, file, roots)
+	return sites
 }
 
 // RunTransforming runs as Run does, with transform standing in for the plugin's
 // emit-time transform of each project file, so a test can observe what it receives.
 func RunTransforming(argv []string, stdout, stderr io.Writer, transform driver.PluginTransform) int {
-	p := defaultPluginRun()
-	p.emitTransform = transform
-	return runPlugin(argv, streams{stdout: stdout, stderr: stderr}, p)
+	return runPlugin(argv, streams{stdout: stdout, stderr: stderr}, pluginRun{emitTransform: transform})
+}
+
+// Inliner emits one planned rewrite into the file it rewrites.
+type Inliner = inliner
+
+// RunInlining runs as Run does, with inline standing in for emitting each planned rewrite, so a test can make
+// one site's emit panic.
+func RunInlining(argv []string, stdout, stderr io.Writer, inline Inliner) int {
+	return runPlugin(argv, streams{stdout: stdout, stderr: stderr}, pluginRun{inline: inline})
+}
+
+// RunResolving runs as Run does, with resolve standing in for resolving the physical path of each src/debug.ts the run
+// copies DEBUG from, so a test can make that resolution fail after the file was read.
+func RunResolving(argv []string, stdout, stderr io.Writer, resolve func(path string) (string, error)) int {
+	return runPlugin(argv, streams{stdout: stdout, stderr: stderr}, pluginRun{physical: resolve})
 }

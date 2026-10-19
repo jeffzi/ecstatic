@@ -1,0 +1,44 @@
+import * as ecstatic_internal from "ecstatic/internal";
+const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
+const shapeKey = "c10:MarginSpot{1:x=n}|c10:MarginNote{5:first=p,6:second=p}";
+// rewrite-applies: destructure-default-typed
+// rewrite-applies: destructure-default-plain
+import { archetype, component, createWorld, each, ref, register, spawn } from "ecstatic";
+
+const Spot = component("MarginSpot", { x: 0 });
+const Note = component("MarginNote", { first: ref<number>(), second: ref<number>() });
+
+/**
+ * Gives destructured fields defaults: a default on a typed-array column never applies, and one on a plain-array
+ * column applies to `undefined`, each run in pattern order.
+ *
+ * @returns What the body bound and which defaults ran, row by row.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Spot], [Note]));
+  spawn(storage, { MarginSpot: { x: 1 }, MarginNote: {} });
+  spawn(storage, { MarginSpot: { x: 2 }, MarginNote: { first: 4 } });
+  const trace: unknown[] = [];
+
+  {
+      const storage_1 = storage;
+      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      const n = storage_1.n;
+      if (n > 0) {
+          const MarginSpotRecord = storage_1.MarginSpot, MarginNoteRecord = storage_1.MarginNote;
+          let value, present, value_1, value_2;
+          for (let i = n - 1; i >= 0; i--) {
+              // oxlint-disable-next-line typescript/no-useless-default-assignment -- a default on a typed-array column is the lowering under test
+              const x = MarginSpotRecord.x[i];
+              trace.push(x);
+              // oxlint-disable-next-line typescript/strict-boolean-expressions -- testing an optional slot is the lowering under test
+              if (((storage_1.mask[i] & 1) !== 0)) {
+                  const {} = (((storage_1.mask[i] & 1) !== 0) ? 0 : void 0), first = ((value = MarginNoteRecord.first[i]) === void 0 ? (trace.push("first default"), ((present = ((storage_1.mask[i] & 1) !== 0), value_1 = 9, (present ? MarginNoteRecord.second : void 0)[i] = value_1)), 1) : value), second = ((value_2 = MarginNoteRecord.second[i]) === void 0 ? (trace.push("second default"), 2) : value_2);
+                  trace.push(first, second);
+              }
+          }
+      }
+  }
+
+  return trace;
+}

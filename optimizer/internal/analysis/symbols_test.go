@@ -275,7 +275,7 @@ func membersIn(uses []memberUse, file string) []string {
 	return got
 }
 
-func TestAnalysisPackage_CallsSymbolAccessorsOnlyFromSymbolsFile(t *testing.T) {
+func TestAnalysisPackage_WhenTypeChecked_CallsSymbolAccessorsOnlyFromSymbolsFile(t *testing.T) {
 	t.Parallel()
 	pkg := parsePackage(t, nil)
 	exports := exportData(t)
@@ -287,7 +287,7 @@ func TestAnalysisPackage_CallsSymbolAccessorsOnlyFromSymbolsFile(t *testing.T) {
 	}
 }
 
-func TestAnalysisPackage_UsesSymbolMembersOnlyFromSymbolsFile(t *testing.T) {
+func TestAnalysisPackage_WhenTypeChecked_UsesSymbolMembersOnlyFromSymbolsFile(t *testing.T) {
 	t.Parallel()
 	pkg := parsePackage(t, nil)
 	exports := exportData(t)
