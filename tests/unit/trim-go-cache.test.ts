@@ -454,6 +454,40 @@ describe("trimGoCache", () => {
         trim(cache, { cap: 50, target: 0 });
       }).toThrow(entry);
     });
+
+    it.runIf(PERMISSIONS_ENFORCED)("throws naming a -d directory it cannot list", () => {
+      const cache = tempDir();
+      const outputDir = writeOutputDir(cache, "00", [100], 5 * HOUR);
+      lockDir(outputDir, 0o000);
+
+      expect(() => {
+        trim(cache, { cap: 50, target: 0 });
+      }).toThrow(outputDir);
+    });
+
+    it.runIf(PERMISSIONS_ENFORCED)("throws naming a file in a -d directory it cannot stat", () => {
+      const cache = tempDir();
+      const outputDir = writeOutputDir(cache, "00", [100], 5 * HOUR);
+      lockDir(outputDir, 0o444);
+
+      expect(() => {
+        trim(cache, { cap: 50, target: 0 });
+      }).toThrow(join(outputDir, "file0"));
+    });
+
+    it.runIf(PERMISSIONS_ENFORCED)(
+      "throws naming an entry it cannot stat again before deleting it",
+      () => {
+        const cache = tempDir();
+        const entry = writeEntry(cache, "00", 100, 5 * HOUR);
+
+        expect(() => {
+          trim(cache, { cap: 50, target: 0 }, (path) => {
+            lockDir(dirname(path), 0o444);
+          });
+        }).toThrow(entry);
+      },
+    );
   });
 
   describe("when the cache directory does not exist", () => {
