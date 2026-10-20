@@ -63,7 +63,7 @@
     "oxlint-tsgolint": "^7.0.0",
     "publint": "^0.3.0",
     "tsx": "^4.23.0",
-    "typescript": "^7.0.0",
+    "typescript": "7.1.0-dev.20261020.3",
     "vitest": "^4.1.0"
   },
   "overrides": {

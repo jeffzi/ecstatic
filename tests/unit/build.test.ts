@@ -43,7 +43,35 @@ function packageScript(name: string): string[] {
   return (scripts[name] ?? "").split("&&").map((command) => command.trim());
 }
 
+/** The TypeScript nightly whose compiler API the optimizer is written against. */
+const PINNED_TYPESCRIPT = "7.1.0-dev.20261020.3";
+
 describe("build", () => {
+  describe("typescript dev dependency", () => {
+    it("is pinned to exactly the optimizer's nightly, and installed at it", () => {
+      const { devDependencies }: { devDependencies: Record<string, string> } = JSON.parse(
+        readFileSync(join(ROOT, "package.json"), "utf8"),
+      );
+      const { version }: { version: string } = JSON.parse(
+        readFileSync(join(ROOT, "node_modules", "typescript", "package.json"), "utf8"),
+      );
+
+      expect(devDependencies["typescript"]).toBe(PINNED_TYPESCRIPT);
+      expect(version).toBe(PINNED_TYPESCRIPT);
+    });
+
+    it("is exempt, with its compiler binaries, from the release-age cooldown", () => {
+      const npmrc = readFileSync(join(ROOT, ".npmrc"), "utf8").split(/\r?\n/);
+
+      const exempt = npmrc.filter((line) => line.startsWith("min-release-age-exclude[]="));
+
+      expect(exempt).toStrictEqual([
+        "min-release-age-exclude[]=typescript",
+        "min-release-age-exclude[]=@typescript/typescript-*",
+      ]);
+    });
+  });
+
   describe("runtime project", () => {
     it("compiles neither a plugin module nor the Node types", async () => {
       const files = await compiledFiles("tsconfig.build.json");
