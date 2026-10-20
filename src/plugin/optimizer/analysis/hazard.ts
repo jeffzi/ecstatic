@@ -29,6 +29,7 @@ import {
 
 import { type Checker, type CheckerSymbol, isGlobalValue, typeAtLocation } from "../compiler.js";
 import { type ArchShape, type Op, shapeKey } from "../facts.js";
+import { isThisParameter, skipWrappers } from "../syntax.js";
 import { forEachEvaluated } from "./evaluated.js";
 import type { InlineCallback } from "./function-local.js";
 import {
@@ -39,7 +40,6 @@ import {
 } from "./roles.js";
 import { type PackageRoots, recognize } from "./roots.js";
 import { resolveStorageShape } from "./shape.js";
-import { isThisParameter, skipWrappers } from "./syntax.js";
 import {
   anyReadRuns,
   cloneSafe,

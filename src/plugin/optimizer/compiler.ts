@@ -1,6 +1,6 @@
 /**
  * Every call the optimizer makes into the compiler process lives here: checker, symbol, type,
- * program, snapshot, parse, and emit calls. The other optimizer modules read nodes and plain values,
+ * program, snapshot, parse, emit, and printer calls. The other optimizer modules read nodes and plain values,
  * so a compiler API upgrade edits this file alone.
  */
 
@@ -359,6 +359,33 @@ export async function emitJavaScript(project: Project, file: string): Promise<st
 export async function parseFile(api: API, file: string): Promise<SourceFile> {
   const { sourceFile } = await api.createSourceFileFromFile(file);
   return sourceFile;
+}
+
+/**
+ * Parses `text` outside any program. The compiler process releases the parse before this returns,
+ * so the tree serves syntax reads, never checker queries.
+ *
+ * @param api - Client of the compiler process.
+ * @param fileName - The name to parse `text` under, whose extension sets the script kind.
+ * @param text - The text to parse.
+ * @returns The parsed source file.
+ */
+export async function parseText(api: API, fileName: string, text: string): Promise<SourceFile> {
+  const retained = await api.createSourceFile(fileName, text);
+  await retained.dispose();
+  return retained.sourceFile;
+}
+
+/**
+ * Prints a syntax tree, nodes built by the factory and nodes of a parse alike. The printer is sent
+ * the tree alone, without source text, so no comment of a parsed node is printed.
+ *
+ * @param api - Client of the compiler process.
+ * @param node - Root of the tree to print.
+ * @returns The printed text, its lines ending with `\n`.
+ */
+export async function printTree(api: API, node: Node): Promise<string> {
+  return await api.printer.printNode(node);
 }
 
 /**

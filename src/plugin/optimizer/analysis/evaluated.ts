@@ -23,7 +23,7 @@ import {
   isSetAccessorDeclaration,
 } from "typescript/ast/is";
 
-import { isTypeOnly } from "./syntax.js";
+import { isTypeOnly } from "../syntax.js";
 
 /** A class or object-literal member with parameters and a body that runs when it is called. */
 export type FunctionMember =

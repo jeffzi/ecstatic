@@ -24,6 +24,7 @@ import {
 } from "typescript/ast/is";
 
 import { type Checker, type CheckerSymbol, refersToArguments, resolveSymbol } from "../compiler.js";
+import { isThisParameter, isTypeOnly, skipErased } from "../syntax.js";
 import {
   type FunctionMember,
   forEachEvaluated,
@@ -31,7 +32,6 @@ import {
   runsWithClass,
   visitMemberHead,
 } from "./evaluated.js";
-import { isThisParameter, isTypeOnly, skipErased } from "./syntax.js";
 
 /**
  * An arrow function or function expression written in place as an argument; a function declaration

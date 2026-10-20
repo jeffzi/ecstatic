@@ -45,7 +45,7 @@ import {
 } from "typescript/ast/is";
 
 import { type Checker, type CheckerSymbol, resolveSymbol } from "../compiler.js";
-import { outermostParens } from "./syntax.js";
+import { outermostParens } from "../syntax.js";
 
 /**
  * Whether a node is an `=` whose target is an array or object literal, a pattern the value is

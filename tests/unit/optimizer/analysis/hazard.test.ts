@@ -19,9 +19,9 @@ import {
 } from "../../../../src/plugin/optimizer/analysis/hazard.js";
 import { PackageRoots } from "../../../../src/plugin/optimizer/analysis/roots.js";
 import { resolveShapes } from "../../../../src/plugin/optimizer/analysis/shape.js";
-import { isThisParameter } from "../../../../src/plugin/optimizer/analysis/syntax.js";
 import { resolveSymbol } from "../../../../src/plugin/optimizer/compiler.js";
 import type { ProjectView, Session } from "../../../../src/plugin/optimizer/session.js";
+import { isThisParameter } from "../../../../src/plugin/optimizer/syntax.js";
 import {
   caseFiles,
   closeProject,

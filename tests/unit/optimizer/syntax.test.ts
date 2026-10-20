@@ -7,14 +7,14 @@ import {
 } from "typescript/ast/is";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import type { ProjectView, Session } from "../../../src/plugin/optimizer/session.js";
 import {
   arithmeticOperator,
   boundNames,
   logicalOperator,
   outermostParens,
   skipWrappers,
-} from "../../../../src/plugin/optimizer/analysis/syntax.js";
-import type { ProjectView, Session } from "../../../../src/plugin/optimizer/session.js";
+} from "../../../src/plugin/optimizer/syntax.js";
 import {
   appTsconfig,
   caseFiles,
@@ -22,7 +22,7 @@ import {
   openProject,
   projectPath,
   SPAWN_TIMEOUT_MS,
-} from "../project.js";
+} from "./project.js";
 
 const SKIP_CASES = [
   { name: "a bare expression", source: "x;", expected: SyntaxKind.Identifier },

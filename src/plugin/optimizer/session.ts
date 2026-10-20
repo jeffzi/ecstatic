@@ -3,7 +3,7 @@
  * caller in place of the disk's.
  */
 
-import type { SourceFile } from "typescript/ast";
+import type { Node, SourceFile } from "typescript/ast";
 
 import {
   type Checker,
@@ -13,6 +13,8 @@ import {
   emitJavaScript,
   loadProject,
   parseFile,
+  parseText,
+  printTree,
   projectSourceFile,
   type Snapshot,
   startCompiler,
@@ -81,6 +83,23 @@ export interface Session {
    * @throws When the file cannot be read, naming it, or the session is closed or its process exited.
    */
   parse(file: string): Promise<SourceFile>;
+  /**
+   * Parses text outside the project's program, for syntax reads only.
+   *
+   * @param fileName - The name to parse `text` under, whose extension sets the script kind.
+   * @param text - The text to parse.
+   * @returns The parsed source file.
+   * @throws When the session is closed or its compiler process exited.
+   */
+  parseText(fileName: string, text: string): Promise<SourceFile>;
+  /**
+   * Prints a syntax tree, nodes built by the factory and nodes of a parse alike, without comments.
+   *
+   * @param node - Root of the tree to print.
+   * @returns The printed text, its lines ending with `\n`.
+   * @throws When the session is closed or its compiler process exited.
+   */
+  print(node: Node): Promise<string>;
   /**
    * Ends the compiler process, killing it when it has not finished by the session's close deadline.
    * Closing again does nothing.
@@ -155,6 +174,14 @@ class ProjectSession implements Session {
 
   async parse(file: string): Promise<SourceFile> {
     return await this.#query(async () => await parseFile(this.#compiler.api, file));
+  }
+
+  async parseText(fileName: string, text: string): Promise<SourceFile> {
+    return await this.#query(async () => await parseText(this.#compiler.api, fileName, text));
+  }
+
+  async print(node: Node): Promise<string> {
+    return await this.#query(async () => await printTree(this.#compiler.api, node));
   }
 
   async close(): Promise<void> {

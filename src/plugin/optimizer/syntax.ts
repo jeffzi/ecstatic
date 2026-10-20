@@ -1,4 +1,5 @@
 import {
+  type BinaryOperator,
   type BindingName,
   type Expression,
   type Node,
@@ -20,7 +21,7 @@ import {
   isTypeNode,
 } from "typescript/ast/is";
 
-const ARITHMETIC_OPERATORS: ReadonlyMap<SyntaxKind, SyntaxKind> = new Map([
+const ARITHMETIC_OPERATORS: ReadonlyMap<SyntaxKind, BinaryOperator> = new Map([
   [SyntaxKind.PlusEqualsToken, SyntaxKind.PlusToken],
   [SyntaxKind.MinusEqualsToken, SyntaxKind.MinusToken],
   [SyntaxKind.AsteriskEqualsToken, SyntaxKind.AsteriskToken],
@@ -38,7 +39,7 @@ const ARITHMETIC_OPERATORS: ReadonlyMap<SyntaxKind, SyntaxKind> = new Map([
   [SyntaxKind.CaretEqualsToken, SyntaxKind.CaretToken],
 ]);
 
-const LOGICAL_OPERATORS: ReadonlyMap<SyntaxKind, SyntaxKind> = new Map([
+const LOGICAL_OPERATORS: ReadonlyMap<SyntaxKind, BinaryOperator> = new Map([
   [SyntaxKind.BarBarEqualsToken, SyntaxKind.BarBarToken],
   [SyntaxKind.AmpersandAmpersandEqualsToken, SyntaxKind.AmpersandAmpersandToken],
   [SyntaxKind.QuestionQuestionEqualsToken, SyntaxKind.QuestionQuestionToken],
@@ -110,7 +111,7 @@ export function boundNames(name: BindingName): string[] {
  * @param compound - An assignment operator's kind.
  * @returns The operator `compound` applies, or undefined for `=` and the logical assignments.
  */
-export function arithmeticOperator(compound: SyntaxKind): SyntaxKind | undefined {
+export function arithmeticOperator(compound: SyntaxKind): BinaryOperator | undefined {
   return ARITHMETIC_OPERATORS.get(compound);
 }
 
@@ -120,7 +121,7 @@ export function arithmeticOperator(compound: SyntaxKind): SyntaxKind | undefined
  * @param logical - An assignment operator's kind.
  * @returns The operator guarding the store, or undefined for `=` and the arithmetic assignments.
  */
-export function logicalOperator(logical: SyntaxKind): SyntaxKind | undefined {
+export function logicalOperator(logical: SyntaxKind): BinaryOperator | undefined {
   return LOGICAL_OPERATORS.get(logical);
 }
 

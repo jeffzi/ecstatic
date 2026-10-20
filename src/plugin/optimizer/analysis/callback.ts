@@ -32,6 +32,7 @@ import {
 } from "../facts.js";
 import type { NodeTable } from "../nodes.js";
 import { nodePosition } from "../position.js";
+import { boundNames, isThisParameter, isTypeOnly } from "../syntax.js";
 import { forEachDeferred, forEachEvaluated, isNestedFunction } from "./evaluated.js";
 import {
   directEvalCalls,
@@ -43,7 +44,6 @@ import {
 import { type Hazards, hazardPoints } from "./hazard.js";
 import { isNamePosition } from "./roles.js";
 import { type PackageRoots, recognize } from "./roots.js";
-import { boundNames, isThisParameter, isTypeOnly } from "./syntax.js";
 import { type FoundEscape, ViewClassifier } from "./view-uses.js";
 
 /** The file a callback belongs to, and what analyzing it reads and writes. */

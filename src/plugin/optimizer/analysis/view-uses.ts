@@ -31,6 +31,7 @@ import {
   shapeComponent,
   type UseKind,
 } from "../facts.js";
+import { arithmeticOperator, outermostParens, skipWrappers } from "../syntax.js";
 import { isInstanceInitializer } from "./evaluated.js";
 import type { InlineCallback } from "./function-local.js";
 import {
@@ -49,7 +50,6 @@ import {
   outermostWrapper,
   patternKey,
 } from "./roles.js";
-import { arithmeticOperator, outermostParens, skipWrappers } from "./syntax.js";
 
 const ID_KEY = "id";
 
