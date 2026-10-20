@@ -1,0 +1,57 @@
+import * as ecstatic_internal from "ecstatic/internal";
+const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
+const shapeKey = "c9:FenceSpot{1:x=n}|c9:FenceGate{2:hp=n,4:shut=b}";
+// rewrite-applies: write-optional-field
+// rewrite-applies: boolean-assignment-value
+import {
+  archetype,
+  component,
+  createWorld,
+  disable,
+  each,
+  enable,
+  get,
+  register,
+  spawn,
+} from "ecstatic";
+
+const Spot = component("FenceSpot", { x: 0 });
+const Gate = component("FenceGate", { hp: 0, shut: false });
+
+/**
+ * Writes an optional component's fields with right-hand sides that disable it, which never makes the write throw:
+ * the write lands in the column as the runtime's accessor record does.
+ *
+ * @returns The values the boolean assignments yielded, and the gated row's fields after the loop.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Spot], [Gate]));
+  const gated = spawn(storage, { FenceSpot: { x: 1 }, FenceGate: { hp: 5, shut: true } });
+  spawn(storage, { FenceSpot: { x: 2 } });
+  const trace: unknown[] = [];
+
+  {
+      const storage_1 = storage;
+      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      const n = storage_1.n;
+      if (n > 0) {
+          const FenceGateRecord = storage_1.FenceGate;
+          let present, value, present_1, value_1, present_2, value_2, present_3, value_3;
+          for (let i = n - 1; i >= 0; i--) {
+              // oxlint-disable-next-line typescript/strict-boolean-expressions -- testing an optional slot is the lowering under test
+              if (!((storage_1.mask[i] & 1) !== 0))
+                  continue;
+              (present = ((storage_1.mask[i] & 1) !== 0), value = (disable(storage, storage_1.entities[i], Gate), 7), (present ? FenceGateRecord.hp : void 0)[i] = value);
+              enable(storage, storage_1.entities[i], Gate);
+              (present_1 = ((storage_1.mask[i] & 1) !== 0), value_1 = (present_1 ? FenceGateRecord.hp : void 0)[i], value_1 = value_1 + ((disable(storage, storage_1.entities[i], Gate), 1)), (present_1 ? FenceGateRecord.hp : void 0)[i] = value_1);
+              enable(storage, storage_1.entities[i], Gate);
+              trace.push(((present_2 = ((storage_1.mask[i] & 1) !== 0), value_2 = (disable(storage, storage_1.entities[i], Gate), false), (present_2 ? FenceGateRecord.shut : void 0)[i] = (value_2 === true ? 1 : 0), value_2)));
+              enable(storage, storage_1.entities[i], Gate);
+              trace.push(((present_3 = ((storage_1.mask[i] & 1) !== 0), ((present_3 ? FenceGateRecord.shut : void 0)[i] !== 0) || (value_3 = (disable(storage, storage_1.entities[i], Gate), true), (present_3 ? FenceGateRecord.shut : void 0)[i] = (value_3 === true ? 1 : 0), value_3))));
+              enable(storage, storage_1.entities[i], Gate);
+          }
+      }
+  }
+
+  return { trace, hp: get(storage, gated, Gate.hp), shut: get(storage, gated, Gate.shut) };
+}

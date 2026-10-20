@@ -1,0 +1,42 @@
+import * as ecstatic_internal from "ecstatic/internal";
+const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
+const shapeKey = "c10:BannerFlag{4:size=n}c12:BannerRaised{}|c10:BannerTorn{}";
+// rewrite-applies: required-tag
+// rewrite-applies: optional-tag
+// rewrite-applies: presence-optional
+import { archetype, component, createWorld, disable, each, register, spawn } from "ecstatic";
+
+const Flag = component("BannerFlag", { size: 0 });
+const Raised = component("BannerRaised");
+const Torn = component("BannerTorn");
+
+/**
+ * Reads a required and an optional tag as values and tests the optional one, on a row where it is enabled, then
+ * again after disabling it in the same callback, and on a row where it never was.
+ *
+ * @returns The tag values and test results, row by row.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Flag, Raised], [Torn]));
+  spawn(storage, { BannerFlag: { size: 1 }, BannerTorn: true });
+  spawn(storage, { BannerFlag: { size: 2 } });
+  const trace: unknown[] = [];
+
+  {
+      const storage_1 = storage;
+      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      const n = storage_1.n;
+      if (n > 0) {
+          for (let i = n - 1; i >= 0; i--) {
+              const torn = (((storage_1.mask[i] & 1) !== 0) ? true : void 0);
+              trace.push(true, torn ?? "none", (((storage_1.mask[i] & 1) !== 0) ? true : void 0) === true);
+              if (((storage_1.mask[i] & 1) !== 0)) {
+                  disable(storage, storage_1.entities[i], Torn);
+                  trace.push((((storage_1.mask[i] & 1) !== 0) ? true : void 0), torn);
+              }
+          }
+      }
+  }
+
+  return trace;
+}

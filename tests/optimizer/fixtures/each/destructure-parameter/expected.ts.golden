@@ -1,0 +1,95 @@
+import * as ecstatic_internal from "ecstatic/internal";
+const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
+const shapeKey = "c8:SignSpot{1:x=n,1:y=n}c8:SignPace{2:dx=n,2:dy=n}c9:SignTally{5:first=p,6:second=p}|";
+// rewrite-applies: destructure-parameter
+// rewrite-applies: destructure-parameter-nested
+// rewrite-applies: destructure-id
+import { archetype, component, createWorld, each, get, ref, register, spawn } from "ecstatic";
+
+const Spot = component("SignSpot", { x: 0, y: 0 });
+const Pace = component("SignPace", { dx: 0, dy: 0 });
+const Tally = component("SignTally", { first: ref<number>(), second: ref<number>() });
+
+/**
+ * Destructures the view in the callback's parameter: `id`, renamed and shorthand slot aliases whose writes reach
+ * the columns, and nested field reads whose bindings stay assignable; then field defaults that see the enclosing
+ * scope but not the names the body declares.
+ *
+ * @returns What the bodies bound, with each id as its index in spawn order, and each row's fields after the loops.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Spot, Pace, Tally]));
+  const ids = [
+    spawn(storage, {
+      SignSpot: { x: 1, y: 2 },
+      SignPace: { dx: 3, dy: 4 },
+      SignTally: { first: 5 },
+    }),
+    spawn(storage, { SignSpot: { x: 5, y: 6 }, SignPace: { dx: 7, dy: 8 }, SignTally: {} }),
+  ];
+  const trace: unknown[] = [];
+  const fallback = 100;
+
+  {
+      const storage_1 = storage;
+      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      const n = storage_1.n;
+      if (n > 0) {
+          const SignPaceRecord = storage_1.SignPace, SignSpotRecord = storage_1.SignSpot;
+          let value;
+          for (let i = n - 1; i >= 0; i--) {
+              let id = storage_1.entities[i], p = true, vx = SignPaceRecord.dx[i], dy = SignPaceRecord.dy[i];
+              {
+                  (value = SignSpotRecord.x[i], value = value + (vx), SignSpotRecord.x[i] = value);
+                  // oxlint-disable-next-line no-param-reassign -- parameter-pattern bindings staying assignable is the behavior under test
+                  vx = 0;
+                  // oxlint-disable-next-line no-param-reassign -- parameter-pattern bindings staying assignable is the behavior under test
+                  dy *= 2;
+                  trace.push(ids.indexOf(id), SignSpotRecord.x[i], vx, dy);
+              }
+          }
+      }
+  }
+  {
+      const storage_2 = storage;
+      DEBUG && ecstatic_internal.assertShape(storage_2, shapeKey);
+      const n_1 = storage_2.n;
+      if (n_1 > 0) {
+          const SignSpotRecord_1 = storage_2.SignSpot, SignPaceRecord_1 = storage_2.SignPace;
+          const yColumn = SignSpotRecord_1.y, dyColumn = SignPaceRecord_1.dy;
+          for (let i_1 = n_1 - 1; i_1 >= 0; i_1--) {
+              let SignSpot = true, SignPace = true;
+              {
+                  yColumn[i_1] += dyColumn[i_1];
+                  dyColumn[i_1] = 0;
+              }
+          }
+      }
+  }
+  {
+      const storage_3 = storage;
+      DEBUG && ecstatic_internal.assertShape(storage_3, shapeKey);
+      const n_2 = storage_3.n;
+      if (n_2 > 0) {
+          const SignTallyRecord = storage_3.SignTally;
+          let value_1, value_2;
+          for (let i_2 = n_2 - 1; i_2 >= 0; i_2--) {
+              let first = ((value_1 = SignTallyRecord.first[i_2]) === void 0 ? fallback : value_1), second = ((value_2 = SignTallyRecord.second[i_2]) === void 0 ? first : value_2);
+              {
+                  // oxlint-disable-next-line no-shadow -- a body name shadowing the one a parameter default reads is the behavior under test
+                  const fallback = 200;
+                  trace.push(first, second, fallback);
+              }
+          }
+      }
+  }
+
+  return {
+    trace,
+    fields: ids.map((id) => [
+      get(storage, id, Spot.x),
+      get(storage, id, Spot.y),
+      get(storage, id, Pace.dy),
+    ]),
+  };
+}

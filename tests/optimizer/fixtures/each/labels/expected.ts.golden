@@ -1,0 +1,57 @@
+import * as ecstatic_internal from "ecstatic/internal";
+const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
+const shapeKey = "c11:TrellisRung{1:x=n}|";
+// rewrite-applies: user-label
+// rewrite-applies: return-labeled
+import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
+
+const Rung = component("TrellisRung", { x: 0 });
+
+/**
+ * Runs labeled loops and a labeled block in the body, with `break` and `continue` that name them and unlabeled
+ * ones, beside a `return` that ends the row from inside a loop.
+ *
+ * @returns What each row ran, in visit order.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Rung]));
+  for (const x of [1, 2, 3]) {
+    spawn(storage, { TrellisRung: { x } });
+  }
+  const seen: string[] = [];
+
+  // fallow-ignore-next-line complexity -- the callback packs the forms under test into one body
+  {
+      const storage_1 = storage;
+      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      const n = storage_1.n;
+      if (n > 0) {
+          const TrellisRungRecord = storage_1.TrellisRung;
+          row_1: for (let i = n - 1; i >= 0; i--) {
+              row: for (let a = 0; a < 3; a++) {
+                  for (let b = 0; b < 3; b++) {
+                      if (b === 1)
+                          continue row;
+                      if (a === 2)
+                          break row;
+                      seen.push(`${TrellisRungRecord.x[i]}:${a}${b}`);
+                  }
+              }
+              block: {
+                  if (TrellisRungRecord.x[i] === 2)
+                      break block;
+                  seen.push(`${TrellisRungRecord.x[i]}:block`);
+              }
+              for (let k = 0; k < 2; k++) {
+                  if (k === 0)
+                      continue;
+                  if (TrellisRungRecord.x[i] === 1)
+                      continue row_1;
+                  seen.push(`${TrellisRungRecord.x[i]}:k${k}`);
+              }
+          }
+      }
+  }
+
+  return seen;
+}

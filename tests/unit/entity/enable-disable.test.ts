@@ -393,7 +393,7 @@ describe("world forms", () => {
     expect(storage.mask[rowOf(storage, id)]).toBe(0);
   });
 
-  it("throws on a stale ID", () => {
+  it("throws on a stale ID #checked", () => {
     const { world, storage } = createStunnedStorage();
     const id = spawn(storage);
     despawn(storage, id);
@@ -406,7 +406,7 @@ describe("world forms", () => {
     }).toThrow("stale entity ID");
   });
 
-  it("throws on a stale ID through the storage form", () => {
+  it("throws on a stale ID through the storage form #checked", () => {
     const { storage } = createStunnedStorage();
     const id = spawn(storage);
     despawn(storage, id);

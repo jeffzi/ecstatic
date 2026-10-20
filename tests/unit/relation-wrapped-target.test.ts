@@ -46,7 +46,7 @@ function attemptLink(world: World, source: EntityId, target: EntityId): void {
 }
 
 describe("a dead id whose slot is free after the generation wraps", () => {
-  it("is a stale link target", () => {
+  it("is a stale link target #checked", () => {
     const { held, source, world } = createWrappedFreeTarget();
 
     expect(() => {
@@ -63,7 +63,7 @@ describe("a dead id whose slot is free after the generation wraps", () => {
     expect(countSources(world, WrapSpec_Rel, held)).toBe(0);
   });
 
-  it("leaves no sources for the slot's next occupant after a rejected link", () => {
+  it("leaves no sources for the slot's next occupant after a rejected link #checked", () => {
     const { held, source, storage, world } = createWrappedFreeTarget();
     attemptLink(world, source, held);
 

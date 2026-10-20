@@ -1,0 +1,38 @@
+import * as ecstatic_internal from "ecstatic/internal";
+const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
+const shapeKey = "c8:Position{1:x=n,1:y=n}c8:Velocity{2:dx=n,2:dy=n}|";
+import { Archetype, createWorld, each, get, register, spawn, type Storage } from "ecstatic";
+
+import { Position, Velocity } from "../../schema.js";
+
+class Runner extends Archetype([Position, Velocity]) {}
+
+function advance(runners: Storage<Runner>, visited: number[]): void {
+  {
+      const storage = runners;
+      DEBUG && ecstatic_internal.assertShape(storage, shapeKey);
+      const n = storage.n;
+      if (n > 0) {
+          const PositionRecord = storage.Position, VelocityRecord = storage.Velocity;
+          let value;
+          for (let i = n - 1; i >= 0; i--) {
+              visited.push(storage.entities[i]);
+              (value = PositionRecord.y[i], value = value + (VelocityRecord.dy[i]), PositionRecord.y[i] = value);
+          }
+      }
+  }
+}
+
+/** Moves every row of a storage reached through a parameter typed with a class-form archetype. */
+export function scenario(): unknown {
+  const runners = register(createWorld(), Runner);
+  const ids = [
+    spawn(runners, { Position: { x: 0, y: 2 }, Velocity: { dx: 0, dy: 5 } }),
+    spawn(runners, { Position: { x: 0, y: 7 }, Velocity: { dx: 0, dy: -3 } }),
+  ];
+  const visited: number[] = [];
+
+  advance(runners, visited);
+
+  return { visited, ys: ids.map((id) => get(runners, id, Position.y)) };
+}

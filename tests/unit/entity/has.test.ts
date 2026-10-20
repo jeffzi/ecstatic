@@ -71,7 +71,7 @@ describe("has", () => {
     expect(has(storage, id, [Stunned, OnFire])).toBe(true);
   });
 
-  it("errors on stale ID", () => {
+  it("errors on stale ID #checked", () => {
     const { storage } = createStunnedStorage();
     const id = spawn(storage);
     despawn(storage, id);
@@ -140,7 +140,7 @@ describe("hasAny", () => {
     expect(!hasAny(storage, id, [Stunned, OnFire])).toBe(true);
   });
 
-  it("errors on stale ID", () => {
+  it("errors on stale ID #checked", () => {
     const { storage } = createStunnedStorage();
     const id = spawn(storage);
     despawn(storage, id);
@@ -189,7 +189,7 @@ describe("has/hasAny world form", () => {
     expect(hasAny(world, id, [Stunned, OnFire])).toBe(true);
   });
 
-  it("errors on stale ID", () => {
+  it("errors on stale ID #checked", () => {
     const { world, storage } = createStunnedStorage();
     const id = spawn(storage);
     despawn(storage, id);

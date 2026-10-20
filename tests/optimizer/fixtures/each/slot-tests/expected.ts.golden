@@ -1,0 +1,64 @@
+import * as ecstatic_internal from "ecstatic/internal";
+const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
+const shapeKey = "c9:ProbeSpot{1:x=n}|c10:ProbeGuard{2:hp=n}";
+// rewrite-applies: presence-optional
+// rewrite-applies: presence-required
+// rewrite-applies: compare-null-strict-equal
+// rewrite-applies: compare-null-strict-not-equal
+// rewrite-applies: coalesce-optional
+// rewrite-applies: coalesce-required
+// rewrite-applies: optional-chain-read
+import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
+
+const Spot = component("ProbeSpot", { x: 0 });
+const Guard = component("ProbeGuard", { hp: 0 });
+
+/**
+ * Tests slots for presence, compares them with `undefined` and `null`, negated forms included, coalesces them in
+ * tests, and reads a field through an optional chain, on a row whose optional is enabled and on one where it is not.
+ *
+ * @returns What each test and read gave, row by row.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Spot], [Guard]));
+  spawn(storage, { ProbeSpot: { x: 1 }, ProbeGuard: { hp: 4 } });
+  spawn(storage, { ProbeSpot: { x: 2 } });
+  const trace: unknown[] = [];
+
+  // fallow-ignore-next-line complexity -- the callback packs the forms under test into one body
+  {
+      const storage_1 = storage;
+      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      const n = storage_1.n;
+      if (n > 0) {
+          const ProbeGuardRecord = storage_1.ProbeGuard;
+          for (let i = n - 1; i >= 0; i--) {
+              // oxlint-disable-next-line typescript/strict-boolean-expressions -- testing an optional slot is the lowering under test
+              trace.push(((storage_1.mask[i] & 1) !== 0) ? 1 : 0, !((storage_1.mask[i] & 1) !== 0));
+              trace.push((!((storage_1.mask[i] & 1) !== 0)), ((storage_1.mask[i] & 1) !== 0), !((!((storage_1.mask[i] & 1) !== 0))));
+              trace.push((!((storage_1.mask[i] & 1) !== 0)), ((storage_1.mask[i] & 1) !== 0));
+              // oxlint-disable-next-line typescript/no-unnecessary-condition -- comparing a slot with null is the lowering under test
+              trace.push(false, true);
+              // oxlint-disable-next-line typescript/no-unnecessary-condition -- comparing a slot with null is the lowering under test
+              trace.push(false, true);
+              // oxlint-disable-next-line typescript/no-unnecessary-condition -- comparing a required slot is the lowering under test
+              trace.push((!true), true);
+              // oxlint-disable-next-line typescript/no-unnecessary-condition, typescript/strict-boolean-expressions -- testing a required slot is the lowering under test
+              trace.push(!true, true ? 1 : 0);
+              // oxlint-disable-next-line typescript/strict-boolean-expressions -- an optional slot in a test position is the lowering under test
+              if (((storage_1.mask[i] & 1) !== 0) && (((storage_1.mask[i] & 1) !== 0) ? ProbeGuardRecord.hp : void 0)[i] > 0)
+                  trace.push("guarded");
+              let fallbacks = 0;
+              // oxlint-disable-next-line typescript/strict-boolean-expressions -- coalescing an optional slot in a test is the lowering under test
+              if ((((storage_1.mask[i] & 1) !== 0) || ((fallbacks += 1), false)))
+                  trace.push("guard");
+              // oxlint-disable-next-line typescript/no-unnecessary-condition, typescript/strict-boolean-expressions -- coalescing a required slot in a test is the lowering under test
+              if ((true || ((fallbacks += 10), false)))
+                  trace.push("spot");
+              trace.push(fallbacks, (((storage_1.mask[i] & 1) !== 0) ? ProbeGuardRecord.hp[i] : void 0));
+          }
+      }
+  }
+
+  return trace;
+}

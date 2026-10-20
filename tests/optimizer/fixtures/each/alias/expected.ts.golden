@@ -1,0 +1,81 @@
+import * as ecstatic_internal from "ecstatic/internal";
+const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
+const shapeKey = "c8:KeepBody{1:x=n}|c8:KeepWall{2:hp=n}";
+// rewrite-applies: alias
+// rewrite-applies: non-null-slot
+import {
+  archetype,
+  component,
+  createWorld,
+  disable,
+  each,
+  enable,
+  get,
+  register,
+  spawn,
+} from "ecstatic";
+
+const Body = component("KeepBody", { x: 0 });
+const Wall = component("KeepWall", { hp: 0 });
+
+/** The constructor name of `error`, or its type when it is no `Error`. */
+function nameOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
+ * Holds slots in constants, which test presence once at the declaration: after a later `disable()` in the same
+ * row, the held optional's fields still reach its columns, and a non-null alias of a disabled slot throws at the
+ * field read.
+ *
+ * @returns What the body read, with the constructor name of each error a field read threw, and each row's fields
+ * after the loop.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Body], [Wall]));
+  const walled = spawn(storage, { KeepBody: { x: 1 }, KeepWall: { hp: 5 } });
+  const open = spawn(storage, { KeepBody: { x: 2 } });
+  const trace: unknown[] = [];
+
+  {
+      const storage_1 = storage;
+      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      const n = storage_1.n;
+      if (n > 0) {
+          const KeepBodyRecord = storage_1.KeepBody, KeepWallRecord = storage_1.KeepWall;
+          let value, value_1;
+          for (let i = n - 1; i >= 0; i--) {
+              const wall = ((storage_1.mask[i] & 1) !== 0);
+              const body = true;
+              (value = KeepBodyRecord.x[i] + 1, KeepBodyRecord.x[i] = value);
+              trace.push((wall ? KeepWallRecord.hp[i] : void 0));
+              // oxlint-disable-next-line typescript/strict-boolean-expressions -- testing a held optional slot is the lowering under test
+              if (wall) {
+                  disable(storage, storage_1.entities[i], Wall);
+                  (value_1 = (wall ? KeepWallRecord.hp : void 0)[i], value_1 = value_1 + (1), (wall ? KeepWallRecord.hp : void 0)[i] = value_1);
+                  // oxlint-disable-next-line typescript/no-unnecessary-condition -- comparing a held optional slot is the lowering under test
+                  trace.push((wall ? KeepWallRecord.hp : void 0)[i], (!wall), (!wall), (!((storage_1.mask[i] & 1) !== 0)), KeepBodyRecord.x[i]);
+              }
+              else {
+                  // oxlint-disable-next-line typescript/strict-boolean-expressions, typescript/no-unnecessary-condition -- testing a held optional slot is the lowering under test
+                  trace.push("open", (!wall), !wall);
+              }
+              // oxlint-disable-next-line typescript/no-non-null-assertion -- a non-null alias of a disabled slot is the read under test
+              const held = ((storage_1.mask[i] & 1) !== 0);
+              try {
+                  trace.push((held ? KeepWallRecord.hp : void 0)[i]);
+              }
+              catch (error) {
+                  trace.push(nameOf(error));
+              }
+          }
+      }
+  }
+
+  enable(storage, walled, Wall);
+  return {
+    trace,
+    hp: get(storage, walled, Wall.hp),
+    xs: [walled, open].map((id) => get(storage, id, Body.x)),
+  };
+}
