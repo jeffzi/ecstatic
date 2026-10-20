@@ -118,9 +118,9 @@ what its form pays for.
 
 **The reference group is a ceiling, not a regression target.** Every other benchmark targets an
 ecstatic code path; the timed bodies of the [reference benchmarks](specifications/reference.md) call
-none. Each is a hand-inlined column loop, the shape a compile-time transform would emit for one
+none. Each is a hand-inlined column loop, the shape a build-time optimizer would emit for one
 `each()` call. It pairs with the iteration benchmark it mirrors and shares that benchmark's world
-builder, warmup, and timing. The gap within a pair is what such a transform would buy for that call
+builder, warmup, and timing. The gap within a pair is what such an optimizer would buy for that call
 site, measured on the same engine in the same suite run. A reference number says little about
 ecstatic by itself: read each one against its iteration twin. The
 [allocation gate](../../benchmarks/README.md#allocation-gate) measures ecstatic operations such as

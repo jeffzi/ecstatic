@@ -1,5 +1,6 @@
 /**
- * Turn a caught value into text for an error message.
+ * Non-`Error` thrown values are stringified, so a thrown string or object still yields a usable
+ * message.
  *
  * @param error - The caught value.
  * @returns The message of `error` when it is an `Error`, otherwise `error` as a string.

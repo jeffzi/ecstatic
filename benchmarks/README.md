@@ -3,8 +3,8 @@
 Regression-detection benchmarks for ecstatic, timed with
 [mitata](https://github.com/evanwashere/mitata). The
 [reference group](../docs/benchmarks/specifications/reference.md) holds hand-inlined twins of two
-iteration benchmarks, `throughput` and `frame`. Each twin runs the column loop a compile-time
-transform would emit for its `each()` call, which sets a speed ceiling for that benchmark. The
+iteration benchmarks, `throughput` and `frame`. Each twin runs the column loop a build-time
+optimizer would emit for its `each()` call, which sets a speed ceiling for that benchmark. The
 reference group is not a regression target.
 
 For what each benchmark measures and why, see [`docs/benchmarks/`](../docs/benchmarks/README.md).

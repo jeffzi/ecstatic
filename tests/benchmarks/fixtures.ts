@@ -56,6 +56,34 @@ function isTimedYield(value: unknown): value is TimedYield {
   );
 }
 
+/**
+ * Overwrites `storage`'s live values of one field, row by row.
+ *
+ * @param storage - Storage to write.
+ * @param component - Component that declares the field.
+ * @param field - Name of the field to write.
+ * @param values - The value for each live row, in row order; must hold one per live row.
+ * @throws Error when `storage` has no column for `field` of `component`, or `values` does not
+ * hold exactly one value per live row.
+ */
+export function setLiveValues(
+  storage: Storage,
+  component: Component,
+  field: string,
+  values: readonly number[],
+): void {
+  const column = storage.columns.get(component)?.[field];
+  if (column === undefined) {
+    throw new Error(`the storage has no column for field "${field}"`);
+  }
+  if (values.length !== storage.n) {
+    throw new Error(`expected ${String(storage.n)} values, got ${String(values.length)}`);
+  }
+  values.forEach((value, row) => {
+    column[row] = value;
+  });
+}
+
 /** Takes a generator's first yield and returns its `timedBench` body, throwing when it is not one. */
 export function firstTimedBody(gen: Generator<unknown, unknown, unknown>): () => void {
   const first: unknown = gen.next().value;

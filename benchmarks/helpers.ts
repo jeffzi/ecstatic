@@ -1,7 +1,3 @@
-/**
- * World builders and timing shims shared by the benchmark suites.
- */
-
 import {
   createWorld,
   despawnMany,
@@ -38,7 +34,6 @@ const WORLD_MULTIPLIER = 5;
 /** Fixed timestep, so movement integration matches a 60 Hz frame. */
 export const DT = 1 / 60;
 
-/** Tracked-entity count every bench builds its world with. */
 export const DEFAULT_N = 1000;
 
 /** Seed for every world build — benchmarks must lay entities out identically on every run. */
@@ -161,8 +156,9 @@ function ageTrackedSlots(storage: Storage<typeof trackedArch>, generation: numbe
  * Build the world the throughput benchmarks run over: `benchCreateWorld` with no background
  * population.
  *
- * `iteration/throughput`, `iteration/post_churn_throughput` and their inlined twin all take their
- * world from here, so they cannot drift onto different worlds.
+ * `iteration/throughput`, `iteration/post_churn_throughput`, `iteration/helper_call` and the
+ * inlined twin of `iteration/throughput` all take their world from here, so they cannot drift
+ * onto different worlds.
  *
  * @returns The world, its tracked storage, the shuffled tracked ids, and `n` (always
  * `DEFAULT_N`); the caller owns the world and nothing here releases it.

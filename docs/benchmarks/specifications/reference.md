@@ -9,7 +9,7 @@ why its numbers are not regression targets, is in [rationale](../rationale.md#de
 Each benchmark here is the twin of an [iteration benchmark](iteration.md): the same world builder,
 the same warmup, and the same batched timing, through one shared helper. Only the timed body
 differs. Where the iteration benchmark calls `each()`, the reference benchmark runs the inlined loop
-a compile-time transform would emit for that call:
+a build-time optimizer would emit for that call:
 
 - It reads the column arrays it needs from the storage once per call, never caching them across
   calls, because storage growth replaces typed-array columns.

@@ -1,9 +1,18 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { each, register, type Storage } from "ecstatic";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { Position, spawnArch, trackedArch } from "../../benchmarks/archetypes.js";
+import { Position, spawnArch, trackedArch, Velocity } from "../../benchmarks/archetypes.js";
 import { DEFAULT_N, DT } from "../../benchmarks/helpers.js";
-import { firstTimedBody, FRAME_ARCHETYPES, isStorage, liveValues } from "./fixtures.js";
+import {
+  firstTimedBody,
+  FRAME_ARCHETYPES,
+  isStorage,
+  liveValues,
+  setLiveValues,
+} from "./fixtures.js";
 
 const registered = vi.hoisted(() => new Map<string, () => unknown>());
 
@@ -51,6 +60,13 @@ function startRegistered(name: string): () => void {
     throw new Error(`'${name}' is not a generator benchmark`);
   }
   return firstTimedBody(gen);
+}
+
+/** The callbacks `body` hands to each(), in call order. */
+function eachCallbacks(body: () => void): unknown[] {
+  eachMock.mockClear();
+  body();
+  return eachMock.mock.calls.map(([, callback]) => callback);
 }
 
 /** Each storage's archetype and population in the world benchmark `name` builds, read through the storage registered for `anchor`. */
@@ -153,6 +169,94 @@ describe("iteration/post_churn_throughput", () => {
     expect(liveValues(storage, Position, "x")).toStrictEqual(
       before.map((x) => (x === 0 ? 0 : x + DT)),
     );
+  });
+});
+
+const ITERATION_BENCH = fileURLToPath(
+  new URL("../../benchmarks/iteration-bench.ts", import.meta.url),
+);
+const ITERATION_SPEC = fileURLToPath(
+  new URL("../../docs/benchmarks/specifications/iteration.md", import.meta.url),
+);
+
+/** The section of a benchmark spec headed `## name`, up to the rule that closes it. */
+function specSection(spec: string, name: string): string {
+  const start = spec.indexOf(`\n## ${name}\n`);
+  if (start === -1) {
+    throw new Error(`the spec has no section headed '${name}'`);
+  }
+  const end = spec.indexOf("\n---\n", start);
+  return spec.slice(start, end === -1 ? undefined : end);
+}
+
+/** The bold labels and table properties a spec section lays out, in order. */
+function sectionShape(section: string): string[] {
+  return [...section.matchAll(/^(?:\*\*(\w+):\*\*|\| (\w+) +\|)/gm)].map(([, label, property]) =>
+    String(label ?? property),
+  );
+}
+
+describe("iteration/helper_call", () => {
+  it("hands each() the tracked storage once per timed pass", () => {
+    const body = startRegistered("iteration/helper_call");
+
+    const targets = eachTargets(body);
+
+    expect(targets).toStrictEqual([trackedArch]);
+  });
+
+  it("hands each() a callback that calls the module-level advance, which makes the body hazard-bearing", () => {
+    const body = startRegistered("iteration/helper_call");
+
+    const source = String(eachCallbacks(body)[0]);
+
+    const callee = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(/.exec(source)?.[1];
+    expect({
+      callee,
+      declaredInside: /\b(?:function|const|let|var)\s+advance\b/.test(source),
+      declaredAtModuleLevel: /^function advance\(/m.test(readFileSync(ITERATION_BENCH, "utf8")),
+    }).toStrictEqual({ callee: "advance", declaredInside: false, declaredAtModuleLevel: true });
+  });
+
+  it("times a pass that advances every tracked Position x by its Velocity dx times DT", () => {
+    const body = startRegistered("iteration/helper_call");
+    const storage = registeredStorage(trackedArch);
+    const dx = Array.from({ length: storage.n }, (_, row) => row + 2);
+    setLiveValues(storage, Velocity, "dx", dx);
+    const before = liveValues(storage, Position, "x");
+
+    body();
+
+    expect(liveValues(storage, Position, "x")).toStrictEqual(
+      before.map((x, row) => x + Number(dx[row]) * DT),
+    );
+  });
+
+  it("builds the world iteration/throughput builds", () => {
+    const viaHelper = builtPopulations("iteration/helper_call", trackedArch);
+    const viaThroughput = builtPopulations("iteration/throughput", trackedArch);
+
+    expect(viaHelper).toStrictEqual(viaThroughput);
+  });
+
+  describe("spec section", () => {
+    const spec = readFileSync(ITERATION_SPEC, "utf8");
+
+    it("is listed in the iteration spec's index", () => {
+      expect(spec).toContain("\n- [helper_call](#helper_call)\n");
+    });
+
+    it("lays out the same labels and properties as throughput's", () => {
+      const shape = sectionShape(specSection(spec, "helper_call"));
+
+      expect(shape).toStrictEqual(sectionShape(specSection(spec, "throughput")));
+    });
+
+    it("says the helper call makes the body hazard-bearing", () => {
+      const section = specSection(spec, "helper_call");
+
+      expect(section).toMatch(/call[^.]*makes (?:this|the) body hazard-bearing/);
+    });
   });
 });
 
