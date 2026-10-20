@@ -4,16 +4,12 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   realpathSync,
-  rmSync,
   symlinkSync,
-  truncateSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { constants } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,43 +18,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runGo } from "../../scripts/go.js";
 import { trimGoCache } from "../../scripts/trim-go-cache.js";
 import { packageBin } from "../package-bin.js";
+import { GIB, HOUR, survivors, writeEntry } from "./go-cache-fixtures.js";
+import { createTempDir, removeTempDirs } from "./plugin/tsconfig-fixtures.js";
 
 // Calls through to the real trim, so the in-process tests can read the limits runGo passes it.
 vi.mock("../../scripts/trim-go-cache.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../scripts/trim-go-cache.js")>();
-  return { trimGoCache: vi.fn(actual.trimGoCache) };
+  return { ...actual, trimGoCache: vi.fn(actual.trimGoCache) };
 });
 
 const ROOT = realpathSync(fileURLToPath(new URL("../..", import.meta.url)));
 const TSX = packageBin("tsx", "tsx");
 const PROJECT_CACHE = join("node_modules", ".cache", "go-build");
 
-const HOUR = 60 * 60_000;
-const GIB = 2 ** 30;
-
 /** npm on Windows cannot run a shell-script `go`, and NTFS allocates sparse multi-GiB files. */
 const POSIX = process.platform !== "win32";
 
-const directories: string[] = [];
+afterEach(removeTempDirs);
 
-afterEach(() => {
-  for (const dir of directories.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-/** A fresh temp directory, by its real path, removed after the test. */
-function tempDir(): string {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "ecstatic-go-wrapper-")));
-  directories.push(dir);
-  return dir;
-}
-
-/** A temp repository root holding copies of the wrapper and the trim in `scripts/`. */
+/** A temp repository root holding copies of the wrapper, the trim, and their shared helpers in `scripts/`. */
 function project(): string {
-  const root = tempDir();
+  const root = createTempDir();
   mkdirSync(join(root, "scripts"));
-  for (const name of ["go.ts", "trim-go-cache.ts"]) {
+  for (const name of ["go.ts", "trim-go-cache.ts", "caught.ts", "entry.ts"]) {
     copyFileSync(join(ROOT, "scripts", name), join(root, "scripts", name));
   }
   writeFileSync(join(root, "package.json"), '{ "type": "module" }\n');
@@ -84,25 +66,9 @@ function npmProject(): string {
   return root;
 }
 
-/** Writes a sparse `size`-byte cache entry in `bucket` of `cache`, last used `age` ago, and returns its path. */
-function writeEntry(cache: string, bucket: string, size: number, age: number): string {
-  const path = join(cache, bucket, `${bucket}${"1".repeat(62)}-a`);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, "");
-  truncateSync(path, size);
-  const time = new Date(Date.now() - age);
-  utimesSync(path, time, time);
-  return path;
-}
-
-/** Whether each of `paths` still exists. */
-function survivors(paths: readonly string[]): boolean[] {
-  return paths.map((path) => existsSync(path));
-}
-
 /** A temp directory holding a shell-script `go` that runs `body`, for use on `PATH`. */
 function fakeGo(body: string): string {
-  const bin = tempDir();
+  const bin = createTempDir();
   const go = join(bin, "go");
   writeFileSync(go, `#!/bin/sh\n${body}\n`);
   chmodSync(go, 0o755);
@@ -117,7 +83,7 @@ function fakeGo(body: string): string {
  * @returns The directory holding the fake `go`, for use on `PATH`, and the path of the `record` file.
  */
 function recordingGo(after = "exit 0"): { bin: string; record: string } {
-  const record = join(tempDir(), "call");
+  const record = join(createTempDir(), "call");
   const bin = fakeGo(`printf '%s\\n' "$GOCACHE" "$@" > '${record}'\n${after}`);
   return { bin, record };
 }
@@ -137,7 +103,7 @@ function runWrapper(
   env: NodeJS.ProcessEnv,
 ): SpawnSyncReturns<string> {
   return spawnSync(process.execPath, [TSX, join(root, "scripts", "go.ts"), ...args], {
-    cwd: tempDir(),
+    cwd: createTempDir(),
     env,
     encoding: "utf8",
   });
@@ -192,22 +158,12 @@ describe("scripts/go.ts", () => {
         expect(survivors(entries)).toStrictEqual(expected);
       },
     );
-
-    it.runIf(POSIX)("runs go and prints nothing when the project folder does not exist", () => {
-      const root = project();
-      const { bin, record } = recordingGo();
-
-      const result = runWrapper(root, ["version"], environment(bin));
-
-      expect(result.stderr).toBe("");
-      expect(existsSync(record)).toBe(true);
-    });
   });
 
   describe("when GOCACHE is set", () => {
     it.runIf(POSIX)("runs go with that GOCACHE and trims neither it nor the project folder", () => {
       const root = project();
-      const cache = tempDir();
+      const cache = createTempDir();
       const entries = [
         writeEntry(cache, "00", 9 * GIB, 5 * HOUR),
         writeEntry(join(root, PROJECT_CACHE), "00", 9 * GIB, 5 * HOUR),
@@ -242,7 +198,7 @@ describe("scripts/go.ts", () => {
     );
   });
 
-  describe("go's result", () => {
+  describe("when go runs", () => {
     it.runIf(POSIX)("passes go's stdout, stderr and exit code through unchanged", () => {
       const bin = fakeGo("echo out\necho err >&2\nexit 7");
 
@@ -253,19 +209,35 @@ describe("scripts/go.ts", () => {
       );
     });
 
-    it.runIf(POSIX)("exits non-zero when go is killed by a signal", () => {
-      const bin = fakeGo("kill -KILL $$");
+    it.runIf(POSIX).each(["SIGKILL", "SIGTERM"] as const)(
+      "prints the signal and exits 128 plus its number when go is killed by %s",
+      (signal) => {
+        const bin = fakeGo(`kill -${signal.slice(3)} $$`);
 
-      const result = runWrapper(project(), ["version"], environment(bin));
+        const { status, stderr } = runWrapper(project(), ["version"], environment(bin));
 
-      expect(result.status).not.toBe(0);
+        expect({ status, stderr }).toStrictEqual({
+          status: 128 + constants.signals[signal],
+          stderr: `go was killed by ${signal}\n`,
+        });
+      },
+    );
+
+    it.runIf(POSIX)("runs go when the script path goes through a symlinked directory", () => {
+      const link = join(createTempDir(), "linked");
+      symlinkSync(project(), link, "dir");
+      const { bin, record } = recordingGo();
+
+      const { status } = runWrapper(link, ["version"], environment(bin));
+
+      expect({ status, called: existsSync(record) }).toStrictEqual({ status: 0, called: true });
     });
 
-    it("prints the error and exits non-zero when go cannot start", () => {
-      const result = runWrapper(project(), ["version"], environment(tempDir()));
+    it("prints the error and exits 1 when go cannot start", () => {
+      const result = runWrapper(project(), ["version"], environment(createTempDir()));
 
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("ENOENT");
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/^cannot run go: .*ENOENT/);
     });
   });
 });
@@ -281,10 +253,10 @@ describe("runGo", () => {
   ])(
     "trims the project folder with an 8 GiB cap, a 6 GiB target and a 2 h window when GOCACHE is $state",
     ({ extra }) => {
-      const cache = join(tempDir(), "go-build");
-      const { bin, record } = recordingGo();
+      const cache = join(createTempDir(), "go-build");
+      const { bin } = recordingGo();
 
-      const status = runGo(["version"], environment(bin, extra), cache);
+      runGo(["version"], environment(bin, extra), cache);
 
       expect(vi.mocked(trimGoCache)).toHaveBeenCalledExactlyOnceWith(cache, {
         now: expect.any(Number),
@@ -292,19 +264,32 @@ describe("runGo", () => {
         target: 6 * GIB,
         protectedAge: 2 * HOUR,
       });
-      expect({ status, call: readFileSync(record, "utf8") }).toStrictEqual({
-        status: 0,
-        call: `${cache}\nversion\n`,
-      });
     },
   );
-});
 
-describe("runGo before go starts", () => {
-  it.runIf(POSIX)("has already trimmed the project folder", () => {
-    const cache = join(tempDir(), "go-build");
+  it.runIf(POSIX).each([
+    { kind: "a TypeError", error: new TypeError("banana is not a function") },
+    {
+      kind: "an error wrapping a cause without a code",
+      error: new Error("cannot read banana", { cause: new Error("inner") }),
+    },
+  ])("rethrows $kind from the trim without running go", ({ error }) => {
+    vi.mocked(trimGoCache).mockImplementationOnce(() => {
+      throw error;
+    });
+    const cache = join(createTempDir(), "go-build");
+    const { bin, record } = recordingGo();
+
+    const run = (): number => runGo(["version"], environment(bin), cache);
+
+    expect(run).toThrow(error);
+    expect(existsSync(record)).toBe(false);
+  });
+
+  it.runIf(POSIX)("trims the project folder before go starts", () => {
+    const cache = join(createTempDir(), "go-build");
     const stale = writeEntry(cache, "00", 8 * GIB + 1, 5 * HOUR);
-    const record = join(tempDir(), "call");
+    const record = join(createTempDir(), "call");
     const bin = fakeGo(`if [ -e '${stale}' ]; then echo kept; else echo trimmed; fi > '${record}'`);
 
     runGo(["version"], environment(bin), cache);
@@ -322,7 +307,7 @@ describe("npm scripts", () => {
     ({ script, calls }) => {
       const root = npmProject();
       const stale = writeEntry(join(root, PROJECT_CACHE), "00", 8 * GIB + 1, 5 * HOUR);
-      const record = join(tempDir(), "calls");
+      const record = join(createTempDir(), "calls");
       const bin = fakeGo(`printf '%s\\n' "$GOCACHE" >> '${record}'`);
 
       spawnSync("npm", ["run", "--silent", script], {

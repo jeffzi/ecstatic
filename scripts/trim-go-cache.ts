@@ -1,7 +1,9 @@
 import { readdirSync, rmSync, statSync, type Stats } from "node:fs";
 import { join } from "node:path";
 
-const GIB = 2 ** 30;
+import { errorMessage, isEnoent } from "./caught.js";
+
+export const GIB = 2 ** 30;
 
 /** Go's cache spreads entries over 256 subdirectories named by the first byte of their key. */
 const BUCKET_NAME = /^[0-9a-f]{2}$/;
@@ -36,14 +38,6 @@ interface Entry {
   readonly mtimeMs: number;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function isGone(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
-
 /**
  * Run a filesystem call on a path that may vanish while the trim runs.
  *
@@ -57,7 +51,7 @@ function unlessGone<T>(verb: "read" | "delete", path: string, call: () => T): T 
   try {
     return call();
   } catch (error) {
-    if (isGone(error)) return undefined;
+    if (isEnoent(error)) return undefined;
     throw new Error(`cannot ${verb} ${path}: ${errorMessage(error)}`, { cause: error });
   }
 }

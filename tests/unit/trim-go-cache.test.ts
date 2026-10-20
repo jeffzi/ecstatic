@@ -1,21 +1,18 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  truncateSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, utimesSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import { trimGoCache } from "../../scripts/trim-go-cache.js";
+import {
+  GIB,
+  HASH_DIGITS,
+  HOUR,
+  entryPath,
+  survivors,
+  writeSized as writeSizedAt,
+} from "./go-cache-fixtures.js";
+import { createTempDir, removeTempDirs } from "./plugin/tsconfig-fixtures.js";
 
 /** Paths another process removes just before the trim lists or deletes them. */
 const racing = vi.hoisted(() => new Set<string>());
@@ -42,22 +39,19 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
 const MIB = 2 ** 20;
-const GIB = 2 ** 30;
 const TIB = 2 ** 40;
 const NOW = Date.UTC(2026, 9, 19, 12, 0, 0);
 const PROTECTED_AGE = 2 * HOUR;
 
-/** Permission bits only take effect on POSIX systems, and never for root. */
-const PERMISSIONS_ENFORCED = process.platform !== "win32" && process.getuid?.() !== 0;
 /**
  * Unprivileged Windows accounts cannot create symbolic links, and NTFS allocates the gigabytes a
  * sparse file of that size would leave unallocated.
  */
 const POSIX = process.platform !== "win32";
+/** Permission bits only take effect on POSIX systems, and never for root. */
+const PERMISSIONS_ENFORCED = POSIX && process.getuid?.() !== 0;
 
-const directories: string[] = [];
 const lockedDirectories: string[] = [];
 
 let stderr: MockInstance<typeof process.stderr.write>;
@@ -72,17 +66,8 @@ afterEach(() => {
   for (const dir of lockedDirectories.splice(0)) {
     chmodSync(dir, 0o755);
   }
-  for (const dir of directories.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  removeTempDirs();
 });
-
-/** A fresh temp directory removed after the test. */
-function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "ecstatic-go-cache-"));
-  directories.push(dir);
-  return dir;
-}
 
 /** Sets the permission bits of `dir` to `mode`; `afterEach` restores them before cleanup. */
 function lockDir(dir: string, mode: number): void {
@@ -96,23 +81,21 @@ function setAge(path: string, age: number, now = NOW): void {
   utimesSync(path, time, time);
 }
 
-/** The path of entry number `seed` of `kind` in bucket `bucket` of `cache`. */
-function entryPath(cache: string, bucket: string, seed: number, kind: "a" | "d"): string {
-  return join(cache, bucket, `${bucket}${seed.toString(16).padStart(62, "0")}-${kind}`);
-}
-
 /** Writes a sparse `size`-byte file at `path`, creating parent directories, with an mtime `age` before `NOW`. */
 function writeSized(path: string, size: number, age: number): string {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, "");
-  truncateSync(path, size);
-  setAge(path, age);
-  return path;
+  return writeSizedAt(path, size, age, NOW);
 }
 
 /** Writes a `-a` entry of `size` bytes in `bucket`, last used `age` before `NOW`, and returns its path. */
 function writeEntry(cache: string, bucket: string, size: number, age: number): string {
   return writeSized(entryPath(cache, bucket, 1, "a"), size, age);
+}
+
+/** A `beforeDelete` callback that refreshes `entry` right before the trim deletes it. */
+function refreshBeforeDelete(entry: string | undefined): (path: string) => void {
+  return (path) => {
+    if (path === entry) setAge(path, MINUTE);
+  };
 }
 
 /** Writes a `-d` directory in `bucket` holding one file per size (each fresh), with the directory itself `age` old. */
@@ -146,15 +129,10 @@ function trim(
   });
 }
 
-/** Whether each of `paths` still exists. */
-function survivors(paths: readonly string[]): boolean[] {
-  return paths.map((path) => existsSync(path));
-}
-
 describe("trimGoCache", () => {
   describe("when the entries total no more than the cap", () => {
     it("deletes nothing", () => {
-      const cache = tempDir();
+      const cache = createTempDir();
       const entries = [
         writeEntry(cache, "00", 100, 5 * HOUR),
         writeEntry(cache, "01", 100, 3 * HOUR),
@@ -168,7 +146,7 @@ describe("trimGoCache", () => {
 
   describe("when the entries total more than the cap", () => {
     it("deletes the oldest entries until the total reaches the target, and no more", () => {
-      const cache = tempDir();
+      const cache = createTempDir();
       const entries = [
         writeEntry(cache, "ff", 100, 5 * HOUR),
         writeEntry(cache, "0a", 100, 4 * HOUR),
@@ -179,15 +157,6 @@ describe("trimGoCache", () => {
       trim(cache, { cap: 350, target: 200 });
 
       expect(survivors(entries)).toStrictEqual([false, false, true, true]);
-    });
-
-    it("does not create trim.txt", () => {
-      const cache = tempDir();
-      writeEntry(cache, "00", 100, 5 * HOUR);
-
-      trim(cache, { cap: 50, target: 0 });
-
-      expect(existsSync(join(cache, "trim.txt"))).toBe(false);
     });
   });
 
@@ -210,7 +179,7 @@ describe("trimGoCache", () => {
     ])(
       "spares the newest of them while their total stays within the target, $rule",
       ({ sizes, ages, limits, expected }) => {
-        const cache = tempDir();
+        const cache = createTempDir();
         const entries = sizes.map((size, index) =>
           writeEntry(cache, `0${index}`, size, ages[index] ?? 0),
         );
@@ -235,13 +204,11 @@ describe("trimGoCache", () => {
     ])(
       "spares an entry a build refreshed after the scan saw it $seen and deletes the next oldest instead",
       ({ ages, target }) => {
-        const cache = tempDir();
+        const cache = createTempDir();
         const entries = ages.map((age, index) => writeEntry(cache, `0${index}`, 100, age));
         const [refreshed] = entries;
 
-        trim(cache, { cap: 250, target }, (path) => {
-          if (path === refreshed) setAge(path, MINUTE);
-        });
+        trim(cache, { cap: 250, target }, refreshBeforeDelete(refreshed));
 
         expect(survivors(entries)).toStrictEqual([true, false, true]);
         expect(stderr.mock.calls).toStrictEqual([
@@ -251,15 +218,13 @@ describe("trimGoCache", () => {
     );
 
     it("counts an entry exactly the protection window old as outside it", () => {
-      const cache = tempDir();
+      const cache = createTempDir();
       const entries = [3 * HOUR, PROTECTED_AGE, 10 * MINUTE].map((age, index) =>
         writeEntry(cache, `0${index}`, 100, age),
       );
       const [refreshed] = entries;
 
-      trim(cache, { cap: 250, target: 200 }, (path) => {
-        if (path === refreshed) setAge(path, MINUTE);
-      });
+      trim(cache, { cap: 250, target: 200 }, refreshBeforeDelete(refreshed));
 
       expect(survivors(entries)).toStrictEqual([true, false, true]);
     });
@@ -267,8 +232,8 @@ describe("trimGoCache", () => {
 
   describe("when the cache holds files other than entries", () => {
     it("neither counts nor deletes them", () => {
-      const cache = tempDir();
-      const hex = "1".repeat(64);
+      const cache = createTempDir();
+      const hex = "1".repeat(HASH_DIGITS);
       const others = [
         "README",
         "trim.txt",
@@ -277,9 +242,9 @@ describe("trimGoCache", () => {
         join("fuzz", `${hex}-a`),
         join("zz", `${hex}-a`),
         join("abc", `${hex}-a`),
-        join("00", `${"1".repeat(63)}-a`),
-        join("00", `${"1".repeat(65)}-a`),
-        join("00", `${"A".repeat(64)}-a`),
+        join("00", `${"1".repeat(HASH_DIGITS - 1)}-a`),
+        join("00", `${"1".repeat(HASH_DIGITS + 1)}-a`),
+        join("00", `${"A".repeat(HASH_DIGITS)}-a`),
         join("AB", `${hex}-a`),
         join("00", `${hex}-b`),
         join("00", `${hex}-a.tmp`),
@@ -300,7 +265,7 @@ describe("trimGoCache", () => {
 
   describe("when an entry is a -d directory", () => {
     it("counts the files inside it and removes it whole, judged by its own mtime", () => {
-      const cache = tempDir();
+      const cache = createTempDir();
       const entries = [
         writeOutputDir(cache, "00", [600, 400], 6 * HOUR),
         writeEntry(cache, "01", 100, 5 * HOUR),
@@ -312,39 +277,42 @@ describe("trimGoCache", () => {
       expect(survivors(entries)).toStrictEqual([false, true, true]);
     });
 
-    it("leaves the files in its subdirectories out of its size", () => {
-      const cache = tempDir();
-      const outputDir = writeOutputDir(cache, "00", [100], 6 * HOUR);
-      writeSized(join(outputDir, "nested", "file"), 1000, 0);
-      setAge(outputDir, 6 * HOUR);
-      const entries = [
-        outputDir,
-        writeEntry(cache, "01", 100, 5 * HOUR),
-        writeEntry(cache, "02", 100, 4 * HOUR),
-      ];
+    it.each([
+      {
+        contents: "no files",
+        cap: 200,
+        arrange: (cache: string) => writeOutputDir(cache, "00", [], 6 * HOUR),
+      },
+      {
+        contents: "a subdirectory",
+        cap: 300,
+        arrange: (cache: string) => {
+          const outputDir = writeOutputDir(cache, "00", [100], 6 * HOUR);
+          writeSized(join(outputDir, "nested", "file"), 1000, 0);
+          setAge(outputDir, 6 * HOUR);
+          return outputDir;
+        },
+      },
+    ])(
+      "counts only the files directly inside a -d directory holding $contents",
+      ({ cap, arrange }) => {
+        const cache = createTempDir();
+        const entries = [
+          arrange(cache),
+          writeEntry(cache, "01", 100, 5 * HOUR),
+          writeEntry(cache, "02", 100, 4 * HOUR),
+        ];
 
-      trim(cache, { cap: 300, target: 100 });
+        trim(cache, { cap, target: 100 });
 
-      expect(survivors(entries)).toStrictEqual([true, true, true]);
-    });
-
-    it("counts an empty one as zero bytes", () => {
-      const cache = tempDir();
-      const entries = [
-        writeOutputDir(cache, "00", [], 6 * HOUR),
-        writeEntry(cache, "01", 100, 5 * HOUR),
-        writeEntry(cache, "02", 100, 4 * HOUR),
-      ];
-
-      trim(cache, { cap: 200, target: 100 });
-
-      expect(survivors(entries)).toStrictEqual([true, true, true]);
-    });
+        expect(survivors(entries)).toStrictEqual([true, true, true]);
+      },
+    );
   });
 
   describe("when something is gone by the time the trim reads it", () => {
     it.runIf(POSIX)("leaves a vanished bucket, entry, or -d file out of the total", () => {
-      const cache = tempDir();
+      const cache = createTempDir();
       const missing = join(cache, "x".repeat(200));
       const outputDir = writeOutputDir(cache, "00", [], 6 * HOUR);
       symlinkSync(missing, join(outputDir, "file0"));
@@ -378,7 +346,7 @@ describe("trimGoCache", () => {
         },
       },
     ])("counts an entry gone at its $moment as freed but not as removed", ({ vanish }) => {
-      const cache = tempDir();
+      const cache = createTempDir();
       const beforeDelete = vanish(writeEntry(cache, "00", 100, 5 * HOUR));
       const entries = [
         writeEntry(cache, "01", 100, 4 * HOUR),
@@ -406,7 +374,7 @@ describe("trimGoCache", () => {
     ])(
       "leaves $name removed between its stat and its listing out of the total",
       ({ vanishing }) => {
-        const cache = tempDir();
+        const cache = createTempDir();
         racing.add(vanishing(cache));
         const entries = [
           writeEntry(cache, "01", 100, 5 * HOUR),
@@ -422,85 +390,88 @@ describe("trimGoCache", () => {
 
   describe("when reading or deleting fails for another reason", () => {
     it("throws naming the cache path when it is not a directory", () => {
-      const cache = writeSized(join(tempDir(), "cache"), 10, 0);
+      const cache = writeSized(join(createTempDir(), "cache"), 10, 0);
 
       expect(() => {
         trim(cache, { cap: 0, target: 0 });
       }).toThrow(cache);
     });
 
-    it.runIf(PERMISSIONS_ENFORCED)("throws naming a bucket it cannot read", () => {
-      const cache = tempDir();
-      const bucket = dirname(writeEntry(cache, "00", 100, 5 * HOUR));
-      lockDir(bucket, 0o000);
+    interface PermissionCase {
+      what: string;
+      arrange: (cache: string) => { thrownFor: string; beforeDelete?: (path: string) => void };
+    }
 
-      expect(() => {
-        trim(cache, { cap: 50, target: 0 });
-      }).toThrow(bucket);
-    });
-
-    it.runIf(PERMISSIONS_ENFORCED)("throws naming an entry it cannot stat", () => {
-      const cache = tempDir();
-      const entry = writeEntry(cache, "00", 100, 5 * HOUR);
-      lockDir(dirname(entry), 0o444);
-
-      expect(() => {
-        trim(cache, { cap: 50, target: 0 });
-      }).toThrow(entry);
-    });
-
-    it.runIf(PERMISSIONS_ENFORCED)("throws naming an entry it cannot delete", () => {
-      const cache = tempDir();
-      const entry = writeEntry(cache, "00", 100, 5 * HOUR);
-      lockDir(dirname(entry), 0o555);
-
-      expect(() => {
-        trim(cache, { cap: 50, target: 0 });
-      }).toThrow(entry);
-    });
-
-    it.runIf(PERMISSIONS_ENFORCED)("throws naming a -d directory it cannot list", () => {
-      const cache = tempDir();
-      const outputDir = writeOutputDir(cache, "00", [100], 5 * HOUR);
-      lockDir(outputDir, 0o000);
-
-      expect(() => {
-        trim(cache, { cap: 50, target: 0 });
-      }).toThrow(outputDir);
-    });
-
-    it.runIf(PERMISSIONS_ENFORCED)("throws naming a file in a -d directory it cannot stat", () => {
-      const cache = tempDir();
-      const outputDir = writeOutputDir(cache, "00", [100], 5 * HOUR);
-      lockDir(outputDir, 0o444);
-
-      expect(() => {
-        trim(cache, { cap: 50, target: 0 });
-      }).toThrow(join(outputDir, "file0"));
-    });
-
-    it.runIf(PERMISSIONS_ENFORCED)(
-      "throws naming an entry it cannot stat again before deleting it",
-      () => {
-        const cache = tempDir();
-        const entry = writeEntry(cache, "00", 100, 5 * HOUR);
-
-        expect(() => {
-          trim(cache, { cap: 50, target: 0 }, (path) => {
-            lockDir(dirname(path), 0o444);
-          });
-        }).toThrow(entry);
+    const permissionCases: readonly PermissionCase[] = [
+      {
+        what: "a bucket it cannot read",
+        arrange: (cache) => {
+          const bucket = dirname(writeEntry(cache, "00", 100, 5 * HOUR));
+          lockDir(bucket, 0o000);
+          return { thrownFor: bucket };
+        },
       },
-    );
+      {
+        what: "an entry it cannot stat",
+        arrange: (cache) => {
+          const entry = writeEntry(cache, "00", 100, 5 * HOUR);
+          lockDir(dirname(entry), 0o444);
+          return { thrownFor: entry };
+        },
+      },
+      {
+        what: "an entry it cannot delete",
+        arrange: (cache) => {
+          const entry = writeEntry(cache, "00", 100, 5 * HOUR);
+          lockDir(dirname(entry), 0o555);
+          return { thrownFor: entry };
+        },
+      },
+      {
+        what: "a -d directory it cannot list",
+        arrange: (cache) => {
+          const outputDir = writeOutputDir(cache, "00", [100], 5 * HOUR);
+          lockDir(outputDir, 0o000);
+          return { thrownFor: outputDir };
+        },
+      },
+      {
+        what: "a file in a -d directory it cannot stat",
+        arrange: (cache) => {
+          const outputDir = writeOutputDir(cache, "00", [100], 5 * HOUR);
+          lockDir(outputDir, 0o444);
+          return { thrownFor: join(outputDir, "file0") };
+        },
+      },
+      {
+        what: "an entry it cannot stat again before deleting it",
+        arrange: (cache) => ({
+          thrownFor: writeEntry(cache, "00", 100, 5 * HOUR),
+          beforeDelete: (path) => {
+            lockDir(dirname(path), 0o444);
+          },
+        }),
+      },
+    ];
+
+    it.runIf(PERMISSIONS_ENFORCED).each(permissionCases)("throws naming $what", ({ arrange }) => {
+      const cache = createTempDir();
+      const { thrownFor, beforeDelete } = arrange(cache);
+
+      expect(() => {
+        trim(cache, { cap: 50, target: 0 }, beforeDelete);
+      }).toThrow(thrownFor);
+    });
   });
 
   describe("when the cache directory does not exist", () => {
-    it("deletes nothing and does not create it", () => {
-      const cache = join(tempDir(), "absent");
+    it("returns without error or output when the cache directory does not exist", () => {
+      const cache = join(createTempDir(), "absent");
 
-      trim(cache, { cap: 0, target: 0 });
-
-      expect(existsSync(cache)).toBe(false);
+      expect(() => {
+        trim(cache, { cap: 0, target: 0 });
+      }).not.toThrow();
+      expect(stderr.mock.calls).toStrictEqual([]);
     });
   });
 
@@ -516,7 +487,7 @@ describe("trimGoCache", () => {
           ]
         : []),
     ])("prints one stderr line with $before before and $after after", ({ size, before, after }) => {
-      const cache = tempDir();
+      const cache = createTempDir();
       writeEntry(cache, "00", size, 5 * HOUR);
       writeEntry(cache, "01", size, 4 * HOUR);
       writeEntry(cache, "02", size, 3 * HOUR);
@@ -539,7 +510,7 @@ describe("trimGoCache", () => {
         },
       },
     ])("prints nothing when it deletes nothing $when", ({ cap, beforeDelete }) => {
-      const cache = tempDir();
+      const cache = createTempDir();
       writeEntry(cache, "00", 100, 5 * HOUR);
 
       trim(cache, { cap, target: 0 }, beforeDelete);

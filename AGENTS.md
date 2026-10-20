@@ -32,11 +32,13 @@ also need Go ≥ 1.26 (`optimizer/go.mod`).
 - `npm run test:go` — `go test` over the `optimizer/` module with a coverage profile at
   `coverage/go.out`, then `scripts/check-go-coverage.ts`, which fails naming each package under 95%
   statement coverage (files named `main.go` are left out).
-  - The project's Go commands (`test:go`, `lint:go`, and the Go format and vet hooks) run `go`
-    through `scripts/go.ts`, which builds into the project's own cache,
-    `node_modules/.cache/go-build`. Past 8 GiB, each command first trims that folder to 6 GiB,
-    oldest files first, sparing the files used in the last 2 h up to 6 GiB of them. It prints one
-    line when it deletes anything; a trim that fails prints its error and the command still runs.
+- Go build cache — the project's Go commands (`test:go`, `lint:go`, and the Go format and vet hooks)
+  run `go` through `scripts/go.ts`, which builds into the project's own cache,
+  `node_modules/.cache/go-build`.
+  - When the folder grows past a cap, each command first trims it, oldest files first; the limits
+    are in `scripts/go.ts`. It prints one line when it deletes anything. A filesystem failure during
+    the trim prints its error and the command still runs; any other error stops the run before `go`
+    starts.
   - A `GOCACHE` you set is used as is and never trimmed. `go` run by hand (as `optimizer/AGENTS.md`
     documents) uses Go's shared default cache, which nothing here trims.
   - Deleting `node_modules/.cache/go-build` is safe; the next run rebuilds from cold (about 90 s for
@@ -52,8 +54,7 @@ also need Go ≥ 1.26 (`optimizer/go.mod`).
     `golangci-lint fmt`.
   - golangci-lint v2 runs through `go tool`, pinned in `optimizer/tools/go.mod`, once with
     `optimizer/.golangci.yml` and again with `optimizer/.golangci.tests.yml` (the `_test.go`
-    file-length cap); `npm run lint:go` runs both passes alone. The hook runs `npm run lint:go`,
-    which builds into the project's own Go cache, as `npm run test:go` describes.
+    file-length cap); `npm run lint:go` runs both passes alone. The hook runs `npm run lint:go`.
   - Run `npm test` before `check` after editing `src/`: the dead-code hook scores complexity against
     the coverage `npm test` writes and refuses to run when a `src/` file is newer than that report.
     The dead-code hook runs in `check` and `pre-push` (right after `npm test`), never at pre-commit.

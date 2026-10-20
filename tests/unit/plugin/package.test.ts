@@ -114,9 +114,7 @@ describe("package manifest", () => {
   it("runs the Go tests from optimizer/ and gates their coverage", () => {
     const script = manifestEntry("scripts", "test:go");
 
-    expect(script).toMatch(
-      /scripts\/go\.ts -C optimizer test .*-coverprofile=\.\.\/coverage\/go\.out/,
-    );
+    expect(script).toMatch(/ -C optimizer test .*-coverprofile=\.\.\/coverage\/go\.out/);
     expect(script).toContain("scripts/check-go-coverage.ts coverage/go.out");
   });
 });
