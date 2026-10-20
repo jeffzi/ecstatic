@@ -1,8 +1,7 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { promisify } from "node:util";
 
 import { getTouchingPropertyName } from "typescript/ast";
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -19,9 +18,8 @@ import {
   type Session,
   type SessionOptions,
 } from "../../../src/plugin/optimizer/session.js";
+import { isAlive, processesStartedSince, runningProcesses, waitUntilDead } from "./processes.js";
 import { appTsconfig, removeProjects, runtimeProject, writeProject } from "./project.js";
-
-const execFileAsync = promisify(execFile);
 
 /** How long a case that starts its own compiler process may take on a slow CI runner. */
 const SPAWN_TIMEOUT_MS = 30_000;
@@ -39,6 +37,7 @@ const PROJECT = {
   "app/second.ts": "export const second = { x: 1 };\n",
   "app/disk.ts": "export const disk = { x: 1 };\n",
   "app/unannounced.ts": "export const unannounced = { x: 1 };\n",
+  "app/removed.ts": "export const removed = { x: 1 };\n",
   "app/emitted.ts": "export const answer: number = 1;\n",
   "node_modules/ecstatic/package.json":
     '{"name": "ecstatic", "type": "module", "types": "dist/index.d.ts"}',
@@ -86,40 +85,6 @@ async function propertyNames(view: ProjectView, rel: string, name: string): Prom
   return (await propertiesOfType(view.checker, type)).map(symbolName);
 }
 
-/** The process IDs of this process's live children. */
-async function childProcessIds(): Promise<number[]> {
-  const { stdout } =
-    process.platform === "win32"
-      ? await execFileAsync("powershell.exe", [
-          "-NoProfile",
-          "-Command",
-          `Get-CimInstance Win32_Process -Filter "ParentProcessId=${process.pid}" | ForEach-Object { "$($_.ProcessId) ${process.pid}" }`,
-        ])
-      : await execFileAsync("ps", ["-A", "-o", "pid=,ppid="]);
-  return stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim().split(/\s+/).map(Number))
-    .flatMap(([pid, parent]) => (pid !== undefined && parent === process.pid ? [pid] : []))
-    .filter(isAlive);
-}
-
-/** Whether `pid` is running; a process owned by another user answers EPERM and still counts. */
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "EPERM";
-  }
-}
-
-/** Waits until `pid` is no longer running. */
-async function waitUntilDead(pid: number): Promise<void> {
-  await vi.waitFor(() => {
-    expect(isAlive(pid)).toBe(false);
-  });
-}
-
 /**
  * Kills `pid` and blocks until the kernel has ended it, so the event loop has not yet seen the exit
  * or the closed pipes when this returns.
@@ -164,15 +129,22 @@ interface OwnSession {
 
 /** Opens a session on a fresh copy of the shared project and returns it with its compiler's process ID and directory. */
 async function openOwnSession(options: SessionOptions = {}): Promise<OwnSession> {
-  const before = new Set(await childProcessIds());
+  const before = await runningProcesses();
   const dir = writeProject(PROJECT);
   const own = await openSession(join(dir, "tsconfig.json"), options);
-  const started = (await childProcessIds()).filter((pid) => !before.has(pid));
+  const started = await processesStartedSince(before);
   const [pid] = started;
   if (started.length !== 1 || pid === undefined) {
     throw new Error(`expected one new compiler process, found ${started.length}`);
   }
   return { session: own, pid, dir };
+}
+
+/** Kills `pid` with SIGKILL when the current test finishes, if it is still running. */
+function killWhenTestFinishes(pid: number): void {
+  onTestFinished(() => {
+    if (isAlive(pid)) process.kill(pid, "SIGKILL");
+  });
 }
 
 /** Whether this platform can suspend a process, so a test can hold its requests unanswered. */
@@ -270,6 +242,15 @@ describe("Session.update", () => {
     expect(await propertyNames(firstView, "app/second.ts", "second")).toStrictEqual(["x"]);
     expect(await propertyNames(secondView, "app/first.ts", "first")).toStrictEqual(["x", "y"]);
     expect(await propertyNames(secondView, "app/second.ts", "second")).toStrictEqual(["x", "y"]);
+  });
+
+  it("treats a file it removes as missing, even one it served", async () => {
+    const removed = file("app/removed.ts");
+    await session.update({ [removed]: "export const removed = { y: 2 };\n" });
+
+    const view = await session.update({}, [removed]);
+
+    await expect(view.sourceFile(removed)).rejects.toThrow(`${removed} is not part of the project`);
   });
 });
 
@@ -375,9 +356,7 @@ describe("Session.close", () => {
     "settles past its deadline and ends a process that stopped answering",
     async () => {
       const { session: stalled, pid, dir } = await openOwnSession({ closeTimeoutMs: 100 });
-      onTestFinished(() => {
-        if (isAlive(pid)) process.kill(pid, "SIGKILL");
-      });
+      killWhenTestFinishes(pid);
       await stalled.parse(file("node_modules/ecstatic/src/ecstatic/debug.ts", dir));
       process.kill(pid, "SIGSTOP");
 
@@ -393,9 +372,7 @@ describe("Session.close", () => {
     "rejects a query in flight naming the exit once the deadline ends a process that stopped answering",
     async () => {
       const { session: stalled, pid, dir } = await openOwnSession({ closeTimeoutMs: 100 });
-      onTestFinished(() => {
-        if (isAlive(pid)) process.kill(pid, "SIGKILL");
-      });
+      killWhenTestFinishes(pid);
       process.kill(pid, "SIGSTOP");
       const parsing = stalled.parse(file("node_modules/ecstatic/src/ecstatic/debug.ts", dir));
 
@@ -454,9 +431,7 @@ describe("when the compiler process exits mid-session", () => {
     "lets close settle cleanly when the process dies $moment",
     async ({ close }) => {
       const { session: crashed, pid } = await openOwnSession();
-      onTestFinished(() => {
-        if (isAlive(pid)) process.kill(pid, "SIGKILL");
-      });
+      killWhenTestFinishes(pid);
       const unhandled = collectUnhandledRejections();
 
       const closing = close(crashed, pid);

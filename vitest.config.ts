@@ -79,8 +79,14 @@ export default defineConfig({
         test: {
           name: "fixtures-ndebug",
           include: FIXTURE_TESTS,
-          // The corpus test runs the optimizer in Node, where NDEBUG changes nothing.
-          exclude: [...configDefaults.exclude, "tests/optimizer/corpus.test.ts"],
+          // The corpus test runs the optimizer in Node, where NDEBUG changes nothing. The Vite smoke
+          // test's builds run in a child process the NDEBUG define never reaches, so an NDEBUG run
+          // only repeats them.
+          exclude: [
+            ...configDefaults.exclude,
+            "tests/optimizer/corpus.test.ts",
+            "tests/optimizer/vite-smoke.test.ts",
+          ],
         },
       },
     ],

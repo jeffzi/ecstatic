@@ -15,6 +15,8 @@ const SKIP_CHECKED = join(ROOT, "tests", "skip-checked.ts");
 
 const CORPUS_TEST = join(ROOT, "tests", "optimizer", "corpus.test.ts");
 
+const VITE_SMOKE_TEST = join(ROOT, "tests", "optimizer", "vite-smoke.test.ts");
+
 const SHARED_OPTIONS = {
   allowOnly: false,
   requireAssertions: true,
@@ -82,11 +84,14 @@ describe("vitest config", () => {
     expect(typecheckTestFiles.filter((file) => !checked.has(file))).toStrictEqual([]);
   });
 
-  it("runs the corpus test in the fixtures project only", async () => {
+  it.each([
+    { name: "corpus test", file: CORPUS_TEST },
+    { name: "Vite smoke test", file: VITE_SMOKE_TEST },
+  ])("runs the $name in the fixtures project only", async ({ file }) => {
     const holders = await Promise.all(
       vitest.projects.map(async (project) => {
         const { testFiles } = await project.globTestFiles();
-        return testFiles.includes(CORPUS_TEST) ? [project.name] : [];
+        return testFiles.includes(file) ? [project.name] : [];
       }),
     );
 

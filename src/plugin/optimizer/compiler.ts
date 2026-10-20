@@ -1,7 +1,7 @@
 /**
  * Every call the optimizer makes into the compiler process lives here: checker, symbol, type,
- * program, snapshot, parse, emit, and printer calls. The other optimizer modules read nodes and plain values,
- * so a compiler API upgrade edits this file alone.
+ * program, snapshot, parse, emit, and printer calls. The other optimizer modules read nodes and
+ * plain values, so a compiler API upgrade edits this file alone.
  */
 
 import { setImmediate } from "node:timers/promises";
@@ -27,6 +27,10 @@ import {
 } from "typescript/async";
 
 export type { API, Checker, CheckerSymbol, Snapshot, Type };
+
+// ---------------------------------------------------------------------------
+// Compiler process
+// ---------------------------------------------------------------------------
 
 /** A compiler process and the client that owns it. */
 export interface Compiler {
@@ -260,6 +264,10 @@ export async function closeCompiler(compiler: Compiler, timeoutMs: number): Prom
   }
 }
 
+// ---------------------------------------------------------------------------
+// Project snapshots and files
+// ---------------------------------------------------------------------------
+
 /**
  * Loads the project `tsconfig` names into a new snapshot.
  *
@@ -296,25 +304,38 @@ export function configuredProject(snapshot: Snapshot, tsconfig: string): Project
 }
 
 /**
- * Derives a snapshot that reads `files` in place of the disk and re-reads `changed` from it. Earlier
- * layers carry forward, so `snapshot`'s served text stays served unless `files` replaces it.
+ * Derives a snapshot that reads `files` in place of the disk, treats `removed` as missing, and
+ * re-reads `changed` from the disk. Earlier layers carry forward, so `snapshot`'s served text stays
+ * served unless `files` replaces it or `removed` names it.
  *
  * @param snapshot - Snapshot the update builds on.
  * @param files - Text to serve, keyed by absolute file name.
  * @param changed - Absolute names of files changed on disk since `snapshot`.
+ * @param removed - Absolute names of files to treat as missing, whatever the disk holds.
  * @returns The new snapshot, its programs rebuilt.
  */
 export async function updateSnapshot(
   snapshot: Snapshot,
   files: Readonly<Record<string, string>>,
   changed: readonly string[],
+  removed: readonly string[],
 ): Promise<Snapshot> {
   return await snapshot.update({
-    fileSystem: { kind: "layer", files: { ...files } },
+    fileSystem: { kind: "layer", files: { ...files }, removedPaths: [...removed] },
     fileNotifications: { changed: [...changed] },
     // Without it the snapshot keeps the program built before the update.
     ensurePrograms: true,
   });
+}
+
+/**
+ * The names of every file the project's program holds, declaration files included.
+ *
+ * @param project - The project whose program to list.
+ * @returns The absolute file names, as the compiler writes them.
+ */
+export async function programFileNames(project: Project): Promise<readonly string[]> {
+  return await project.program.getSourceFileNames();
 }
 
 /**
@@ -387,6 +408,10 @@ export async function parseText(api: API, fileName: string, text: string): Promi
 export async function printTree(api: API, node: Node): Promise<string> {
   return await api.printer.printNode(node);
 }
+
+// ---------------------------------------------------------------------------
+// Symbols and declarations
+// ---------------------------------------------------------------------------
 
 /**
  * The symbol `name` reads. The name of a shorthand property (`{ visit }`) both declares a property
@@ -510,6 +535,10 @@ export async function declarationFileNames(symbol: CheckerSymbol | undefined): P
     }),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Type inspection
+// ---------------------------------------------------------------------------
 
 /**
  * The property of `type` named `name`.

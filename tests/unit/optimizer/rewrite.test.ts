@@ -32,6 +32,7 @@ import {
   closeProject,
   openProject,
   projectPath,
+  runtimeCopy,
   runtimeProject,
   SPAWN_TIMEOUT_MS,
 } from "./project.js";
@@ -192,24 +193,6 @@ const NAMES_FILE = "app/names.ts";
 
 /** What the throwing seams throw. */
 const THROWN = "banana split";
-
-/**
- * Copies the runtime sources and manifest of `files` under `root`.
- *
- * @param files - The runtime project's files keyed by slash-separated path.
- * @param root - The slash-separated directory the copy goes under.
- * @returns The copied files keyed by slash-separated path.
- */
-function runtimeCopy(
-  files: Readonly<Record<string, string>>,
-  root: string,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(files)
-      .filter(([rel]) => rel.startsWith("src/") || rel === "package.json")
-      .map(([rel, text]) => [`${root}/${rel}`, text]),
-  );
-}
 
 /** The main project, plus the case files and the two runtime copies they import. */
 function projectFiles(): Record<string, string> {

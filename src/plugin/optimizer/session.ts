@@ -15,6 +15,7 @@ import {
   parseFile,
   parseText,
   printTree,
+  programFileNames,
   projectSourceFile,
   type Snapshot,
   startCompiler,
@@ -53,6 +54,13 @@ export interface ProjectView {
    * @throws When the file is not part of the program, or the session is closed or its process exited.
    */
   emit(file: string): Promise<string>;
+  /**
+   * The names of every file the program holds, declaration files included.
+   *
+   * @returns The absolute file names, as the compiler writes them.
+   * @throws When the session is closed or its compiler process exited.
+   */
+  sourceFileNames(): Promise<readonly string[]>;
 }
 
 /** One compiler process with one project loaded. */
@@ -60,14 +68,19 @@ export interface Session {
   /** Absolute path of the project's tsconfig. */
   readonly tsconfig: string;
   /**
-   * Serves `files` in place of the disk's text, on top of every earlier update. Concurrent updates
-   * apply in call order.
+   * Serves `files` in place of the disk's text, and treats `removed` as missing, on top of every
+   * earlier update. Concurrent updates apply in call order.
    *
    * @param files - Text to serve, keyed by absolute file name.
+   * @param removed - Absolute names of files to treat as missing from here on, served or not,
+   *   until a later update serves them again.
    * @returns The project with this update and every earlier one applied.
    * @throws When the session is closed or its compiler process exited.
    */
-  update(files?: Readonly<Record<string, string>>): Promise<ProjectView>;
+  update(
+    files?: Readonly<Record<string, string>>,
+    removed?: readonly string[],
+  ): Promise<ProjectView>;
   /**
    * Records files changed on disk, re-read at the next {@link Session.update}. A file the session
    * serves keeps its served text.
@@ -103,6 +116,8 @@ export interface Session {
   /**
    * Ends the compiler process, killing it when it has not finished by the session's close deadline.
    * Closing again does nothing.
+   *
+   * @throws When the client fails to close.
    */
   close(): Promise<void>;
 }
@@ -155,13 +170,16 @@ class ProjectSession implements Session {
     this.#closeTimeoutMs = closeTimeoutMs;
   }
 
-  async update(files: Readonly<Record<string, string>> = {}): Promise<ProjectView> {
+  async update(
+    files: Readonly<Record<string, string>> = {},
+    removed: readonly string[] = [],
+  ): Promise<ProjectView> {
     return await this.#query(async () => {
       const changed = this.#changed.splice(0);
       // A failed update stays the latest, so every later update reports the same failure rather
       // than building on a snapshot that missed these changes.
       const updated = this.#latest.then(
-        async (snapshot) => await updateSnapshot(snapshot, files, changed),
+        async (snapshot) => await updateSnapshot(snapshot, files, changed, removed),
       );
       this.#latest = updated;
       return this.#view(await updated);
@@ -195,6 +213,7 @@ class ProjectSession implements Session {
       sourceFile: async (file) =>
         await this.#query(async () => await projectSourceFile(project, file)),
       emit: async (file) => await this.#query(async () => await emitJavaScript(project, file)),
+      sourceFileNames: async () => await this.#query(async () => await programFileNames(project)),
     };
   }
 
