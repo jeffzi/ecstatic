@@ -354,63 +354,193 @@ describe("isGlobalValue", () => {
   });
 });
 
-describe("startCompiler", () => {
-  it("rejects naming the missing member and closes the API it created when the API lacks its client", async () => {
-    const created: { close: ReturnType<typeof vi.fn> }[] = [];
-    vi.resetModules();
-    vi.doMock("typescript/async", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("typescript/async")>()),
-      API: class {
-        readonly close = vi.fn(async () => {});
+interface FakeInput {
+  write?: (...args: unknown[]) => boolean;
+}
 
-        constructor() {
-          created.push(this);
+interface FakeClient {
+  connect?: () => Promise<void>;
+  connection?: { onClose?: () => void; dispose?: () => void };
+  process?: {
+    kill?: (signal: string) => boolean;
+    once?: (event: string, listener: () => void) => void;
+    stdin?: FakeInput;
+  };
+  apiRequest?: (method: string, params: unknown) => Promise<undefined>;
+  close?: () => Promise<void>;
+}
+
+interface FakeApiMembers {
+  client?: FakeClient;
+}
+
+/**
+ * Imports `compiler.ts` against a fake `API` whose internals are complete except what `customize`
+ * removes or replaces. Like the real one, the fake's `close` releases a remote object through the
+ * client before closing it.
+ */
+async function importWithFakeApi(customize: (members: FakeApiMembers) => void): Promise<{
+  compiler: typeof import("../../../src/plugin/optimizer/compiler.js");
+  created: { close: ReturnType<typeof vi.fn> }[];
+}> {
+  const created: { close: ReturnType<typeof vi.fn> }[] = [];
+  vi.resetModules();
+  vi.doMock("typescript/async", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("typescript/async")>()),
+    API: class {
+      readonly client: FakeClient | undefined;
+
+      readonly close = vi.fn(async () => {
+        await this.client?.apiRequest?.("release", "snapshot");
+        if (this.client?.close === undefined) {
+          throw new TypeError("Cannot read properties of undefined (reading 'close')");
         }
+        await this.client.close();
+      });
+
+      constructor() {
+        const members: FakeApiMembers = {
+          client: {
+            connect: async () => {},
+            connection: { onClose: () => {}, dispose: () => {} },
+            process: { kill: () => true, once: () => {}, stdin: { write: () => true } },
+            apiRequest: async () => undefined,
+            close: async () => {},
+          },
+        };
+        customize(members);
+        this.client = members.client;
+        created.push(this);
+      }
+    },
+  }));
+  onTestFinished(() => {
+    vi.doUnmock("typescript/async");
+    vi.resetModules();
+  });
+  const compiler = await import("../../../src/plugin/optimizer/compiler.js");
+  return { compiler, created };
+}
+
+describe("startCompiler", () => {
+  describe("when the compiler API lacks an internal member", () => {
+    it.each<{ member: string; strip: (members: FakeApiMembers) => void }>([
+      { member: "client", strip: (m) => delete m.client },
+      { member: "client.connect", strip: (m) => delete m.client?.connect },
+      { member: "client.close", strip: (m) => delete m.client?.close },
+      { member: "client.apiRequest", strip: (m) => delete m.client?.apiRequest },
+      { member: "client.connection", strip: (m) => delete m.client?.connection },
+      { member: "client.connection.onClose", strip: (m) => delete m.client?.connection?.onClose },
+      { member: "client.connection.dispose", strip: (m) => delete m.client?.connection?.dispose },
+      { member: "client.process", strip: (m) => delete m.client?.process },
+      { member: "client.process.kill", strip: (m) => delete m.client?.process?.kill },
+      { member: "client.process.once", strip: (m) => delete m.client?.process?.once },
+      { member: "client.process.stdin", strip: (m) => delete m.client?.process?.stdin },
+      {
+        member: "client.process.stdin.write",
+        strip: (m) => delete m.client?.process?.stdin?.write,
       },
-    }));
-    onTestFinished(() => {
-      vi.doUnmock("typescript/async");
-      vi.resetModules();
+    ])("rejects naming $member", async ({ member, strip }) => {
+      const {
+        compiler: { startCompiler },
+      } = await importWithFakeApi(strip);
+
+      const starting = startCompiler(undefined);
+
+      await expect(starting).rejects.toThrow(
+        `the compiler API no longer holds the ${member} this optimizer relies on`,
+      );
     });
-    const { startCompiler } = await import("../../../src/plugin/optimizer/compiler.js");
 
-    const starting = startCompiler(undefined);
+    it("closes the API it created even when that close fails", async () => {
+      const {
+        compiler: { startCompiler },
+        created,
+      } = await importWithFakeApi((m) => delete m.client?.close);
 
-    await expect(starting).rejects.toThrow(
-      "the compiler API no longer holds the client this optimizer relies on",
-    );
-    expect(created).toHaveLength(1);
-    expect(created[0]?.close).toHaveBeenCalledOnce();
+      await startCompiler(undefined).catch(() => {});
+
+      expect(created).toHaveLength(1);
+      expect(created[0]?.close).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("turns a failed write to the process input into the process's exit", async () => {
+    const kill = vi.fn((_signal: string) => true);
+    const dispose = vi.fn();
+    const written = vi.fn();
+    let stdin: FakeInput | undefined;
+    const {
+      compiler: { startCompiler },
+    } = await importWithFakeApi((m) => {
+      stdin = {
+        write: (...args: unknown[]) => {
+          const callback = args.at(-1);
+          if (typeof callback === "function") callback(new Error("write EPIPE"));
+          return false;
+        },
+      };
+      m.client = {
+        ...m.client,
+        connection: { onClose: () => {}, dispose },
+        process: { kill, once: () => {}, stdin },
+      };
+    });
+    const compiler = await startCompiler(undefined);
+
+    stdin?.write?.("request", written);
+
+    expect(written).toHaveBeenCalledExactlyOnceWith();
+    expect(kill).toHaveBeenCalledWith("SIGKILL");
+    expect(dispose).toHaveBeenCalled();
+    expect(compiler.exited).toBe(true);
   });
 });
 
 describe("closeCompiler", () => {
   it("rejects with the close failure while the process is still running", async () => {
-    vi.resetModules();
-    vi.doMock("typescript/async", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("typescript/async")>()),
-      API: class {
-        readonly client = {
-          connect: async () => {},
-          connection: { onClose: () => {}, dispose: () => {} },
-          process: { kill: () => true },
-        };
-
-        async close(): Promise<void> {
-          throw new Error("release refused");
-        }
-      },
-    }));
-    onTestFinished(() => {
-      vi.doUnmock("typescript/async");
-      vi.resetModules();
+    const {
+      compiler: { closeCompiler, startCompiler },
+    } = await importWithFakeApi((m) => {
+      m.client = {
+        ...m.client,
+        close: async () => {
+          throw new Error("close refused");
+        },
+      };
     });
-    const { closeCompiler, startCompiler } =
-      await import("../../../src/plugin/optimizer/compiler.js");
     const compiler = await startCompiler(undefined);
 
     const closing = closeCompiler(compiler, 60_000);
 
-    await expect(closing).rejects.toThrow("release refused");
+    await expect(closing).rejects.toThrow("close refused");
+  });
+
+  it("sends no request to the process while closing", async () => {
+    const apiRequest = vi.fn(async (_method: string, _params: unknown) => undefined);
+    let exit = (): void => {};
+    const {
+      compiler: { closeCompiler, startCompiler },
+    } = await importWithFakeApi((m) => {
+      m.client = {
+        ...m.client,
+        apiRequest,
+        process: {
+          kill: () => true,
+          once: (_event, listener) => {
+            exit = listener;
+          },
+          stdin: { write: () => true },
+        },
+        close: async () => {
+          exit();
+        },
+      };
+    });
+    const compiler = await startCompiler(undefined);
+
+    await closeCompiler(compiler, 60_000);
+
+    expect(apiRequest).not.toHaveBeenCalled();
   });
 });

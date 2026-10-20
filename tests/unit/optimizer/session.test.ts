@@ -1,6 +1,7 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
 import { getTouchingPropertyName } from "typescript/ast";
@@ -112,10 +113,47 @@ function isAlive(pid: number): boolean {
   }
 }
 
+/** Waits until `pid` is no longer running. */
 async function waitUntilDead(pid: number): Promise<void> {
   await vi.waitFor(() => {
     expect(isAlive(pid)).toBe(false);
   });
+}
+
+/**
+ * Kills `pid` and blocks until the kernel has ended it, so the event loop has not yet seen the exit
+ * or the closed pipes when this returns.
+ */
+function killUnobserved(pid: number): void {
+  process.kill(pid, "SIGKILL");
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 5_000;
+  while (processState(pid)?.startsWith("Z") === false) {
+    if (Date.now() > deadline) throw new Error(`process ${pid} outlived SIGKILL`);
+    Atomics.wait(pause, 0, 0, 5);
+  }
+}
+
+/** The `ps` state code of `pid`, or undefined once the process is gone. */
+function processState(pid: number): string | undefined {
+  try {
+    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Records every unhandled rejection until the current test finishes. */
+function collectUnhandledRejections(): unknown[] {
+  const reasons: unknown[] = [];
+  const record = (reason: unknown): void => {
+    reasons.push(reason);
+  };
+  process.on("unhandledRejection", record);
+  onTestFinished(() => {
+    process.off("unhandledRejection", record);
+  });
+  return reasons;
 }
 
 interface OwnSession {
@@ -139,6 +177,17 @@ async function openOwnSession(options: SessionOptions = {}): Promise<OwnSession>
 
 /** Whether this platform can suspend a process, so a test can hold its requests unanswered. */
 const CAN_SUSPEND = process.platform !== "win32";
+
+/** How long a suspended process is given to receive the pending work before it is killed. */
+const SUSPENDED_SETTLE_MS = 50;
+
+/** How long a case waits after the process dies for a stray unhandled rejection to surface. */
+const UNHANDLED_REJECTION_WINDOW_MS = 100;
+
+/** Sends `target` an update that serves new text for `app/served.ts` under `dir`. */
+function updateServed(target: Session, dir: string): Promise<ProjectView> {
+  return target.update({ [file("app/served.ts", dir)]: "export const served = { y: 2 };\n" });
+}
 
 describe("openSession", () => {
   it("loads the project its tsconfig names", async () => {
@@ -375,41 +424,86 @@ describe("when the compiler process exits mid-session", () => {
     SPAWN_TIMEOUT_MS,
   );
 
-  it.runIf(CAN_SUSPEND)(
-    "lets close settle and leaves no live process when the process exits while closing",
-    async () => {
+  it.runIf(CAN_SUSPEND).each([
+    {
+      moment: "before the close starts",
+      close: (crashed: Session, pid: number) => {
+        killUnobserved(pid);
+        return crashed.close();
+      },
+    },
+    {
+      moment: "as the close starts",
+      close: (crashed: Session, pid: number) => {
+        const closing = crashed.close();
+        killUnobserved(pid);
+        return closing;
+      },
+    },
+    {
+      moment: "while the close waits on a suspended process",
+      close: async (crashed: Session, pid: number) => {
+        process.kill(pid, "SIGSTOP");
+        const closing = crashed.close();
+        await delay(SUSPENDED_SETTLE_MS);
+        process.kill(pid, "SIGKILL");
+        await closing;
+      },
+    },
+  ])(
+    "lets close settle cleanly when the process dies $moment",
+    async ({ close }) => {
       const { session: crashed, pid } = await openOwnSession();
       onTestFinished(() => {
         if (isAlive(pid)) process.kill(pid, "SIGKILL");
       });
-      process.kill(pid, "SIGSTOP");
+      const unhandled = collectUnhandledRejections();
 
-      const closing = crashed.close();
-      process.kill(pid, "SIGKILL");
+      const closing = close(crashed, pid);
 
       await expect(closing).resolves.toBeUndefined();
       await expect(waitUntilDead(pid)).resolves.toBeUndefined();
+      await delay(UNHANDLED_REJECTION_WINDOW_MS);
+      expect(unhandled).toStrictEqual([]);
     },
     SPAWN_TIMEOUT_MS,
   );
 
-  it.runIf(CAN_SUSPEND)(
-    "rejects a query in flight naming the exit",
-    async () => {
+  it.runIf(CAN_SUSPEND).each([
+    {
+      moment: "before the query reaches the process",
+      query: (crashed: Session, pid: number, dir: string) => {
+        const updating = updateServed(crashed, dir);
+        killUnobserved(pid);
+        return updating;
+      },
+    },
+    {
+      moment: "after the query reached the suspended process",
+      query: async (crashed: Session, pid: number, dir: string) => {
+        process.kill(pid, "SIGSTOP");
+        const updating = updateServed(crashed, dir);
+        await delay(SUSPENDED_SETTLE_MS);
+        process.kill(pid, "SIGKILL");
+        return updating;
+      },
+    },
+  ])(
+    "rejects a query in flight naming the exit when the process dies $moment",
+    async ({ query }) => {
       const { session: crashed, pid, dir } = await openOwnSession();
       onTestFinished(async () => {
         if (isAlive(pid)) process.kill(pid, "SIGKILL");
         await crashed.close();
       });
-      process.kill(pid, "SIGSTOP");
+      const unhandled = collectUnhandledRejections();
 
-      const updating = crashed.update({
-        [file("app/served.ts", dir)]: "export const served = { y: 2 };\n",
-      });
-      process.kill(pid, "SIGKILL");
+      const updating = query(crashed, pid, dir);
 
       await expect(updating).rejects.toThrow(/exited/);
       await expect(updating).rejects.toThrow(crashed.tsconfig);
+      await delay(UNHANDLED_REJECTION_WINDOW_MS);
+      expect(unhandled).toStrictEqual([]);
     },
     SPAWN_TIMEOUT_MS,
   );

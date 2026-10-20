@@ -11,6 +11,15 @@ import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  openSession,
+  type ProjectView,
+  type Session,
+} from "../../../src/plugin/optimizer/session.js";
+
+/** How long opening a compiler session may take on a slow CI runner. */
+export const SPAWN_TIMEOUT_MS = 30_000;
+
 /** The repository's compiler options, so the runtime sources type-check in a project as they do here. */
 export const RUNTIME_TSCONFIG = `{
   "compilerOptions": {
@@ -83,6 +92,84 @@ export function removeProjects(): void {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+/** The absolute path of the slash-separated `rel` under `dir`. */
+export function projectPath(dir: string, rel: string): string {
+  return join(dir, ...rel.split("/"));
+}
+
+/**
+ * Case files for `sources`: the file at `${stem}${index}.ts` holds `header` followed by the source
+ * at that index.
+ *
+ * @param stem - The slash-separated path prefix of every case file, before its index.
+ * @param sources - The case sources, one file each.
+ * @param header - Text written at the start of every case file.
+ * @returns The files keyed by slash-separated path, ready for {@link writeProject}.
+ */
+export function caseFiles(
+  stem: string,
+  sources: readonly string[],
+  header = "",
+): Record<string, string> {
+  return Object.fromEntries(sources.map((source, i) => [`${stem}${i}.ts`, header + source]));
+}
+
+/** A written project with the session opened on its `tsconfig.json`. */
+export interface OpenProject {
+  readonly root: string;
+  readonly session: Session;
+  /** The session's view of the project as written. */
+  readonly view: ProjectView;
+}
+
+/**
+ * Writes `files` and opens a session on the project's `tsconfig.json`.
+ *
+ * @param files - File contents keyed by slash-separated path; one of them is `tsconfig.json`.
+ * @returns The project directory, its session, and the session's first view.
+ */
+export async function openProject(files: Readonly<Record<string, string>>): Promise<OpenProject> {
+  const root = writeProject(files);
+  const session = await openSession(join(root, "tsconfig.json"));
+  try {
+    return { root, session, view: await session.update() };
+  } catch (error) {
+    await session.close();
+    throw error;
+  }
+}
+
+/** Closes `session` and deletes every project written. */
+export async function closeProject(session: Session): Promise<void> {
+  await session.close();
+  removeProjects();
+}
+
+/** The `app/` files that declare the components and archetypes the analysis cases share. */
+export const SHARED_ARCHETYPE_FILES: Readonly<Record<string, string>> = {
+  "app/position.ts": `import { component } from "../src/ecstatic/index.js";
+
+export const Position = component("Position", { x: 0, y: 0 });
+`,
+  "app/components.ts": `import { component, f32, ref, relation } from "../src/ecstatic/index.js";
+
+export const Velocity = component("Velocity", { dx: f32(0), dy: 0 });
+export const Shield = component("Shield", { hp: 0, active: true, label: "", owner: ref<number>() });
+export const Stunned = component("Stunned");
+export const Boost = component("Boost", {});
+export const ChildOf = relation("ChildOf", { order: 0, pinned: false });
+`,
+  "app/archetypes.ts": `import { Archetype, archetype } from "../src/ecstatic/index.js";
+import { Boost, ChildOf, Shield, Stunned, Velocity } from "./components.js";
+import { Position } from "./position.js";
+
+export const Enemy = archetype([Position, Velocity], [Shield, Stunned]);
+export class Ship extends Archetype([Position], [Shield, Stunned, Boost]) {}
+export class Hull extends Archetype([Position], [Shield, Stunned, Boost]) {}
+export const Linked = archetype([Position, ChildOf]);
+`,
+};
 
 /**
  * The repository's runtime laid out as the package lays it out: the runtime sources from

@@ -100,6 +100,27 @@ export function iterates(op: Op): boolean {
   return op === "each" || op === "query";
 }
 
+/**
+ * The argument counts the runtime's overloads of each iteration op accept. Only iteration ops carry
+ * overload data.
+ */
+const ITERATION_ARG_COUNTS: Readonly<Partial<Record<Op, readonly number[]>>> = {
+  each: [2, 3],
+  query: [3],
+};
+
+/**
+ * Whether `count` arguments match one of the op's declared overloads. Only `each` and `query`
+ * carry overload data; every other op matches no count.
+ *
+ * @param op - Op whose overloads are matched.
+ * @param count - Number of arguments a call passes.
+ * @returns `true` when an overload of `op` accepts `count` arguments.
+ */
+export function matchesArgCount(op: Op, count: number): boolean {
+  return ITERATION_ARG_COUNTS[op]?.includes(count) ?? false;
+}
+
 // ---------------------------------------------------------------------------
 // Call-site facts
 // ---------------------------------------------------------------------------

@@ -24,8 +24,8 @@ export interface SessionOptions {
   /** Compiler executable; the one bundled with `typescript` when absent. */
   readonly executable?: string;
   /**
-   * Milliseconds {@link Session.close} lets the process release its remote objects before killing
-   * it; 5000 when absent.
+   * Milliseconds {@link Session.close} lets the process answer the requests in flight and exit
+   * before killing it; 5000 when absent.
    */
   readonly closeTimeoutMs?: number;
 }
