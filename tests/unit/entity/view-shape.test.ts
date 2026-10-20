@@ -3,6 +3,7 @@ import { runInThisContext } from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
+import type { EachViewOf } from "../../../src/entity/each.js";
 import {
   archetype,
   components,
@@ -193,13 +194,15 @@ describe("view shape — field access independent of unrelated objects", () => {
       records.add(e.ShapeWide).add(e.ShapePair);
     });
     const accessors = [...records].flatMap(accessorFunctions);
+    // A callback held in a variable keeps the runtime call, so the accessors under test run.
+    const cb = (e: EachViewOf<typeof storage>): void => {
+      e.ShapeWide.a +=
+        e.ShapeWide.b + e.ShapeWide.c + e.ShapeWide.d + e.ShapeWide.e + (keep["j"] ?? 0);
+      e.ShapePair.a += e.ShapePair.b;
+    };
 
     for (let pass = 0; pass < 200; pass++) {
-      each(storage, (e) => {
-        e.ShapeWide.a +=
-          e.ShapeWide.b + e.ShapeWide.c + e.ShapeWide.d + e.ShapeWide.e + (keep["j"] ?? 0);
-        e.ShapePair.a += e.ShapePair.b;
-      });
+      each(storage, cb);
     }
 
     // Seven fields (five on Wide, two on Pair), each with a getter and a setter.

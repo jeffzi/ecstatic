@@ -178,3 +178,6 @@ benchmarks/tmp/
 # Agents
 .mcp.json
 AGENTS.local.md
+
+# Optimized benchmark build (npx tsx benchmarks/main.ts --optimized)
+/.bench-optimized/

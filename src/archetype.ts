@@ -20,8 +20,10 @@ export interface ArchetypeDescriptor<
   O extends readonly ComponentDescriptor[] = readonly ComponentDescriptor[],
 > {
   readonly id: number;
-  readonly components: C;
-  readonly optionals: O;
+  /** Read-only even when `C` is a mutable array: the shape is fixed once the archetype exists. */
+  readonly components: Readonly<C>;
+  /** Read-only even when `O` is a mutable array: the shape is fixed once the archetype exists. */
+  readonly optionals: Readonly<O>;
   readonly componentByName: Map<string, ComponentDescriptor>;
   readonly componentLookup: Set<ComponentDescriptor>;
   readonly optionalBits: Map<string, number>;
@@ -67,8 +69,17 @@ const archetypeCache = new Map<string, ArchetypeDescriptor>();
 /** Maximum number of optional components per archetype (32-bit bitmask limit). */
 const MAX_OPTIONAL_COMPONENTS = 32;
 
-/** Field names and properties reserved by the archetype storage itself */
+/**
+ * Field names and properties reserved by the archetype storage itself.
+ *
+ * Part of the runtime contract with the optimizer: every storage writes each
+ * component's SoA record to `storage[name]`, and `each` writes required tags to `view[name]`.
+ * Reserving every storage field and `__proto__` keeps those writes from replacing a storage
+ * field or the storage's (or view's) prototype.
+ */
 const RESERVED_NAMES = new Set<string>([
+  // Assigning it replaces the object's prototype instead of adding a property
+  "__proto__",
   // Storage structure fields
   "entities",
   "sparse",
@@ -195,8 +206,8 @@ export function Archetype<
   required?: C,
   optionals?: O,
 ): (new (archetypeClassesAreNotConstructable: never) => ArchetypeDescriptor<C, O>) & {
-  readonly components: C;
-  readonly optionals: O;
+  readonly components: Readonly<C>;
+  readonly optionals: Readonly<O>;
 };
 export function Archetype(
   required: readonly ComponentDescriptor[] = [],
@@ -317,10 +328,11 @@ function validateArchetype(
 /**
  * Construct an archetype descriptor with all required fields and lookups.
  *
- * @param required - Already-validated required components; the array is
- *   stored as-is, not copied.
+ * @param required - Already-validated required components; the descriptor keeps its own copy, so
+ *   a caller mutating its array cannot change the shape of an archetype or its storages. The copy
+ *   is not frozen: a frozen array makes spawn and despawn allocate.
  * @param optionals - Already-validated optional components; the entry at
- *   position `i` is assigned presence bit `1 << i`.
+ *   position `i` is assigned presence bit `1 << i`. The descriptor keeps its own copy.
  * @returns A new descriptor with a fresh module-wide id and `archetype`
  *   pointing at itself; the caller is responsible for caching it.
  */
@@ -357,12 +369,15 @@ function buildArchetypeDescriptor(
     optionalNotBitLookup.set(comp, notBit);
   }
 
+  const ownRequired: readonly ComponentDescriptor[] = [...required];
+  const ownOptionals: readonly ComponentDescriptor[] = [...optionals];
+
   // Cast to mutable to allow self-reference setup
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- mutable construction
   const desc = {
     id,
-    components: required,
-    optionals,
+    components: ownRequired,
+    optionals: ownOptionals,
     componentByName,
     componentLookup,
     optionalBits,

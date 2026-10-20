@@ -138,6 +138,9 @@ export function normalizeFilter(
  * Resolve a filter (descriptor object or bare `{all}` component array)
  * against a storage.
  *
+ * Part of the runtime contract with the optimizer: the result depends only on the
+ * storage's fixed component maps and the filter's contents ({@link resolveFilterMasks}).
+ *
  * @param storage - Storage whose component set and optional bits the filter is checked against
  *   and on which a non-trivial matcher is registered.
  * @param filter - Filter descriptor, or a bare component array treated as `{all: filter}`.
@@ -198,6 +201,11 @@ function resolveAnyMask(
  *   the storage unmatchable.
  * - `none`: optionals contribute bits; a required component makes the
  *   storage unmatchable; absent components are trivially satisfied.
+ *
+ * Part of the runtime contract with the optimizer: the outcome depends only on the
+ * storage's fixed `componentLookup` and `optionalBitLookup` and on the listed components, never
+ * on row data or the filter object's identity. Equal contents give the same matcher on one
+ * storage and the same masks on every storage of one archetype, so a resolution can be cached.
  *
  * @param storage - Storage whose `componentLookup` and `optionalBitLookup` are consulted and on
  *   which a non-trivial matcher is registered.

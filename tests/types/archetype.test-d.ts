@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import type { ArchetypeDescriptor } from "../../src/archetype.js";
+import type { ArchetypeDescriptor, ComponentDescriptor } from "../../src/archetype.js";
 import { archetype, createWorld, register, spawn } from "../../src/index.js";
 import { Health, Position, Velocity } from "./_fixtures.js";
 
@@ -11,6 +11,16 @@ describe("archetype", () => {
     expectTypeOf(arch).toEqualTypeOf<
       ArchetypeDescriptor<readonly [typeof Position, typeof Velocity], readonly []>
     >();
+  });
+
+  it("exposes read-only component lists when built from mutable array variables", () => {
+    const required: ComponentDescriptor[] = [Position];
+    const optionals: ComponentDescriptor[] = [Health];
+
+    const arch = archetype(required, optionals);
+
+    expectTypeOf(arch.components).toEqualTypeOf<readonly ComponentDescriptor[]>();
+    expectTypeOf(arch.optionals).toEqualTypeOf<readonly ComponentDescriptor[]>();
   });
 
   it("does not carry SoA aliases or entity count", () => {

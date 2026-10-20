@@ -297,6 +297,10 @@ function growWorldArrays(state: WorldState): void {
  * never replaced, so despawnClear references stay valid. flatColumns is rebuilt and the field
  * columns are pointed at the new arrays.
  *
+ * Part of the runtime contract with the optimizer: each component's SoA record (and
+ * so its `storage[name]` alias) stays the same object; only the typed arrays inside it are
+ * replaced, with the old values copied in.
+ *
  * @param storage - Storage whose capacity doubles: `entities`, `mask`, every typed column,
  *   `flatColumns`, `relationTargetColumns`, and each matcher's `matched` array are replaced
  *   together, so any of them cached across the call is stale; `fieldColumns` update in place.
