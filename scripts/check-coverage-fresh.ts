@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, relative, sep } from "node:path";
+
+import { isEntryScript } from "./entry.js";
 
 const COVERAGE_REPORT = "coverage/coverage-final.json";
 
@@ -47,6 +48,6 @@ export function checkCoverageFresh(projectRoot: string): void {
   }
 }
 
-if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   checkCoverageFresh(process.cwd());
 }

@@ -29,6 +29,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { errorMessage } from "../../scripts/caught.js";
 import { DEFAULT_N } from "../helpers.js";
 import {
   childSpawnSpec,
@@ -198,6 +199,6 @@ function main(argv: readonly string[]): number {
 try {
   process.exitCode = main(process.argv.slice(2));
 } catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(errorMessage(error));
   process.exitCode = error instanceof UsageError ? USAGE_EXIT : FAILURE_EXIT;
 }

@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { transform } from "esbuild";
 import type { Plugin } from "vitest/config";
 
+import { errorMessage } from "../../scripts/caught.js";
+
 const GOLDEN_SUFFIX = ".golden";
 
 /** The source file each runtime import a golden makes resolves to. */
@@ -42,7 +44,7 @@ export function goldenLoader(): Plugin {
         const { code } = await transform(text, { loader: "ts", format: "esm", sourcefile: id });
         return code;
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = errorMessage(error);
         throw new Error(`cannot transpile golden ${id}: ${reason}`, { cause: error });
       }
     },

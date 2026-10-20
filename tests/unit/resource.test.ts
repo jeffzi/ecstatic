@@ -1,5 +1,6 @@
 import { assert, describe, expect, it } from "vitest";
 
+import { errorMessage } from "../../scripts/caught.js";
 import {
   component,
   createWorld,
@@ -15,7 +16,7 @@ function messageOfThrow(fn: () => unknown): string {
   try {
     fn();
   } catch (error) {
-    return error instanceof Error ? error.message : String(error);
+    return errorMessage(error);
   }
   throw new Error("expected the call to throw, but it returned");
 }

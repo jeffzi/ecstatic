@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, assert, describe, expect, it } from "vitest";
 
+import { errorMessage } from "../../scripts/caught.js";
 import { checkVersion, syncVersion } from "../../scripts/sync-version.js";
 import { VERSION } from "../../src/index.js";
 
@@ -26,6 +27,7 @@ const NPM_VERSION_TIMEOUT_MS = 60_000;
 const VERSION_SCRIPT_FILES = [
   "package.json",
   join("scripts", "sync-version.ts"),
+  join("scripts", "entry.ts"),
   TS_VERSION_FILE,
   GO_VERSION_FILE,
 ];
@@ -75,7 +77,7 @@ function failureMessage(action: () => void): string {
   try {
     action();
   } catch (error) {
-    return error instanceof Error ? error.message : String(error);
+    return errorMessage(error);
   }
   throw new Error("expected the action to throw");
 }

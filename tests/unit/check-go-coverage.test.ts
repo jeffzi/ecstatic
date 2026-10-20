@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { errorMessage } from "../../scripts/caught.js";
 import { checkGoCoverage } from "../../scripts/check-go-coverage.js";
 import { packageBin } from "../package-bin.js";
 
@@ -65,7 +66,7 @@ function failureMessage(path: string): string | undefined {
   try {
     checkGoCoverage(path);
   } catch (error) {
-    return error instanceof Error ? error.message : String(error);
+    return errorMessage(error);
   }
   return undefined;
 }

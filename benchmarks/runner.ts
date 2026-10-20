@@ -16,6 +16,8 @@ import { dirname, join } from "node:path";
 
 import { bench } from "mitata";
 
+import { errorMessage } from "../scripts/caught.js";
+
 // ---------------------------------------------------------------------------
 // Engines and argument parsing
 // ---------------------------------------------------------------------------
@@ -406,7 +408,7 @@ export function selectBenchmarks(names: readonly string[], filter?: string): rea
   try {
     pattern = new RegExp(filter);
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = errorMessage(error);
     throw new UsageError(`invalid filter '${filter}': ${reason}`);
   }
 

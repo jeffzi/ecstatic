@@ -36,6 +36,7 @@ import { fileURLToPath } from "node:url";
 
 import { do_not_optimize, run } from "mitata";
 
+import { errorMessage, isEnoent } from "../scripts/caught.js";
 import { sinkValue as accessSink } from "./access-bench.js";
 import { sinkValue as entitySink } from "./entity-bench.js";
 import { sinkValue as iterationSink } from "./iteration-bench.js";
@@ -111,10 +112,6 @@ async function runChild(benchName: string): Promise<void> {
 
 /** The child currently measuring, so an interrupt can take it down with us. */
 let activeChild: ReturnType<typeof spawn> | undefined;
-
-function isEnoent(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
 
 /**
  * Run one child to completion.
@@ -244,6 +241,6 @@ try {
     await runParent(args.engines, args.optimized, args.filter);
   }
 } catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(errorMessage(error));
   process.exitCode = error instanceof UsageError ? USAGE_EXIT : FAILURE_EXIT;
 }

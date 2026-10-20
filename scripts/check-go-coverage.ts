@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+
+import { isEntryScript } from "./entry.js";
 
 const DEFAULT_PROFILE = "coverage/go.out";
 const MINIMUM_PERCENT = 95;
@@ -100,6 +100,6 @@ export function checkGoCoverage(profilePath: string): void {
   }
 }
 
-if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+if (isEntryScript(import.meta.url)) {
   checkGoCoverage(process.argv[2] ?? DEFAULT_PROFILE);
 }
