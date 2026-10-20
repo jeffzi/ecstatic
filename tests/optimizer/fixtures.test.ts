@@ -20,6 +20,12 @@ const FIXTURES = readdirSync(FIXTURES_DIR, { recursive: true, encoding: "utf8" }
   .filter((fixture) => !fixture.startsWith(DIVERGENT))
   .toSorted();
 
+/**
+ * Each case loads two module graphs against a fresh registry; the first case in a worker also pays
+ * the cold transform of the runtime sources, which in a full parallel run can exceed the 5 s default.
+ */
+const CASE_TIMEOUT_MS = 30_000;
+
 /** Imports `file` against a fresh module registry and returns the trace its `scenario()` builds. */
 async function runScenario(file: string): Promise<unknown> {
   vi.resetModules();
@@ -35,12 +41,16 @@ describe("fixture corpus", () => {
     expect(FIXTURES).not.toHaveLength(0);
   });
 
-  it.each(FIXTURES)("%s: the golden's trace equals the input's", async (fixture) => {
-    const dir = join(FIXTURES_DIR, fixture);
-    const inputTrace = await runScenario(join(dir, INPUT_FILE));
+  it.each(FIXTURES)(
+    "%s: the golden's trace equals the input's",
+    async (fixture) => {
+      const dir = join(FIXTURES_DIR, fixture);
+      const inputTrace = await runScenario(join(dir, INPUT_FILE));
 
-    const goldenTrace = await runScenario(join(dir, "expected.ts.golden"));
+      const goldenTrace = await runScenario(join(dir, "expected.ts.golden"));
 
-    expect(goldenTrace).toStrictEqual(inputTrace);
-  });
+      expect(goldenTrace).toStrictEqual(inputTrace);
+    },
+    CASE_TIMEOUT_MS,
+  );
 });
