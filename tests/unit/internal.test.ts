@@ -9,10 +9,10 @@ import {
 } from "ecstatic/internal";
 import { describe, expect, it } from "vitest";
 
-import { disableOne, enableOne } from "../../src/entity/optional.js";
-import { resolveFilter } from "../../src/filter.js";
-import { matcherFor } from "../../src/matcher.js";
-import { assertShape } from "../../src/shape-guard.js";
+import { disableOne, enableOne } from "../../src/ecstatic/entity/optional.js";
+import { resolveFilter } from "../../src/ecstatic/filter.js";
+import { matcherFor } from "../../src/ecstatic/matcher.js";
+import { assertShape } from "../../src/ecstatic/shape-guard.js";
 
 describe("ecstatic/internal", () => {
   it.each([

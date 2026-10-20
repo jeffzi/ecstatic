@@ -44,7 +44,7 @@
     "prepublishOnly": "npm test && npm run check",
     "test": "vitest run --coverage",
     "test:types": "vitest run --project types",
-    "version": "tsx scripts/sync-version.ts && git add src/version.ts"
+    "version": "tsx scripts/sync-version.ts && git add src/ecstatic/version.ts"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.0",

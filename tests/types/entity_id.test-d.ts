@@ -8,7 +8,7 @@ import {
   type EntityId,
   register,
   spawn,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 import { Health, Position } from "./_fixtures.js";
 
 describe("EntityId", () => {

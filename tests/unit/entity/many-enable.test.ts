@@ -15,7 +15,7 @@ import {
   register,
   spawn,
   spawnMany,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 import { rowOf } from "../fixtures.js";
 
 const { ManyPosition: Position } = components({ ManyPosition: { x: 0, y: 0 } });

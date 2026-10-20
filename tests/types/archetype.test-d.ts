@@ -1,7 +1,7 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import type { ArchetypeDescriptor, ComponentDescriptor } from "../../src/archetype.js";
-import { archetype, createWorld, register, spawn } from "../../src/index.js";
+import type { ArchetypeDescriptor, ComponentDescriptor } from "../../src/ecstatic/archetype.js";
+import { archetype, createWorld, register, spawn } from "../../src/ecstatic/index.js";
 import { Health, Position, Velocity } from "./_fixtures.js";
 
 describe("archetype", () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { alive, archetype, components, type EntityId, spawn } from "../../../src/index.js";
-import { createWorld, register } from "../../../src/world.js";
+import { alive, archetype, components, type EntityId, spawn } from "../../../src/ecstatic/index.js";
+import { createWorld, register } from "../../../src/ecstatic/world.js";
 
 const { AliveTestPosition: Position } = components({
   AliveTestPosition: { x: 0, y: 0 },

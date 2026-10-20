@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import type { EntityId } from "../../src/index.js";
+import type { EntityId } from "../../src/ecstatic/index.js";
 import {
   archetype,
   countSources,
@@ -11,7 +11,7 @@ import {
   register,
   relation,
   spawn,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 import { Position, Shield, Stunned } from "./_fixtures.js";
 
 const PureRel = relation("QSTd_Pure");

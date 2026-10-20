@@ -7,7 +7,7 @@ import {
   initialEntityId,
   MAX_GEN,
   MAX_INDEX,
-} from "../../src/entity-id.js";
+} from "../../src/ecstatic/entity-id.js";
 
 describe("generational IDs", () => {
   it("uses 20 index bits and 10 generation bits", () => {

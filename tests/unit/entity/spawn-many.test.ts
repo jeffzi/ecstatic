@@ -1,6 +1,6 @@
 import { assert, describe, expect, it } from "vitest";
 
-import { MAX_INDEX } from "../../../src/entity-id.js";
+import { MAX_INDEX } from "../../../src/ecstatic/entity-id.js";
 import {
   alive,
   archetype,
@@ -8,8 +8,8 @@ import {
   despawn,
   type EntityId,
   spawnMany,
-} from "../../../src/index.js";
-import { createWorld, register } from "../../../src/world.js";
+} from "../../../src/ecstatic/index.js";
+import { createWorld, register } from "../../../src/ecstatic/world.js";
 
 const { SpawnManyTestPosition: Position } = components({
   SpawnManyTestPosition: { x: 0, y: 0 },

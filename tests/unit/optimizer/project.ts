@@ -36,10 +36,7 @@ export const RUNTIME_TSCONFIG = `{
   "include": ["**/*.ts"]
 }`;
 
-const REPO_SOURCES = fileURLToPath(new URL("../../../src/", import.meta.url));
-
-/** The bundler plugin's directory under `src/`, which the runtime build leaves out. */
-const PLUGIN_DIR = "plugin";
+const RUNTIME_SOURCES = fileURLToPath(new URL("../../../src/ecstatic/", import.meta.url));
 
 const written: string[] = [];
 
@@ -88,8 +85,13 @@ export function removeProjects(): void {
 }
 
 /**
- * The repository's runtime sources as a project: its `src/` without the bundler plugin, a tsconfig
- * holding {@link RUNTIME_TSCONFIG}, and a manifest named `ecstatic`, plus `extra`.
+ * The repository's runtime laid out as the package lays it out: the runtime sources from
+ * `src/ecstatic/` copied at the same relative path in the project, beside a tsconfig holding
+ * {@link RUNTIME_TSCONFIG} and a manifest named `ecstatic`.
+ *
+ * @param extra - Files added to the project, keyed by slash-separated path; an entry replaces a
+ *   runtime or generated file at the same path.
+ * @returns The project's files keyed by slash-separated path, ready for {@link writeProject}.
  */
 export function runtimeProject(
   extra: Readonly<Record<string, string>> = {},
@@ -98,10 +100,13 @@ export function runtimeProject(
     "tsconfig.json": RUNTIME_TSCONFIG,
     "package.json": `{"name": "ecstatic", "type": "module"}`,
   };
-  const sources = readdirSync(REPO_SOURCES, { recursive: true, encoding: "utf8" });
+  const sources = readdirSync(RUNTIME_SOURCES, { recursive: true, encoding: "utf8" });
   for (const rel of sources) {
-    if (!rel.endsWith(".ts") || rel.startsWith(PLUGIN_DIR + sep)) continue;
-    files[`src/${rel.split(sep).join("/")}`] = readFileSync(join(REPO_SOURCES, rel), "utf8");
+    if (!rel.endsWith(".ts")) continue;
+    files[`src/ecstatic/${rel.split(sep).join("/")}`] = readFileSync(
+      join(RUNTIME_SOURCES, rel),
+      "utf8",
+    );
   }
   return { ...files, ...extra };
 }

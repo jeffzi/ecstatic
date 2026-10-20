@@ -13,7 +13,7 @@ import {
   relation,
   set,
   spawn,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 
 // Use unique prefixes to avoid collisions with other test files
 const { AccessPos: Position } = components({

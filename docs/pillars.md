@@ -250,18 +250,20 @@ The runtime never reads wall clock, randomness, hash order, or platform state. F
 whatever the engine gives — no fixed-point promise; that is the game's concern.
 
 Enforcement: lint restrictions on nondeterminism sources (`Math.random`, `Date.now`, `performance`,
-timers) in `src/`, plus a replay test that drives the same op sequence into two independently
-created worlds and asserts identical ID and iteration-order traces.
+timers) in `src/ecstatic/`, plus a replay test that drives the same op sequence into two
+independently created worlds and asserts identical ID and iteration-order traces.
 
 ## 13. Portable: runs wherever JavaScript does
 
-`src/` uses only ECMAScript — no Node builtins, no `process`, no DOM. One build serves browsers,
-Node, workers, and edge runtimes; client simulation code is reusable on the server unchanged.
+`src/ecstatic/` uses only ECMAScript — no Node builtins, no `process`, no DOM. One build serves
+browsers, Node, workers, and edge runtimes; client simulation code is reusable on the server
+unchanged. The bundler plugin under `src/plugin/` runs at build time on Node and is outside this
+pillar.
 
 Debug checks strip via a bundler `define` of `NDEBUG`, or switch off when `globalThis.NDEBUG` is set
 before the first import (pillar 5). No runtime-specific opt-out mechanism exists.
 
-Enforcement: `tsconfig.build.json` sets `types: []` so `src/` typechecks against pure ES with no
-`@types/node`; oxlint restricts Node globals, Node imports, and nondeterminism sources in `src/`;
-and a portability test bundles `src/index.ts` with esbuild for a browser target and runs it in a
-bare `node:vm` context (no `process`, no Node builtins).
+Enforcement: `tsconfig.build.json` sets `types: []` so `src/ecstatic/` typechecks against pure ES
+with no `@types/node`; oxlint restricts Node globals, Node imports, and nondeterminism sources in
+`src/ecstatic/`; and a portability test bundles `src/ecstatic/index.ts` with esbuild for a browser
+target and runs it in a bare `node:vm` context (no `process`, no Node builtins).

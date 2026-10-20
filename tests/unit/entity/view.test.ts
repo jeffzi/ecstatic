@@ -12,7 +12,7 @@ import {
   register,
   set,
   spawn,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 
 const { ViewTestPosition: Position } = components({
   ViewTestPosition: { x: 0, y: 0 },

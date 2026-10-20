@@ -1,7 +1,12 @@
 import { assert, describe, expect, it } from "vitest";
 
-import { entityIndex, initialEntityId, MAX_GEN, MAX_INDEX } from "../../../src/entity-id.js";
-import { ERROR_STALE_ENTITY_ID } from "../../../src/errors.js";
+import {
+  entityIndex,
+  initialEntityId,
+  MAX_GEN,
+  MAX_INDEX,
+} from "../../../src/ecstatic/entity-id.js";
+import { ERROR_STALE_ENTITY_ID } from "../../../src/ecstatic/errors.js";
 import {
   alive,
   archetype,
@@ -12,8 +17,8 @@ import {
   ref,
   spawn,
   spawnMany,
-} from "../../../src/index.js";
-import { createWorld, register } from "../../../src/world.js";
+} from "../../../src/ecstatic/index.js";
+import { createWorld, register } from "../../../src/ecstatic/world.js";
 
 const { DespawnTestPosition: Position } = components({
   DespawnTestPosition: { x: 0, y: 0 },

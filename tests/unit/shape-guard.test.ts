@@ -1,10 +1,10 @@
 import { assert, describe, expect, it } from "vitest";
 
-import { type ArchetypeDescriptor, archetype } from "../../src/archetype.js";
-import { type ComponentDescriptor, component, ref, u8 } from "../../src/component.js";
-import { relation } from "../../src/relation.js";
-import { assertShape } from "../../src/shape-guard.js";
-import { createWorld, register, type Storage } from "../../src/world.js";
+import { type ArchetypeDescriptor, archetype } from "../../src/ecstatic/archetype.js";
+import { type ComponentDescriptor, component, ref, u8 } from "../../src/ecstatic/component.js";
+import { relation } from "../../src/ecstatic/relation.js";
+import { assertShape } from "../../src/ecstatic/shape-guard.js";
+import { createWorld, register, type Storage } from "../../src/ecstatic/world.js";
 
 const Position = component("Position", { x: 0, y: 0 });
 const Shield = component("Shield", { hp: 0 });

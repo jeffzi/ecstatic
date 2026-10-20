@@ -17,7 +17,7 @@ interface VmEcs {
 
 async function buildBundle(define?: Record<string, string>): Promise<BuildResult> {
   return build({
-    entryPoints: ["src/index.ts"],
+    entryPoints: ["src/ecstatic/index.ts"],
     bundle: true,
     platform: "browser",
     format: "iife",

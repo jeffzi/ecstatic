@@ -136,7 +136,7 @@ export interface Site {
   readonly declarationFiles: string[];
   /**
    * The ecstatic package root whose runtime declares the called function, in the file system's own
-   * spelling: the `src/debug.ts` a rewrite copies `DEBUG` from is under it.
+   * spelling: the `src/ecstatic/debug.ts` a rewrite copies `DEBUG` from is under it.
    */
   readonly root: string;
   readonly pos: Position;

@@ -1,8 +1,8 @@
 import { assert, describe, expect, it } from "vitest";
 
-import { MAX_INDEX } from "../../../src/entity-id.js";
-import { archetype, components, ref, spawn } from "../../../src/index.js";
-import { createWorld, register } from "../../../src/world.js";
+import { MAX_INDEX } from "../../../src/ecstatic/entity-id.js";
+import { archetype, components, ref, spawn } from "../../../src/ecstatic/index.js";
+import { createWorld, register } from "../../../src/ecstatic/world.js";
 import { rowOf } from "../fixtures.js";
 
 const { SpawnTestPosition: Position } = components({

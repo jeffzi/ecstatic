@@ -1,6 +1,6 @@
 import { assert, describe, expect, it } from "vitest";
 
-import { resolveFilter, TRIVIAL_MATCHER } from "../../src/filter.js";
+import { resolveFilter, TRIVIAL_MATCHER } from "../../src/ecstatic/filter.js";
 import {
   archetype,
   component,
@@ -14,9 +14,9 @@ import {
   spawn,
   spawnMany,
   u8,
-} from "../../src/index.js";
-import { type Matcher, matcherFor } from "../../src/matcher.js";
-import type { TypedArray } from "../../src/world.js";
+} from "../../src/ecstatic/index.js";
+import { type Matcher, matcherFor } from "../../src/ecstatic/matcher.js";
+import type { TypedArray } from "../../src/ecstatic/world.js";
 
 const {
   ContractPosition: Position,

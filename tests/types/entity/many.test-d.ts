@@ -7,7 +7,7 @@ import {
   type EntityId,
   register,
   spawnMany,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 import { Position, Velocity } from "../_fixtures.js";
 
 describe("spawnMany", () => {

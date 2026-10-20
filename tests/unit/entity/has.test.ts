@@ -11,7 +11,7 @@ import {
   hasAny,
   register,
   spawn,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 
 const { HasPosition: Position } = components({ HasPosition: { x: 0, y: 0 } });
 const { HasStunned: Stunned } = components({ HasStunned: {} });

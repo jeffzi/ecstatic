@@ -15,7 +15,7 @@ import {
   spawn,
   type Tag,
   u8,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 
 interface Handle {
   readonly __handle: unique symbol;

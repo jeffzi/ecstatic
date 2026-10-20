@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { component, components, type FieldDefault } from "../../src/component.js";
+import { component, components, type FieldDefault } from "../../src/ecstatic/component.js";
 import { asMutableDescriptor } from "./fixtures.js";
 
 describe("components", () => {

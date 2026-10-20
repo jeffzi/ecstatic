@@ -1,9 +1,9 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import type { ArchetypeDescriptor } from "../../src/archetype.js";
-import type { ComponentDescriptor } from "../../src/component.js";
-import type { OptionalsOf } from "../../src/index.js";
-import { archetype } from "../../src/index.js";
+import type { ArchetypeDescriptor } from "../../src/ecstatic/archetype.js";
+import type { ComponentDescriptor } from "../../src/ecstatic/component.js";
+import type { OptionalsOf } from "../../src/ecstatic/index.js";
+import { archetype } from "../../src/ecstatic/index.js";
 import { Position, Shield, Stunned } from "./_fixtures.js";
 
 describe("archetype optionals typing", () => {

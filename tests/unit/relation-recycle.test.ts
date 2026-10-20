@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { entityIndex } from "../../src/entity-id.js";
+import { entityIndex } from "../../src/ecstatic/entity-id.js";
 import {
   archetype,
   components,
@@ -13,7 +13,7 @@ import {
   register,
   relation,
   spawn,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 
 const { RecycleSpec_Comp } = components({ RecycleSpec_Comp: { x: 0 } });
 

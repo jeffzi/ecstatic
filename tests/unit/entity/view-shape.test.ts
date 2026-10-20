@@ -3,7 +3,7 @@ import { runInThisContext } from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
-import type { EachViewOf } from "../../../src/entity/each.js";
+import type { EachViewOf } from "../../../src/ecstatic/entity/each.js";
 import {
   archetype,
   components,
@@ -12,7 +12,7 @@ import {
   query,
   register,
   spawn,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 
 // Every field in this file is a plain number (one column array kind), so the
 // accessors' element loads stay monomorphic and only the column lookup can

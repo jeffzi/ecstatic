@@ -20,7 +20,7 @@ describe("DEBUG", () => {
   });
 
   it("is true when no NDEBUG global is defined #checked", async () => {
-    const { DEBUG } = await import("../../src/debug.js");
+    const { DEBUG } = await import("../../src/ecstatic/debug.js");
 
     expect(DEBUG).toBe(true);
   });
@@ -28,7 +28,7 @@ describe("DEBUG", () => {
   it("is false when globalThis.NDEBUG is truthy", async () => {
     vi.stubGlobal("NDEBUG", true);
 
-    const { DEBUG } = await import("../../src/debug.js");
+    const { DEBUG } = await import("../../src/ecstatic/debug.js");
 
     expect(DEBUG).toBe(false);
   });

@@ -8,8 +8,8 @@ import {
   getResource,
   resetResource,
   setResource,
-} from "../../src/index.js";
-import { getResourceMeta, resource } from "../../src/resource.js";
+} from "../../src/ecstatic/index.js";
+import { getResourceMeta, resource } from "../../src/ecstatic/resource.js";
 
 /** Message of the error `fn` throws; throws itself when `fn` completes. */
 function messageOfThrow(fn: () => unknown): string {

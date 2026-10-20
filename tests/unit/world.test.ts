@@ -1,7 +1,7 @@
 import { assert, describe, expect, it } from "vitest";
 
-import { archetype, components, i32, ref } from "../../src/index.js";
-import { createWorld, getStorage, register } from "../../src/world.js";
+import { archetype, components, i32, ref } from "../../src/ecstatic/index.js";
+import { createWorld, getStorage, register } from "../../src/ecstatic/world.js";
 
 // Use WorldTest-prefixed names to avoid any collision with other spec files.
 const { WorldTestPosition: Position } = components({

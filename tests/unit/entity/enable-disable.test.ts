@@ -14,7 +14,7 @@ import {
   register,
   relation,
   spawn,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 import { rowOf } from "../fixtures.js";
 
 const { EnDisPosition: Position } = components({

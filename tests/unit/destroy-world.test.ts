@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { alive, archetype, components, destroyWorld, getStorage, spawn } from "../../src/index.js";
-import { createWorld, register } from "../../src/world.js";
+import {
+  alive,
+  archetype,
+  components,
+  destroyWorld,
+  getStorage,
+  spawn,
+} from "../../src/ecstatic/index.js";
+import { createWorld, register } from "../../src/ecstatic/world.js";
 
 const { DestroyWorldTestPosition: Position } = components({
   DestroyWorldTestPosition: { x: 0, y: 0 },

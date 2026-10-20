@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import type { ComponentDescriptor } from "../../src/archetype.js";
+import type { ComponentDescriptor } from "../../src/ecstatic/archetype.js";
 import {
   Archetype,
   type ComponentsOf,
@@ -12,7 +12,7 @@ import {
   spawn,
   type Storage,
   type With,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 import { Health, Position, Shield, Stunned, Velocity } from "./_fixtures.js";
 
 class Ship extends Archetype([Position, Health], [Shield, Stunned]) {}

@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, describe, expect, it } from "vitest";
@@ -24,6 +24,27 @@ function compilerOptions(text: string): Record<string, unknown> {
   return Object.fromEntries(Object.entries(options).map(([key, value]) => [key, lowered(value)]));
 }
 
+/** Every runtime module of the repository, keyed by its slash-separated path from the root. */
+function repositoryRuntime(): Record<string, string> {
+  const runtime = join(REPO_ROOT, "src", "ecstatic");
+  const modules = readdirSync(runtime, { recursive: true, encoding: "utf8" }).filter((rel) =>
+    rel.endsWith(".ts"),
+  );
+  return Object.fromEntries(
+    modules.map((rel) => [
+      `src/ecstatic/${rel.split(sep).join("/")}`,
+      readFileSync(join(runtime, rel), "utf8"),
+    ]),
+  );
+}
+
+/** The entries of `files` under `src/ecstatic/`. */
+function runtimeSources(files: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(files).filter(([rel]) => rel.startsWith("src/ecstatic/")),
+  );
+}
+
 function repositoryConfig(name: string): string {
   return readFileSync(join(REPO_ROOT, name), "utf8");
 }
@@ -40,15 +61,18 @@ describe("writeProject", () => {
 });
 
 describe("runtimeProject", () => {
-  it("holds the runtime sources without the bundler plugin, plus the extra files", () => {
+  it("lays the runtime sources out as the package does, without the bundler plugin, plus the extra files", () => {
     const files = runtimeProject({ "app/main.ts": "export {};\n" });
 
-    const plugin = Object.keys(files).filter((rel) => rel.startsWith("src/plugin/"));
+    const outsideRuntime = Object.keys(files).filter(
+      (rel) => rel.startsWith("src/") && !rel.startsWith("src/ecstatic/"),
+    );
 
-    expect(files["src/index.ts"]).toBe(readFileSync(join(REPO_ROOT, "src", "index.ts"), "utf8"));
+    expect(runtimeSources(files)).toStrictEqual(repositoryRuntime());
+    expect(JSON.parse(files["package.json"] ?? "{}")).toMatchObject({ name: "ecstatic" });
     expect(files["app/main.ts"]).toBe("export {};\n");
     expect(files["tsconfig.json"]).toBe(RUNTIME_TSCONFIG);
-    expect(plugin).toStrictEqual([]);
+    expect(outsideRuntime).toStrictEqual([]);
   });
 
   it("mirrors the build's compiler options, type-checking only", () => {

@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import { type Component, component } from "../../src/index.js";
+import { type Component, component } from "../../src/ecstatic/index.js";
 
 describe("component", () => {
   it("returns Component<N, T> with correct name and fields", () => {

@@ -14,7 +14,7 @@ import {
   spawn,
   spawnMany,
   u8,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 
 const { EachTestPosition: Position } = components({
   EachTestPosition: { x: 0, y: 0 },

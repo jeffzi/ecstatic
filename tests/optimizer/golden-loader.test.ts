@@ -61,8 +61,8 @@ async function loadModule(id: string): Promise<unknown> {
 describe("goldenLoader", () => {
   describe("when a golden imports the runtime", () => {
     it.each([
-      { source: "ecstatic", expected: join(REPO_ROOT, "src", "index.ts") },
-      { source: "ecstatic/internal", expected: join(REPO_ROOT, "src", "internal.ts") },
+      { source: "ecstatic", expected: join(REPO_ROOT, "src", "ecstatic", "index.ts") },
+      { source: "ecstatic/internal", expected: join(REPO_ROOT, "src", "ecstatic", "internal.ts") },
     ])("resolves $source to its source file", ({ source, expected }) => {
       const importer = join(createTempDir(), "expected.ts.golden");
 

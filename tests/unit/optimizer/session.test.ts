@@ -25,7 +25,7 @@ const execFileAsync = promisify(execFile);
 /** How long a case that starts its own compiler process may take on a slow CI runner. */
 const SPAWN_TIMEOUT_MS = 30_000;
 
-const DEBUG_SOURCE = runtimeProject()["src/debug.ts"] ?? "";
+const DEBUG_SOURCE = runtimeProject()["src/ecstatic/debug.ts"] ?? "";
 
 const PROJECT = {
   "tsconfig.json": appTsconfig(),
@@ -42,7 +42,7 @@ const PROJECT = {
   "node_modules/ecstatic/package.json":
     '{"name": "ecstatic", "type": "module", "types": "dist/index.d.ts"}',
   "node_modules/ecstatic/dist/index.d.ts": "export declare const DEBUG: boolean;\n",
-  "node_modules/ecstatic/src/debug.ts": DEBUG_SOURCE,
+  "node_modules/ecstatic/src/ecstatic/debug.ts": DEBUG_SOURCE,
 };
 
 /** A project whose tsconfig lets it emit, for the cases that must hold either way. */
@@ -247,7 +247,7 @@ describe("Session.notifyChanged", () => {
 
 describe("Session.parse", () => {
   it("parses a file outside the program", async () => {
-    const debug = file("node_modules/ecstatic/src/debug.ts");
+    const debug = file("node_modules/ecstatic/src/ecstatic/debug.ts");
     const view = await session.update();
 
     const parsed = await session.parse(debug);
@@ -329,7 +329,7 @@ describe("Session.close", () => {
       onTestFinished(() => {
         if (isAlive(pid)) process.kill(pid, "SIGKILL");
       });
-      await stalled.parse(file("node_modules/ecstatic/src/debug.ts", dir));
+      await stalled.parse(file("node_modules/ecstatic/src/ecstatic/debug.ts", dir));
       process.kill(pid, "SIGSTOP");
 
       const closing = stalled.close();
@@ -348,7 +348,7 @@ describe("Session.close", () => {
         if (isAlive(pid)) process.kill(pid, "SIGKILL");
       });
       process.kill(pid, "SIGSTOP");
-      const parsing = stalled.parse(file("node_modules/ecstatic/src/debug.ts", dir));
+      const parsing = stalled.parse(file("node_modules/ecstatic/src/ecstatic/debug.ts", dir));
 
       const closing = stalled.close();
 

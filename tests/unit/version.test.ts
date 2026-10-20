@@ -16,9 +16,9 @@ import { afterEach, assert, describe, expect, it } from "vitest";
 
 import { errorMessage } from "../../scripts/caught.js";
 import { checkVersion, syncVersion } from "../../scripts/sync-version.js";
-import { VERSION } from "../../src/index.js";
+import { VERSION } from "../../src/ecstatic/index.js";
 
-const TS_VERSION_FILE = join("src", "version.ts");
+const TS_VERSION_FILE = join("src", "ecstatic", "version.ts");
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const SUBPROCESS_TIMEOUT_MS = 60_000;
 
@@ -46,18 +46,18 @@ function writePackageVersion(dir: string, version: string): void {
   writeFileSync(join(dir, "package.json"), JSON.stringify({ version }));
 }
 
-/** Creates a temp project directory holding a package.json with `version` and an empty src/, and returns its path. */
+/** Creates a temp project directory holding a package.json with `version` and an empty src/ecstatic/, and returns its path. */
 function createProject(version: string): string {
   const dir = join(
     tmpdir(),
     `ecstatic-version-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
-  mkdirSync(join(dir, "src"), { recursive: true });
+  mkdirSync(join(dir, "src", "ecstatic"), { recursive: true });
   writePackageVersion(dir, version);
   return dir;
 }
 
-/** The text of the generated src/version.ts inside the project directory `dir`. */
+/** The text of the generated src/ecstatic/version.ts inside the project directory `dir`. */
 function readVersionFile(dir: string): string {
   return readFileSync(join(dir, TS_VERSION_FILE), "utf-8");
 }
@@ -106,7 +106,7 @@ describe("VERSION", () => {
 });
 
 describe("syncVersion", () => {
-  it("writes src/version.ts as a generated module exporting VERSION", () => {
+  it("writes src/ecstatic/version.ts as a generated module exporting VERSION", () => {
     const dir = createProject("1.2.3");
     syncVersion(dir);
     const content = readVersionFile(dir);
@@ -129,7 +129,7 @@ describe("syncVersion", () => {
 });
 
 describe("checkVersion", () => {
-  it("succeeds when src/version.ts matches package.json", () => {
+  it("succeeds when src/ecstatic/version.ts matches package.json", () => {
     const dir = createProject("1.0.0");
     syncVersion(dir);
 
@@ -138,7 +138,7 @@ describe("checkVersion", () => {
     }).not.toThrow();
   });
 
-  it("fails naming src/version.ts and both versions when they differ", () => {
+  it("fails naming src/ecstatic/version.ts and both versions when they differ", () => {
     const dir = createProject("1.0.0");
     syncVersion(dir);
     writePackageVersion(dir, "2.0.0");
@@ -147,7 +147,7 @@ describe("checkVersion", () => {
       checkVersion(dir);
     });
 
-    expect(message).toContain("src/version.ts");
+    expect(message).toContain("src/ecstatic/version.ts");
     expect(message).toContain("1.0.0");
     expect(message).toContain("2.0.0");
   });
@@ -197,7 +197,7 @@ describe("npm version", () => {
   const repos = trackTempDirs();
 
   it(
-    "stages a regenerated src/version.ts alone",
+    "stages a regenerated src/ecstatic/version.ts alone",
     () => {
       const dir = createVersionRepo();
       repos.push(dir);
@@ -212,7 +212,7 @@ describe("npm version", () => {
         cwd: dir,
         encoding: "utf8",
       });
-      expect(staged.split("\n").filter(Boolean)).toStrictEqual(["src/version.ts"]);
+      expect(staged.split("\n").filter(Boolean)).toStrictEqual(["src/ecstatic/version.ts"]);
       expect(readVersionFile(dir)).toContain('export const VERSION: string = "9.9.9"');
     },
     SUBPROCESS_TIMEOUT_MS,
@@ -223,7 +223,7 @@ describe("npm run check:version", () => {
   const repos = trackTempDirs();
 
   it(
-    "fails naming src/version.ts and both versions, leaving the file as it was",
+    "fails naming src/ecstatic/version.ts and both versions, leaving the file as it was",
     () => {
       const dir = createVersionRepo();
       repos.push(dir);
@@ -240,7 +240,7 @@ describe("npm run check:version", () => {
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain(
-        `src/version.ts has "${VERSION}" but package.json has "9.9.9"`,
+        `src/ecstatic/version.ts has "${VERSION}" but package.json has "9.9.9"`,
       );
       expect(readVersionFile(dir)).toBe(before);
     },

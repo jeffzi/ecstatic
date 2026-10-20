@@ -47,31 +47,28 @@
       }
     },
     {
-      "files": ["src/**"],
+      "files": ["src/ecstatic/**"],
       "rules": {
         "import/no-nodejs-modules": "error",
         "no-restricted-globals": [
           "error",
           {
             "globals": [
-              { "name": "process", "message": "Pillar 13: src/ must be platform-neutral." },
-              { "name": "Buffer", "message": "Pillar 13: src/ must be platform-neutral." },
-              { "name": "window", "message": "Pillar 13: src/ must be platform-neutral." },
-              { "name": "document", "message": "Pillar 13: src/ must be platform-neutral." },
-              { "name": "navigator", "message": "Pillar 13: src/ must be platform-neutral." },
-              { "name": "performance", "message": "Pillar 13: src/ must be platform-neutral." },
-              { "name": "crypto", "message": "Pillar 13: src/ must be platform-neutral." },
-              { "name": "setTimeout", "message": "Pillar 13: src/ must be platform-neutral." },
-              { "name": "setInterval", "message": "Pillar 13: src/ must be platform-neutral." },
-              { "name": "setImmediate", "message": "Pillar 13: src/ must be platform-neutral." },
-              { "name": "queueMicrotask", "message": "Pillar 13: src/ must be platform-neutral." },
-              {
-                "name": "requestAnimationFrame",
-                "message": "Pillar 13: src/ must be platform-neutral."
-              },
-              { "name": "require", "message": "Pillar 13: src/ must be platform-neutral." },
-              { "name": "__dirname", "message": "Pillar 13: src/ must be platform-neutral." },
-              { "name": "__filename", "message": "Pillar 13: src/ must be platform-neutral." }
+              { "name": "process", "message": "Pillar 13: runtime must be portable" },
+              { "name": "Buffer", "message": "Pillar 13: runtime must be portable" },
+              { "name": "window", "message": "Pillar 13: runtime must be portable" },
+              { "name": "document", "message": "Pillar 13: runtime must be portable" },
+              { "name": "navigator", "message": "Pillar 13: runtime must be portable" },
+              { "name": "performance", "message": "Pillar 13: runtime must be portable" },
+              { "name": "crypto", "message": "Pillar 13: runtime must be portable" },
+              { "name": "setTimeout", "message": "Pillar 13: runtime must be portable" },
+              { "name": "setInterval", "message": "Pillar 13: runtime must be portable" },
+              { "name": "setImmediate", "message": "Pillar 13: runtime must be portable" },
+              { "name": "queueMicrotask", "message": "Pillar 13: runtime must be portable" },
+              { "name": "requestAnimationFrame", "message": "Pillar 13: runtime must be portable" },
+              { "name": "require", "message": "Pillar 13: runtime must be portable" },
+              { "name": "__dirname", "message": "Pillar 13: runtime must be portable" },
+              { "name": "__filename", "message": "Pillar 13: runtime must be portable" }
             ]
           }
         ],
@@ -80,12 +77,12 @@
           {
             "object": "Math",
             "property": "random",
-            "message": "Pillar 12: no nondeterminism in src/."
+            "message": "Pillar 12: runtime must be deterministic"
           },
           {
             "object": "Date",
             "property": "now",
-            "message": "Pillar 12: no nondeterminism in src/."
+            "message": "Pillar 12: runtime must be deterministic"
           }
         ]
       }

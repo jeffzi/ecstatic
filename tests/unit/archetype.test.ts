@@ -1,7 +1,7 @@
 import { assert, describe, expect, it } from "vitest";
 
-import { Archetype, archetype } from "../../src/archetype.js";
-import { type ComponentDescriptor, component, components } from "../../src/component.js";
+import { Archetype, archetype } from "../../src/ecstatic/archetype.js";
+import { type ComponentDescriptor, component, components } from "../../src/ecstatic/component.js";
 import { asMutableDescriptor } from "./fixtures.js";
 
 describe("archetype", () => {

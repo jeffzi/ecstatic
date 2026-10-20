@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { assert, describe, expect, it, vi } from "vitest";
 
-import { DEBUG } from "../../src/index.js";
+import { DEBUG } from "../../src/ecstatic/index.js";
 
 const FIXTURE_DIR = fileURLToPath(new URL("fixtures/divergent/lying-cast", import.meta.url));
 

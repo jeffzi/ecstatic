@@ -10,8 +10,8 @@ const GOLDEN_SUFFIX = ".golden";
 
 /** The source file each runtime import a golden makes resolves to. */
 const RUNTIME_SOURCES: ReadonlyMap<string, string> = new Map([
-  ["ecstatic", fileURLToPath(new URL("../../src/index.ts", import.meta.url))],
-  ["ecstatic/internal", fileURLToPath(new URL("../../src/internal.ts", import.meta.url))],
+  ["ecstatic", fileURLToPath(new URL("../../src/ecstatic/index.ts", import.meta.url))],
+  ["ecstatic/internal", fileURLToPath(new URL("../../src/ecstatic/internal.ts", import.meta.url))],
 ]);
 
 /**

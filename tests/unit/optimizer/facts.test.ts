@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { archetype, component, createWorld, register, relation } from "../../../src/index.js";
+import {
+  archetype,
+  component,
+  createWorld,
+  register,
+  relation,
+} from "../../../src/ecstatic/index.js";
+import { assertShape } from "../../../src/ecstatic/shape-guard.js";
 import {
   addDeclarationFile,
   type ArchShape,
@@ -15,7 +22,6 @@ import {
   shapeKey,
   type Site,
 } from "../../../src/plugin/optimizer/facts.js";
-import { assertShape } from "../../../src/shape-guard.js";
 
 /** A call site of `each` with nothing recorded on it. */
 function emptySite(): Site {
