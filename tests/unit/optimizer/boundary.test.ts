@@ -2,19 +2,14 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import {
-  checkBoundaries,
-  forbidImports,
-  type Module,
-  OPTIMIZER_RULES,
-  readModules,
-} from "./boundary.js";
+import { checkBoundaries, type Module, OPTIMIZER_RULES, readModules } from "./boundary.js";
 import { removeProjects, writeProject } from "./project.js";
 
 const OPTIMIZER_DIR = fileURLToPath(new URL("../../../src/plugin/optimizer/", import.meta.url));
 
 const TSGO = "only compiler.ts reaches tsgo";
 const PURE = "facts.ts and plan.ts import nothing from typescript";
+const EMIT = "emit imports nothing from analysis";
 
 /** A compiler module reaching tsgo, as only it may. */
 const COMPILER: Module = {
@@ -147,6 +142,40 @@ describe("optimizer boundaries", () => {
         module: { path: "plan.ts", text: 'import { version } from "typescript";' },
         expected: [`plan.ts:1 imports typescript: ${PURE}`],
       },
+      {
+        name: "an emit module imports an analysis module",
+        module: { path: "emit/print.ts", text: 'import { typeOf } from "../analysis/types.js";' },
+        expected: [`emit/print.ts:1 imports ../analysis/types.js: ${EMIT}`],
+      },
+      {
+        name: "a nested emit module type-imports a nested analysis module",
+        module: {
+          path: "emit/loops/body.ts",
+          text: '\nimport type { Read } from "../../analysis/reads/field.js";',
+        },
+        expected: [`emit/loops/body.ts:2 imports ../../analysis/reads/field.js: ${EMIT}`],
+      },
+      {
+        name: "an emit module reaches analysis through a detour",
+        module: {
+          path: "emit/print.ts",
+          text: 'import { site } from "./../emit/../analysis/site.js";',
+        },
+        expected: [`emit/print.ts:1 imports ./../emit/../analysis/site.js: ${EMIT}`],
+      },
+      {
+        name: "an emit module re-exports from an analysis module",
+        module: { path: "emit/emit.ts", text: 'export type { Site } from "../analysis/site.js";' },
+        expected: [`emit/emit.ts:1 imports ../analysis/site.js: ${EMIT}`],
+      },
+      {
+        name: "an emit module dynamically imports an analysis module",
+        module: {
+          path: "emit/emit.ts",
+          text: 'const analysis = await import("../analysis/analyze.js");',
+        },
+        expected: [`emit/emit.ts:1 imports ../analysis/analyze.js: ${EMIT}`],
+      },
     ])("reports it when $name", ({ module, expected }) => {
       const violations = checkBoundaries(withModule(module), OPTIMIZER_RULES);
 
@@ -185,6 +214,24 @@ describe("optimizer boundaries", () => {
         name: "a module other than facts.ts and plan.ts imports typescript/ast",
         module: { path: "nodes.ts", text: 'import type { Node } from "typescript/ast";' },
       },
+      {
+        name: "an emit module imports its siblings and the shared modules",
+        module: {
+          path: "emit/emit.ts",
+          text: [
+            'import { names } from "./names.js";',
+            'import { lower } from "./loops/lowering.js";',
+            'import { printNode } from "../compiler.js";',
+            'import type { Fact } from "../facts.js";',
+            'import type { Plan } from "../plan.js";',
+            'import { analysisNote } from "../analysis-note.js";',
+          ].join("\n"),
+        },
+      },
+      {
+        name: "a module outside emit imports an analysis module",
+        module: { path: "pipeline.ts", text: 'import { analyze } from "./analysis/analyze.js";' },
+      },
     ])("reports nothing when $name", ({ module }) => {
       const violations = checkBoundaries(withModule(module), OPTIMIZER_RULES);
 
@@ -199,25 +246,6 @@ describe("optimizer boundaries", () => {
       const violations = checkBoundaries(modules, OPTIMIZER_RULES);
 
       expect(violations).toStrictEqual([`${path} is missing: the boundary rules name it`]);
-    });
-  });
-
-  describe("forbidImports", () => {
-    it("matches a relative import by its path from the root", () => {
-      const rule = forbidImports({
-        from: (path) => path.startsWith("emit/"),
-        imports: (imported) => imported.target?.startsWith("analysis/") === true,
-        reason: "emit reads no analysis",
-      });
-      const modules: Module[] = [
-        { path: "emit/print.ts", text: 'import { typeOf } from "../analysis/types.js";' },
-      ];
-
-      const violations = checkBoundaries(modules, [rule]);
-
-      expect(violations).toStrictEqual([
-        "emit/print.ts:1 imports ../analysis/types.js: emit reads no analysis",
-      ]);
     });
   });
 });
