@@ -20,9 +20,7 @@ export interface ArchetypeDescriptor<
   O extends readonly ComponentDescriptor[] = readonly ComponentDescriptor[],
 > {
   readonly id: number;
-  /** Read-only even when `C` is a mutable array: the shape is fixed once the archetype exists. */
   readonly components: Readonly<C>;
-  /** Read-only even when `O` is a mutable array: the shape is fixed once the archetype exists. */
   readonly optionals: Readonly<O>;
   readonly componentByName: Map<string, ComponentDescriptor>;
   readonly componentLookup: Set<ComponentDescriptor>;
@@ -328,11 +326,10 @@ function validateArchetype(
 /**
  * Construct an archetype descriptor with all required fields and lookups.
  *
- * @param required - Already-validated required components; the descriptor keeps its own copy, so
- *   a caller mutating its array cannot change the shape of an archetype or its storages. The copy
- *   is not frozen: a frozen array makes spawn and despawn allocate.
+ * @param required - Already-validated required components, copied but not frozen: a frozen array
+ *   makes spawn and despawn allocate.
  * @param optionals - Already-validated optional components; the entry at
- *   position `i` is assigned presence bit `1 << i`. The descriptor keeps its own copy.
+ *   position `i` is assigned presence bit `1 << i`.
  * @returns A new descriptor with a fresh module-wide id and `archetype`
  *   pointing at itself; the caller is responsible for caching it.
  */
