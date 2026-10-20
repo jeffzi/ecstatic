@@ -79,8 +79,7 @@ export function scenario(): unknown {
               }
               switch (LadderStepRecord_2.x[i_2]) {
                   case 3: continue row;
-                  default:
-                      trace.push(`${LadderStepRecord_2.x[i_2]}:end`);
+                  default: trace.push(`${LadderStepRecord_2.x[i_2]}:end`);
               }
               trace.push(`${LadderStepRecord_2.x[i_2]}:after`);
           }

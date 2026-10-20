@@ -101,7 +101,6 @@ function anyNode(_node: Node): _node is Node {
 
 /** The loop a {@link Lowering} lowers the body of, and where it records its names and rules. */
 export interface LoopFrame {
-  /** The shape the loop is compiled against. */
   readonly shape: ArchShape;
   /** Whether the loop hoists the storage's arrays. */
   readonly mode: Mode;
@@ -128,9 +127,9 @@ export class Lowering {
   readonly #storage: string;
   readonly #row: string;
   readonly #uses = new Map<Node, ViewUse>();
-  /** The record local of each component the body touches, in the order it first touches them. */
+  /** The record local of each component the body touches, in the order its uses first name them. */
   readonly #records = new Map<string, string>();
-  /** The columns the body touches, keyed by component and field, in the order it first touches them. */
+  /** The columns the body touches, keyed by component and field, in the order its uses first name them. */
   readonly #columns = new Map<string, Column>();
   readonly #temps: string[] = [];
   /** The base name of every local the loop declares. */
@@ -149,7 +148,9 @@ export class Lowering {
   }
 
   /**
-   * Records the use whose node `table` maps, so {@link Lowering.lower} lowers that node.
+   * Records the use whose node `table` maps, so {@link Lowering.lower} lowers that node, and the
+   * record and column of its field. Collecting the uses in source order declares the records and
+   * columns in the order the body names them, whatever order the lowerings later reach them in.
    *
    * @param table - The file's node table.
    * @param use - The view use.
@@ -157,6 +158,7 @@ export class Lowering {
    */
   collect(table: NodeTable, use: ViewUse): void {
     this.#uses.set(tableNode(table, use.node, "view use", anyNode), use);
+    if (use.kind !== "id" && use.field !== "") this.#column(use);
   }
 
   /**
@@ -436,14 +438,7 @@ export class Lowering {
       ({ name, relation }) => name === use.comp && relation,
     );
     if (isRelation) this.note("relation-data-field");
-    const key = `${use.comp}\u0000${use.field}`;
-    let column = this.#columns.get(key);
-    if (column === undefined) {
-      const record = this.#record(use.comp);
-      const local = this.mode === "hoisted" ? this.#local(`${use.field}Column`) : undefined;
-      column = { record, field: use.field, local };
-      this.#columns.set(key, column);
-    }
+    const column = this.#column(use);
     return column.local === undefined
       ? member(createIdentifier(column.record), column.field)
       : createIdentifier(column.local);
@@ -559,6 +554,18 @@ export class Lowering {
     if (this.mode === "realloc-safe") return this.#storageArray("mask");
     this.#mask ??= this.#local("mask");
     return createIdentifier(this.#mask);
+  }
+
+  #column(use: ViewUse): Column {
+    const key = `${use.comp}\u0000${use.field}`;
+    let column = this.#columns.get(key);
+    if (column === undefined) {
+      const record = this.#record(use.comp);
+      const local = this.mode === "hoisted" ? this.#local(`${use.field}Column`) : undefined;
+      column = { record, field: use.field, local };
+      this.#columns.set(key, column);
+    }
+    return column;
   }
 
   #record(comp: string): string {

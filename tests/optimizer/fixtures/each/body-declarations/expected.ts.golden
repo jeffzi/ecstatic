@@ -40,7 +40,7 @@ export function scenario(): unknown {
               const half = {
                   of(v: number): number {
                       return v / 2;
-                  },
+                  }
               };
               const triple = (v: number): number => {
                   return v * 3;

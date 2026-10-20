@@ -28,10 +28,8 @@ export function scenario(): unknown {
           const MarginSpotRecord = storage_1.MarginSpot, MarginNoteRecord = storage_1.MarginNote;
           let value, present, value_1, value_2;
           for (let i = n - 1; i >= 0; i--) {
-              // oxlint-disable-next-line typescript/no-useless-default-assignment -- a default on a typed-array column is the lowering under test
               const x = MarginSpotRecord.x[i];
               trace.push(x);
-              // oxlint-disable-next-line typescript/strict-boolean-expressions -- testing an optional slot is the lowering under test
               if (((storage_1.mask[i] & 1) !== 0)) {
                   const {} = (((storage_1.mask[i] & 1) !== 0) ? 0 : void 0), first = ((value = MarginNoteRecord.first[i]) === void 0 ? (trace.push("first default"), ((present = ((storage_1.mask[i] & 1) !== 0), value_1 = 9, (present ? MarginNoteRecord.second : void 0)[i] = value_1)), 1) : value), second = ((value_2 = MarginNoteRecord.second[i]) === void 0 ? (trace.push("second default"), 2) : value_2);
                   trace.push(first, second);

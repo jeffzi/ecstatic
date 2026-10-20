@@ -40,7 +40,6 @@ export function scenario(): unknown {
           for (let i = n - 1; i >= 0; i--) {
               (value = MooringRopeRecord.slack[i], value = value + (1), MooringRopeRecord.slack[i] = value);
               trace.push(MooringRopeRecord.slack[i], (((storage_1.mask[i] & 1) !== 0) ? MooringChainRecord.length[i] : void 0));
-              // oxlint-disable-next-line typescript/strict-boolean-expressions -- testing an optional relation slot is the lowering under test
               if (((storage_1.mask[i] & 1) !== 0)) {
                   (present = ((storage_1.mask[i] & 1) !== 0), value_1 = (present ? MooringChainRecord.length : void 0)[i], value_1 = value_1 * (2), (present ? MooringChainRecord.length : void 0)[i] = value_1);
                   trace.push((((storage_1.mask[i] & 1) !== 0) ? MooringChainRecord.length : void 0)[i]);

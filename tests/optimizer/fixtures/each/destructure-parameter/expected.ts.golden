@@ -41,9 +41,7 @@ export function scenario(): unknown {
               let id = storage_1.entities[i], p = true, vx = SignPaceRecord.dx[i], dy = SignPaceRecord.dy[i];
               {
                   (value = SignSpotRecord.x[i], value = value + (vx), SignSpotRecord.x[i] = value);
-                  // oxlint-disable-next-line no-param-reassign -- parameter-pattern bindings staying assignable is the behavior under test
                   vx = 0;
-                  // oxlint-disable-next-line no-param-reassign -- parameter-pattern bindings staying assignable is the behavior under test
                   dy *= 2;
                   trace.push(ids.indexOf(id), SignSpotRecord.x[i], vx, dy);
               }
@@ -76,7 +74,6 @@ export function scenario(): unknown {
           for (let i_2 = n_2 - 1; i_2 >= 0; i_2--) {
               let first = ((value_1 = SignTallyRecord.first[i_2]) === void 0 ? fallback : value_1), second = ((value_2 = SignTallyRecord.second[i_2]) === void 0 ? first : value_2);
               {
-                  // oxlint-disable-next-line no-shadow -- a body name shadowing the one a parameter default reads is the behavior under test
                   const fallback = 200;
                   trace.push(first, second, fallback);
               }

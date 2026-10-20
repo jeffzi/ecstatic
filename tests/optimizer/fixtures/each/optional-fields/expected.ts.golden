@@ -50,7 +50,6 @@ export function scenario(): unknown {
           const WardShieldRecord = storage_1.WardShield;
           let present, value, present_1, value_1, present_2, value_2, present_3, value_3, present_4, value_4;
           for (let i = n - 1; i >= 0; i--) {
-              // oxlint-disable-next-line typescript/strict-boolean-expressions -- testing an optional slot is the lowering under test
               if (((storage_1.mask[i] & 1) !== 0)) {
                   (present = ((storage_1.mask[i] & 1) !== 0), value = (present ? WardShieldRecord.hp : void 0)[i], value = value - (1), (present ? WardShieldRecord.hp : void 0)[i] = value);
                   (present_1 = ((storage_1.mask[i] & 1) !== 0), (value_1 = (present_1 ? WardShieldRecord.hp : void 0)[i]) || (value_1 = 3, (present_1 ? WardShieldRecord.hp : void 0)[i] = value_1));
@@ -60,21 +59,18 @@ export function scenario(): unknown {
                   disable(storage, storage_1.entities[i], Ward);
               }
               try {
-                  // oxlint-disable-next-line typescript/no-non-null-assertion -- a non-null slot of a disabled optional is the read under test
                   trace.push((((storage_1.mask[i] & 1) !== 0) ? WardShieldRecord.hp : void 0)[i]);
               }
               catch (error) {
                   trace.push("read", nameOf(error));
               }
               try {
-                  // oxlint-disable-next-line typescript/no-non-null-assertion -- a non-null slot of a disabled optional is the write under test
                   (present_4 = ((storage_1.mask[i] & 1) !== 0), value_4 = 9, (present_4 ? WardShieldRecord.hp : void 0)[i] = value_4);
               }
               catch (error) {
                   trace.push("write", nameOf(error));
               }
               try {
-                  // oxlint-disable-next-line typescript/no-non-null-assertion -- a non-null slot of a disabled optional is the update under test
                   (((storage_1.mask[i] & 1) !== 0) ? WardShieldRecord.level : void 0)[i]++;
               }
               catch (error) {

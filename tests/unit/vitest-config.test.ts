@@ -13,6 +13,8 @@ const ROOT = resolve(import.meta.dirname, "../..");
 
 const SKIP_CHECKED = join(ROOT, "tests", "skip-checked.ts");
 
+const CORPUS_TEST = join(ROOT, "tests", "optimizer", "corpus.test.ts");
+
 const SHARED_OPTIONS = {
   allowOnly: false,
   requireAssertions: true,
@@ -78,6 +80,19 @@ describe("vitest config", () => {
     const checked = new Set(stdout.split(/\r?\n/));
     expect(typecheckTestFiles).not.toHaveLength(0);
     expect(typecheckTestFiles.filter((file) => !checked.has(file))).toStrictEqual([]);
+  });
+
+  it("runs the corpus test in the fixtures project only", async () => {
+    const holders = await Promise.all(
+      vitest.projects.map(async (project) => {
+        const { testFiles } = await project.globTestFiles();
+        return testFiles.includes(CORPUS_TEST) ? [project.name] : [];
+      }),
+    );
+
+    const names = holders.flat();
+
+    expect(names).toStrictEqual(["fixtures"]);
   });
 
   it("defines NDEBUG and skips #checked tests exactly in the ndebug projects", () => {

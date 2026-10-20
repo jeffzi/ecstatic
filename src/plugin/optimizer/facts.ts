@@ -420,7 +420,7 @@ const FIELD_KIND_CODES: { readonly [K in FieldKind]: string } = {
  * @param b - Second string.
  * @returns A negative number when `a` sorts first, otherwise 1 or 0.
  */
-function compareCodeUnits(a: string, b: string): number {
+export function compareCodeUnits(a: string, b: string): number {
   return a < b ? -1 : Number(a > b);
 }
 
@@ -506,7 +506,7 @@ export interface ReasonInfo {
 }
 
 /** Where the diagnostic writer substitutes a bail's detail in the text of a reason. */
-const DETAIL_PLACEHOLDER = "<detail>";
+export const DETAIL_PLACEHOLDER = "<detail>";
 
 // Codes are never reused: a reason that leaves the catalog leaves its code retired.
 const REASON_CATALOG: { readonly [R in Reason]: Omit<ReasonInfo, "id"> } = {

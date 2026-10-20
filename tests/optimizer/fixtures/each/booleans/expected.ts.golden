@@ -33,9 +33,7 @@ export function scenario(): unknown {
               trace.push((LampSwitchRecord.on[i] !== 0), !(LampSwitchRecord.on[i] !== 0));
               (value = !(LampSwitchRecord.on[i] !== 0), LampSwitchRecord.on[i] = (value === true ? 1 : 0));
               trace.push(((value_1 = true, LampSwitchRecord.on[i] = (value_1 === true ? 1 : 0), value_1)), ((LampSwitchRecord.on[i] !== 0) || (value_2 = false, LampSwitchRecord.on[i] = (value_2 === true ? 1 : 0), value_2)), ((LampSwitchRecord.on[i] !== 0) && (value_3 = false, LampSwitchRecord.on[i] = (value_3 === true ? 1 : 0), value_3)));
-              // oxlint-disable-next-line typescript/no-unnecessary-condition -- a nullish assignment to a boolean field is a form under test
               trace.push(((LampSwitchRecord.on[i] !== 0) && (value_4 = true, LampSwitchRecord.on[i] = (value_4 === true ? 1 : 0), value_4)), ((LampSwitchRecord.on[i] !== 0)));
-              // oxlint-disable-next-line typescript/strict-boolean-expressions -- testing an optional slot is the lowering under test
               if (((storage_1.mask[i] & 1) !== 0)) {
                   trace.push(((((storage_1.mask[i] & 1) !== 0) ? LampShadeRecord.open : void 0)[i] !== 0), (((storage_1.mask[i] & 1) !== 0) ? LampShadeRecord.tint : void 0)[i]);
                   (present = ((storage_1.mask[i] & 1) !== 0), value_5 = false, (present ? LampShadeRecord.open : void 0)[i] = (value_5 === true ? 1 : 0));

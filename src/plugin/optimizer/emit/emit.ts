@@ -13,6 +13,7 @@ import {
   type FunctionExpression,
   getSynthesizedDeepClone,
   type Node,
+  type NodeArray,
   NodeFlags,
   type SourceFile,
   type Statement,
@@ -130,7 +131,6 @@ export async function createEmitFile(
   return new File({ session, source, table, debug, options });
 }
 
-/** What a {@link File} rewrites, and with what. */
 interface FileParts {
   readonly session: Session;
   readonly source: SourceFile;
@@ -391,7 +391,7 @@ class Loop {
       const list = isVariableDeclarationList(node)
         ? lowering.declarationList(node, visit)
         : undefined;
-      return list ?? transplant.visit(node, visit) ?? visitEachChild(node, visit);
+      return list ?? transplant.visit(node, visit) ?? visitChildren(node, visit);
     };
     const [parameter] = callback.parameters;
     const parameters =
@@ -408,4 +408,52 @@ class Loop {
     if (parameters === undefined) return statements;
     return [letStatement(parameters), createBlock(statements, true)];
   }
+}
+
+/**
+ * Visits the children of `node`, keeping every list the visit rebuilds as free of a trailing
+ * comma as the source list was.
+ *
+ * The printer reads a list's trailing comma from positions: the list ends past its last element.
+ * The tree it prints carries a factory node's position as 0, so a rebuilt list whose last element
+ * the visit replaced would read as ending past it, and print a comma the source never had. Such a
+ * list is given the synthesized end -1, which reaches the printer as 0 as well. A source list with
+ * a trailing comma keeps its end, and prints its comma whether or not its last element was
+ * replaced.
+ *
+ * @param node - The node whose children to visit.
+ * @param visit - Visits each child.
+ * @returns `node` when the visit changed no child, else the updated node.
+ */
+function visitChildren(node: Node, visit: (node: Node) => Node): Node {
+  const updated = visitEachChild(node, visit);
+  if (updated === node) return updated;
+  const before = childLists(node);
+  const after = childLists(updated);
+  for (const [index, list] of after.entries()) {
+    const source = before[index];
+    if (list !== source && source?.hasTrailingComma !== true) {
+      // The visit built `list` afresh, so moving its end moves no position of the source tree.
+      Object.assign(list, { end: -1 });
+    }
+  }
+  return updated;
+}
+
+/**
+ * The child lists of `node`, in the order its children are visited.
+ *
+ * @param node - The node whose lists to collect.
+ * @returns The lists.
+ */
+function childLists(node: Node): NodeArray<Node>[] {
+  const lists: NodeArray<Node>[] = [];
+  node.forEachChild(
+    () => undefined,
+    (nodes) => {
+      lists.push(nodes);
+      return undefined;
+    },
+  );
+  return lists;
 }

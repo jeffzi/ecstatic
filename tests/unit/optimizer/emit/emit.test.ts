@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { shapeKey } from "../../../../src/plugin/optimizer/facts.js";
 import type { Mode } from "../../../../src/plugin/optimizer/plan.js";
+import { declarationCounts, ROW_LOOP } from "../printed.js";
 import { closeProject, projectPath, SPAWN_TIMEOUT_MS, writeProject } from "../project.js";
 import {
   CASE_PRELUDE,
@@ -13,18 +14,11 @@ import {
   rewriteAt,
 } from "./emit-project.js";
 
-/** Opens the row loop of an inlined each. */
-const ROW_LOOP = "for (let ";
-
 /** A shape-key constant of the preamble, capturing its name and the shape key it holds. */
 const SHAPE_KEY_CONSTANT = /^const (shapeKey\w*) = "([^"]*\|[^"]*)";$/gmu;
 
 /** The shape guard of a loop, capturing the name of the constant it checks the storage against. */
 const SHAPE_GUARD = /assertShape\(\w+, (\w+)\)/gu;
-
-/** A namespace import or a variable declaration, capturing the name it binds. */
-const DECLARED_NAME =
-  /(?:\bimport \* as |\b(?:const|let|var)\s+|,\s+)([A-Za-z_$][\w$]*)(?: =| from)/gu;
 
 let project: EmitProject;
 
@@ -56,15 +50,6 @@ function shapeKeyNames(text: string): Map<string, string> {
 /** The constant each shape guard in `text` checks its storage against, in order. */
 function guards(text: string): string[] {
   return [...text.matchAll(SHAPE_GUARD)].map(([, name = ""]) => name);
-}
-
-/** How many times `text` declares each name it declares. */
-function declarationCounts(text: string): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const [, name = ""] of text.matchAll(DECLARED_NAME)) {
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-  }
-  return counts;
 }
 
 /** Two `each` calls over Mover storages and one over a Statue storage, in a strict-mode file. */

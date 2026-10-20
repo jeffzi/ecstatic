@@ -15,6 +15,16 @@ export interface Debug {
 }
 
 /**
+ * The runtime's `DEBUG` module of an ecstatic package root.
+ *
+ * @param root - Directory of the ecstatic package root.
+ * @returns Absolute path of the root's `src/ecstatic/debug.ts`.
+ */
+export function debugPath(root: string): string {
+  return join(root, "src", "ecstatic", "debug.ts");
+}
+
+/**
  * Takes the initializer of the top-level `DEBUG` declaration in `root`'s `src/ecstatic/debug.ts`.
  *
  * @param session - Session that parses the file, which lies outside its program.
@@ -24,7 +34,7 @@ export interface Debug {
  *   initializer, naming it; or when the session is closed or its process exited.
  */
 export async function loadDebug(session: Pick<Session, "parse">, root: string): Promise<Debug> {
-  const path = join(root, "src", "ecstatic", "debug.ts");
+  const path = debugPath(root);
   const file = await session.parse(path);
   for (const statement of file.statements) {
     if (!isVariableStatement(statement)) continue;

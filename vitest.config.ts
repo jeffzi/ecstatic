@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 import { goldenLoader } from "./tests/optimizer/golden-loader.js";
 
@@ -76,7 +76,12 @@ export default defineConfig({
         resolve: SOURCE_RESOLVE,
         plugins: [goldenLoader()],
         define: { NDEBUG: "true" },
-        test: { name: "fixtures-ndebug", include: FIXTURE_TESTS },
+        test: {
+          name: "fixtures-ndebug",
+          include: FIXTURE_TESTS,
+          // The corpus test runs the optimizer in Node, where NDEBUG changes nothing.
+          exclude: [...configDefaults.exclude, "tests/optimizer/corpus.test.ts"],
+        },
       },
     ],
   },

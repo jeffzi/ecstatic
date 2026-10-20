@@ -38,7 +38,6 @@ export function scenario(): unknown {
           const FenceGateRecord = storage_1.FenceGate;
           let present, value, present_1, value_1, present_2, value_2, present_3, value_3;
           for (let i = n - 1; i >= 0; i--) {
-              // oxlint-disable-next-line typescript/strict-boolean-expressions -- testing an optional slot is the lowering under test
               if (!((storage_1.mask[i] & 1) !== 0))
                   continue;
               (present = ((storage_1.mask[i] & 1) !== 0), value = (disable(storage, storage_1.entities[i], Gate), 7), (present ? FenceGateRecord.hp : void 0)[i] = value);

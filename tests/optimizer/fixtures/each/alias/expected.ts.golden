@@ -49,18 +49,14 @@ export function scenario(): unknown {
               const body = true;
               (value = KeepBodyRecord.x[i] + 1, KeepBodyRecord.x[i] = value);
               trace.push((wall ? KeepWallRecord.hp[i] : void 0));
-              // oxlint-disable-next-line typescript/strict-boolean-expressions -- testing a held optional slot is the lowering under test
               if (wall) {
                   disable(storage, storage_1.entities[i], Wall);
                   (value_1 = (wall ? KeepWallRecord.hp : void 0)[i], value_1 = value_1 + (1), (wall ? KeepWallRecord.hp : void 0)[i] = value_1);
-                  // oxlint-disable-next-line typescript/no-unnecessary-condition -- comparing a held optional slot is the lowering under test
                   trace.push((wall ? KeepWallRecord.hp : void 0)[i], (!wall), (!wall), (!((storage_1.mask[i] & 1) !== 0)), KeepBodyRecord.x[i]);
               }
               else {
-                  // oxlint-disable-next-line typescript/strict-boolean-expressions, typescript/no-unnecessary-condition -- testing a held optional slot is the lowering under test
                   trace.push("open", (!wall), !wall);
               }
-              // oxlint-disable-next-line typescript/no-non-null-assertion -- a non-null alias of a disabled slot is the read under test
               const held = ((storage_1.mask[i] & 1) !== 0);
               try {
                   trace.push((held ? KeepWallRecord.hp : void 0)[i]);

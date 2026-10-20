@@ -44,7 +44,6 @@ export function scenario(): unknown {
               xColumn[i] *= 2;
               yColumn[i] ||= 7;
               yColumn[i] &&= yColumn[i] + 1;
-              // oxlint-disable-next-line typescript/no-unnecessary-condition -- a nullish assignment to a numeric field is a write form under test
               yColumn[i] ??= 0;
               dxColumn[i] = xColumn[i] - yColumn[i];
               reads[reads.length] = xColumn[i]++;
@@ -52,13 +51,10 @@ export function scenario(): unknown {
               reads[reads.length] = dxColumn[i]--;
               reads[reads.length] = --yColumn[i];
               reads[reads.length] = true;
-              // oxlint-disable-next-line typescript/no-unnecessary-condition, typescript/strict-boolean-expressions -- testing a required slot is the lowering under test
               if (true)
                   present += 1;
-              // oxlint-disable-next-line typescript/no-unnecessary-condition -- comparing a required slot with undefined is the lowering under test
               if (true)
                   present += 10;
-              // oxlint-disable-next-line typescript/no-unnecessary-condition, typescript/strict-boolean-expressions -- negating a required slot is the lowering under test
               if (!true)
                   present += 100;
           }

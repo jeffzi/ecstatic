@@ -54,7 +54,6 @@ export function scenario(): unknown {
               (value_2 = SwarmSpotRecord.x[i], value_2 = value_2 + (grow(5)), SwarmSpotRecord.x[i] = value_2);
               (value_3 = SwarmSpotRecord.y[i]) || (value_3 = grow(SwarmSpotRecord.x[i] + 1), SwarmSpotRecord.y[i] = value_3);
               (SwarmWingRecord.beat[i] !== 0) || (value_4 = grow(1) > 0, SwarmWingRecord.beat[i] = (value_4 === true ? 1 : 0));
-              // oxlint-disable-next-line typescript/strict-boolean-expressions -- testing an optional slot is the lowering under test
               if (((storage_1.mask[i] & 1) !== 0))
                   (present = ((storage_1.mask[i] & 1) !== 0), value_5 = (present ? SwarmStingRecord.hp : void 0)[i], value_5 = value_5 + (grow(3)), (present ? SwarmStingRecord.hp : void 0)[i] = value_5);
               grow(0);
