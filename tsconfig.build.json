@@ -10,5 +10,5 @@
     "sourceMap": true
   },
   "include": ["src"],
-  "exclude": ["tests", "**/*.test.ts"]
+  "exclude": ["tests", "**/*.test.ts", "src/plugin"]
 }
