@@ -40,8 +40,17 @@ const ANALYZE_MODULE = "../../../src/plugin/optimizer/analysis/analyze.js";
 /** The session module, as this file names it to mock it. */
 const SESSION_MODULE = "../../../src/plugin/optimizer/session.js";
 
-/** How long a watch build or a dev server may take to see a change on disk and act on it. */
+/** How long a dev server may take to see a change on disk and act on it. */
 const REBUILD_TIMEOUT_MS = 15_000;
+
+/**
+ * How long one build of a watch build may take. A rebuild scans and transforms every module again,
+ * so it gets the budget of the first build, which also starts the compiler process.
+ */
+const WATCH_BUILD_TIMEOUT_MS = SPAWN_TIMEOUT_MS;
+
+/** How long a watch build case may take to set up: two builds and the project around them. */
+const WATCH_SETUP_TIMEOUT_MS = 3 * WATCH_BUILD_TIMEOUT_MS;
 
 /** The main project's components with a field added to `Position`, which every shape key of it names. */
 const EDITED_COMPONENTS = `import { component } from "../src/ecstatic/index.js";
@@ -89,6 +98,8 @@ interface Probe {
   bundles: number;
   /** The message of each build error a watch build's watcher reported. */
   readonly errors: string[];
+  /** Each event a watch build's watcher reported, with the milliseconds since it started. */
+  readonly events: string[];
 }
 
 /**
@@ -105,6 +116,7 @@ function processProbe(before: ReadonlySet<number>): Probe {
     outputs: new Map(),
     bundles: 0,
     errors: [],
+    events: [],
     plugin: {
       name: "process-probe",
       enforce: "pre",
@@ -193,21 +205,36 @@ async function startWatchBuild(root: string, probe: Probe): Promise<{ close(): P
   const config = buildConfig(root, [ecstatic(), probe.plugin]);
   const output = await build({ ...config, build: { ...config.build, watch: {} } });
   if (!("close" in output)) throw new Error("the watch build returned no watcher");
+  const started = Date.now();
   output.on("event", (event) => {
+    probe.events.push(`${event.code} at ${Date.now() - started} ms`);
     if (event.code === "ERROR") probe.errors.push(event.error.message);
+  });
+  output.on("change", (id) => {
+    probe.events.push(`change of ${id} at ${Date.now() - started} ms`);
   });
   return output;
 }
 
-/** Waits until the build behind `probe` generated `count` bundles, naming any build error it hit. */
-async function waitForBundles(probe: Probe, count: number, timeout: number): Promise<void> {
-  await vi.waitFor(
-    () => {
-      expect(probe.errors).toStrictEqual([]);
-      expect(probe.bundles).toBeGreaterThanOrEqual(count);
-    },
-    { timeout },
-  );
+/** Waits until the watch build behind `probe` generated `count` bundles, naming every watcher event seen when it did not. */
+async function waitForBundles(probe: Probe, count: number): Promise<void> {
+  try {
+    await vi.waitFor(
+      () => {
+        expect(probe.errors).toStrictEqual([]);
+        expect(probe.bundles).toBeGreaterThanOrEqual(count);
+      },
+      { timeout: WATCH_BUILD_TIMEOUT_MS },
+    );
+  } catch (error) {
+    const seen = probe.events.join("; ");
+    throw new Error(
+      `the watch build generated ${probe.bundles} of ${count} bundles; events: ${seen}`,
+      {
+        cause: error,
+      },
+    );
+  }
 }
 
 async function waitUntilAllDead(processes: Iterable<number>): Promise<void> {
@@ -304,11 +331,10 @@ describe("ecstatic() for Vite", () => {
       watchRoot = createProject(mainProject());
       probe = processProbe(await runningProcesses());
       watcher = await startWatchBuild(watchRoot, probe);
-      // The first bundle waits on the compiler process starting, as every first build does.
-      await waitForBundles(probe, 1, SPAWN_TIMEOUT_MS);
+      await waitForBundles(probe, 1);
       writeFixture(projectPath(watchRoot, COMPONENTS_FILE), EDITED_COMPONENTS);
-      await waitForBundles(probe, 2, REBUILD_TIMEOUT_MS);
-    }, SPAWN_TIMEOUT_MS + REBUILD_TIMEOUT_MS);
+      await waitForBundles(probe, 2);
+    }, WATCH_SETUP_TIMEOUT_MS);
 
     afterAll(async () => {
       await watcher?.close();
@@ -344,11 +370,10 @@ describe("ecstatic() for Vite", () => {
       );
       probe = processProbe(await runningProcesses());
       watcher = await startWatchBuild(watchRoot, probe);
-      // The first bundle waits on the compiler process starting, as every first build does.
-      await waitForBundles(probe, 1, SPAWN_TIMEOUT_MS);
+      await waitForBundles(probe, 1);
       writeFixture(projectPath(watchRoot, SCHEMA_FILE), schemaSource(`x: 0, ${ADDED_FIELD}: 0`));
-      await waitForBundles(probe, 2, REBUILD_TIMEOUT_MS);
-    }, SPAWN_TIMEOUT_MS + REBUILD_TIMEOUT_MS);
+      await waitForBundles(probe, 2);
+    }, WATCH_SETUP_TIMEOUT_MS);
 
     afterAll(async () => {
       await watcher?.close();
