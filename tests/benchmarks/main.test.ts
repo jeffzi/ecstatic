@@ -16,6 +16,7 @@ import {
   COMPILE_TIMEOUT_MS,
   removeBenchmarkProjects,
 } from "./fixtures.js";
+import { requiresRealBun } from "./real-bun.js";
 
 const MAIN = join(REPO_ROOT, "benchmarks", "main.ts");
 const TSX = packageBin("tsx", "tsx");
@@ -33,8 +34,10 @@ const BENCH = "iteration/helper_call";
  * Whether to start real Bun children: wherever Bun is installed, and always on CI, which installs it,
  * so a CI runner without Bun fails the case instead of skipping it.
  */
-const RUN_UNDER_BUN =
-  spawnSync("bun", ["--version"]).status === 0 || process.env["CI"] !== undefined;
+const RUN_UNDER_BUN = requiresRealBun(
+  spawnSync("bun", ["--version"]).status === 0,
+  process.env["CI"],
+);
 /** Both engines, so an optimized run shows it compiles once per run, not once per engine. */
 const ENGINES = ["node", "bun"] as const;
 
