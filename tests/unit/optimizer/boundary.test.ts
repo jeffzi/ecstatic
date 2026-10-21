@@ -1,9 +1,15 @@
 import { fileURLToPath } from "node:url";
 
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { checkBoundaries, type Module, OPTIMIZER_RULES, readModules } from "./boundary.js";
-import { removeProjects, writeProject } from "./project.js";
+import {
+  type BoundaryChecker,
+  type Module,
+  OPTIMIZER_RULES,
+  openBoundaryChecker,
+  readModules,
+} from "./boundary.js";
+import { removeProjects, SPAWN_TIMEOUT_MS, writeProject } from "./project.js";
 
 const OPTIMIZER_DIR = fileURLToPath(new URL("../../../src/plugin/optimizer/", import.meta.url));
 
@@ -11,14 +17,29 @@ const TSGO = "only compiler.ts reaches tsgo";
 const PURE = "facts.ts and plan.ts import nothing from typescript";
 const EMIT = "emit imports nothing from analysis";
 
-/** A compiler module reaching tsgo, as only it may. */
+/** A compiler module reaching tsgo, as only it may, and re-exporting the API types others use. */
 const COMPILER: Module = {
   path: "compiler.ts",
   text: [
-    'import { API } from "typescript/sync";',
-    'import type { Checker } from "typescript/async";',
+    'import type { API } from "typescript/sync";',
+    'import type { Checker, Symbol } from "typescript/async";',
+    'import type { Node } from "typescript/ast";',
+    'export type { Node } from "typescript/ast";',
+    "export type {",
+    "  BuildOrchestrator,",
+    "  Checker,",
+    "  LanguageService,",
+    "  ModuleResolver,",
+    "  Printer,",
+    "  Project,",
+    "  RetainedSourceFile,",
+    "  Snapshot,",
+    "  Type,",
+    '} from "typescript/async";',
+    'export type { Project as SyncProject } from "typescript/sync";',
+    "export type CheckerSymbol = Symbol;",
     "export const typeOf = (checker: Checker, node: Node) => checker.getTypeAtLocation(node);",
-    "export const text = (node: Node) => printNode(node);",
+    "export const text = (api: API, node: Node) => api.printer.printNode(node);",
   ].join("\n"),
 };
 
@@ -29,19 +50,36 @@ const CLEAN: readonly Module[] = [
   { path: "plan.ts", text: 'import type { Fact } from "./facts.js";\n' },
 ];
 
-/** {@link CLEAN} with `module` added, or replacing the clean module at its path. */
-function withModule(module: Module): Module[] {
-  return [...CLEAN.filter((clean) => clean.path !== module.path), module];
+/** A module at `path` whose text is `lines` joined by newlines. */
+function source(path: string, ...lines: string[]): Module {
+  return { path, text: lines.join("\n") };
 }
 
-afterAll(removeProjects);
+/** {@link CLEAN} without the module at `path`. */
+function without(path: string): Module[] {
+  return CLEAN.filter((clean) => clean.path !== path);
+}
+
+/** {@link CLEAN} with `module` added, or replacing the clean module at its path. */
+function withModule(module: Module): Module[] {
+  return [...without(module.path), module];
+}
+
+let boundaries: BoundaryChecker;
+
+beforeAll(() => {
+  boundaries = openBoundaryChecker();
+}, SPAWN_TIMEOUT_MS);
+
+afterAll(() => {
+  boundaries.close();
+  removeProjects();
+});
 
 describe("optimizer boundaries", () => {
   describe("over the optimizer sources", () => {
     it("finds no violation", () => {
-      const modules = readModules(OPTIMIZER_DIR);
-
-      const violations = checkBoundaries(modules, OPTIMIZER_RULES);
+      const violations = boundaries.checkDirectory(OPTIMIZER_DIR, OPTIMIZER_RULES);
 
       expect(violations).toStrictEqual([]);
     });
@@ -74,50 +112,120 @@ describe("optimizer boundaries", () => {
       },
       {
         name: "a nested module calls a checker method",
-        module: {
-          path: "analysis/types.ts",
-          text: "export const typeOf = (c, n) => c.getTypeAtLocation(n);",
-        },
-        expected: [`analysis/types.ts:1 calls getTypeAtLocation: ${TSGO}`],
-      },
-      {
-        name: "a module calls a checker method on any variable",
-        module: {
-          path: "nodes.ts",
-          text: "export const expected = (c, n) => c.getContextualType(n);",
-        },
-        expected: [`nodes.ts:1 calls getContextualType: ${TSGO}`],
+        module: source(
+          "analysis/types.ts",
+          'import type { Checker, Node } from "../compiler.js";',
+          "export const typeOf = (c: Checker, n: Node) => c.getTypeAtLocation(n);",
+        ),
+        expected: [`analysis/types.ts:2 calls getTypeAtLocation: ${TSGO}`],
       },
       {
         name: "a module calls a symbol method",
-        module: { path: "nodes.ts", text: "export const members = (sym) => sym.getMembers();" },
-        expected: [`nodes.ts:1 calls getMembers: ${TSGO}`],
+        module: source(
+          "nodes.ts",
+          'import type { CheckerSymbol } from "./compiler.js";',
+          "export const members = (sym: CheckerSymbol) => sym.getMembers();",
+        ),
+        expected: [`nodes.ts:2 calls getMembers: ${TSGO}`],
       },
       {
         name: "a module calls a type method",
-        module: {
-          path: "nodes.ts",
-          text: "export const calls = (t) => t.getCallSignatures();",
-        },
-        expected: [`nodes.ts:1 calls getCallSignatures: ${TSGO}`],
+        module: source(
+          "nodes.ts",
+          'import type { Type } from "./compiler.js";',
+          "export const calls = (t: Type) => t.getCallSignatures();",
+        ),
+        expected: [`nodes.ts:2 calls getCallSignatures: ${TSGO}`],
       },
       {
-        name: "a module calls a snapshot method on any variable",
-        module: { path: "nodes.ts", text: "export const projects = (s) => s.getProjects();" },
-        expected: [`nodes.ts:1 calls getProjects: ${TSGO}`],
+        name: "a module calls a snapshot method",
+        module: source(
+          "nodes.ts",
+          'import type { Snapshot } from "./compiler.js";',
+          "export const projects = (s: Snapshot) => s.getProjects();",
+        ),
+        expected: [`nodes.ts:2 calls getProjects: ${TSGO}`],
       },
       {
         name: "a module calls a method through a snapshot",
-        module: {
-          path: "nodes.ts",
-          text: "export const projects = (s) => s.snapshot.getProjects();",
-        },
-        expected: [`nodes.ts:1 calls getProjects: ${TSGO}`, `nodes.ts:1 reads snapshot: ${TSGO}`],
+        module: source(
+          "nodes.ts",
+          'import type { Snapshot } from "./compiler.js";',
+          "export const projects = (s: { snapshot: Snapshot }) => s.snapshot.getProjects();",
+        ),
+        expected: [`nodes.ts:2 calls getProjects: ${TSGO}`, `nodes.ts:2 reads snapshot: ${TSGO}`],
       },
       {
         name: "a module calls the printer",
-        module: { path: "emit/print.ts", text: "export const text = (n) => printNode(n);" },
-        expected: [`emit/print.ts:1 calls printNode: ${TSGO}`],
+        module: source(
+          "emit/print.ts",
+          'import type { Node, Printer } from "../compiler.js";',
+          "export const text = (p: Printer, n: Node) => p.printNode(n);",
+        ),
+        expected: [`emit/print.ts:2 calls printNode: ${TSGO}`],
+      },
+      {
+        name: "a module resolves a declaration handle of a re-exported symbol type",
+        module: source(
+          "analysis/roots.ts",
+          'import type { CheckerSymbol } from "../compiler.js";',
+          "export const declaration = (sym: CheckerSymbol) => sym.valueDeclaration?.resolve();",
+        ),
+        expected: [`analysis/roots.ts:2 calls resolve: ${TSGO}`],
+      },
+      {
+        name: "a module calls a project method",
+        module: source(
+          "nodes.ts",
+          'import type { Project } from "./compiler.js";',
+          "export const drop = (p: Project) => p.dispose();",
+        ),
+        expected: [`nodes.ts:2 calls dispose: ${TSGO}`],
+      },
+      {
+        name: "a module calls a project method of the synchronous API",
+        module: source(
+          "nodes.ts",
+          'import type { SyncProject } from "./compiler.js";',
+          "export const drop = (p: SyncProject) => p.dispose();",
+        ),
+        expected: [`nodes.ts:2 calls dispose: ${TSGO}`],
+      },
+      {
+        name: "a module calls a language service method",
+        module: source(
+          "nodes.ts",
+          'import type { LanguageService, Node } from "./compiler.js";',
+          "export const usage = (ls: LanguageService, n: Node) => ls.getSignatureUsage(n);",
+        ),
+        expected: [`nodes.ts:2 calls getSignatureUsage: ${TSGO}`],
+      },
+      {
+        name: "a module calls a module resolver method",
+        module: source(
+          "nodes.ts",
+          'import type { ModuleResolver } from "./compiler.js";',
+          "export const drop = (r: ModuleResolver) => r.dispose();",
+        ),
+        expected: [`nodes.ts:2 calls dispose: ${TSGO}`],
+      },
+      {
+        name: "a module calls a retained source file method",
+        module: source(
+          "nodes.ts",
+          'import type { RetainedSourceFile } from "./compiler.js";',
+          "export const drop = (f: RetainedSourceFile) => f.dispose();",
+        ),
+        expected: [`nodes.ts:2 calls dispose: ${TSGO}`],
+      },
+      {
+        name: "a module calls a build orchestrator method",
+        module: source(
+          "nodes.ts",
+          'import type { BuildOrchestrator } from "./compiler.js";',
+          "export const run = (b: BuildOrchestrator) => b.build();",
+        ),
+        expected: [`nodes.ts:2 calls build: ${TSGO}`],
       },
       {
         name: "a module reads through a program",
@@ -177,7 +285,7 @@ describe("optimizer boundaries", () => {
         expected: [`emit/emit.ts:1 imports ../analysis/analyze.js: ${EMIT}`],
       },
     ])("reports it when $name", ({ module, expected }) => {
-      const violations = checkBoundaries(withModule(module), OPTIMIZER_RULES);
+      const violations = boundaries.checkModules(withModule(module), OPTIMIZER_RULES);
 
       expect(violations).toStrictEqual(expected);
     });
@@ -188,13 +296,11 @@ describe("optimizer boundaries", () => {
       { name: "only compiler.ts reaches tsgo", module: COMPILER },
       {
         name: "a comment and a string mention tsgo calls",
-        module: {
-          path: "nodes.ts",
-          text: [
-            "// checker.getTypeAtLocation(node)",
-            'export const hint = "printNode(x) from typescript/sync";',
-          ].join("\n"),
-        },
+        module: source(
+          "nodes.ts",
+          "// checker.getTypeAtLocation(node)",
+          'export const hint = "printNode(x) from typescript/sync";',
+        ),
       },
       {
         name: "a module imports the compiler module",
@@ -202,13 +308,34 @@ describe("optimizer boundaries", () => {
       },
       {
         name: "a module calls node and project view methods the compiler also declares",
-        module: {
-          path: "nodes.ts",
-          text: [
-            "export const text = (node) => node.getSourceFile().getText();",
-            "export const refresh = (view, changes) => view.update(changes).emit();",
-          ].join("\n"),
-        },
+        module: source(
+          "nodes.ts",
+          "export const text = (node) => node.getSourceFile().getText();",
+          "export const refresh = (view, changes) => view.update(changes).emit();",
+        ),
+      },
+      {
+        name: "a module calls Promise.resolve",
+        module: { path: "session.ts", text: "export const ready = () => Promise.resolve(1);" },
+      },
+      {
+        name: "a module calls its own methods named like compiler methods",
+        module: source(
+          "emit/emit.ts",
+          "class Loop {",
+          "  static build(): Loop { return new Loop(); }",
+          "  resolve(): number { return 1; }",
+          "}",
+          "export const made = Loop.build().resolve();",
+        ),
+      },
+      {
+        name: "a module calls a method of its own type named like a compiler class",
+        module: source(
+          "nodes.ts",
+          "interface Snapshot { getProjects(): readonly string[] }",
+          "export const projects = (s: Snapshot) => s.getProjects();",
+        ),
       },
       {
         name: "a module other than facts.ts and plan.ts imports typescript/ast",
@@ -216,24 +343,22 @@ describe("optimizer boundaries", () => {
       },
       {
         name: "an emit module imports its siblings and the shared modules",
-        module: {
-          path: "emit/emit.ts",
-          text: [
-            'import { names } from "./names.js";',
-            'import { lower } from "./loops/lowering.js";',
-            'import { printNode } from "../compiler.js";',
-            'import type { Fact } from "../facts.js";',
-            'import type { Plan } from "../plan.js";',
-            'import { analysisNote } from "../analysis-note.js";',
-          ].join("\n"),
-        },
+        module: source(
+          "emit/emit.ts",
+          'import { names } from "./names.js";',
+          'import { lower } from "./loops/lowering.js";',
+          'import { printNode } from "../compiler.js";',
+          'import type { Fact } from "../facts.js";',
+          'import type { Plan } from "../plan.js";',
+          'import { analysisNote } from "../analysis-note.js";',
+        ),
       },
       {
         name: "a module outside emit imports an analysis module",
         module: { path: "pipeline.ts", text: 'import { analyze } from "./analysis/analyze.js";' },
       },
     ])("reports nothing when $name", ({ module }) => {
-      const violations = checkBoundaries(withModule(module), OPTIMIZER_RULES);
+      const violations = boundaries.checkModules(withModule(module), OPTIMIZER_RULES);
 
       expect(violations).toStrictEqual([]);
     });
@@ -241,9 +366,7 @@ describe("optimizer boundaries", () => {
 
   describe("when a module the rules name is missing", () => {
     it.each(["compiler.ts", "facts.ts", "plan.ts"])("reports %s", (path) => {
-      const modules = CLEAN.filter((module) => module.path !== path);
-
-      const violations = checkBoundaries(modules, OPTIMIZER_RULES);
+      const violations = boundaries.checkModules(without(path), OPTIMIZER_RULES);
 
       expect(violations).toStrictEqual([`${path} is missing: the boundary rules name it`]);
     });

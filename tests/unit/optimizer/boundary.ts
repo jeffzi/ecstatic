@@ -1,13 +1,17 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, posix, sep } from "node:path";
 
-import { LanguageVariant, SyntaxKind } from "typescript/ast";
+import { LanguageVariant, type Node, type SourceFile, SyntaxKind } from "typescript/ast";
+import { isCallExpression, isPropertyAccessExpression } from "typescript/ast/is";
 import {
   computeLineStarts,
   createScanner,
   tokenIsIdentifierOrKeyword,
 } from "typescript/ast/scanner";
+import { API, type Project, type Symbol as CheckerSymbol, SymbolFlags } from "typescript/sync";
+
+import { writeProject } from "./project.js";
 
 /** A module's source, keyed by its slash-separated path from the checked directory. */
 export interface Module {
@@ -41,34 +45,6 @@ interface ScannedModule {
 }
 
 type Rule = (modules: readonly ScannedModule[]) => string[];
-
-/**
- * The classes of `typescript/async` whose every method is a compiler call. `TypeObject` is the class
- * behind the `Type` interface, so it declares every type method, subtype methods included.
- */
-const COMPILER_CLASSES: ReadonlySet<string> = new Set([
-  "API",
-  "Snapshot",
-  "Program",
-  "Checker",
-  "Printer",
-  "Symbol",
-  "TypeObject",
-  "Signature",
-]);
-
-/**
- * Method names of the optimizer's own session and project view. Some match a snapshot or program
- * method, so leaving them in would flag every module that drives a session.
- */
-const OPTIMIZER_METHODS: ReadonlySet<string> = new Set([
-  "update",
-  "close",
-  "parse",
-  "sourceFile",
-  "emit",
-  "notifyChanged",
-]);
 
 /** Names whose members are compiler calls whatever the member is called. */
 const COMPILER_RECEIVERS: ReadonlySet<string> = new Set([
@@ -152,9 +128,12 @@ function advanceLine(lineStarts: readonly number[], line: number, start: number)
 }
 
 /**
- * The tokens of `text`, comments and whitespace skipped. A token scan sees no syntax tree, so it
- * tracks template substitutions by brace depth and reads a slash as a regular expression unless the
- * previous token ends an expression.
+ * Scans `text` for tokens. A token scan sees no syntax tree, so it tracks template substitutions by
+ * brace depth and reads a slash as a regular expression unless the previous token ends an
+ * expression.
+ *
+ * @param text - The module source to scan.
+ * @returns The tokens in source order, comments and whitespace skipped, each with its 1-based line.
  */
 function tokenize(text: string): Token[] {
   const scanner = createScanner(true, LanguageVariant.Standard, text);
@@ -178,7 +157,6 @@ function importSpecifier(next: Token, afterNext: Token | undefined): Token | und
   return quoted?.kind === SyntaxKind.StringLiteral ? quoted : undefined;
 }
 
-/** Whether `token` is a `from` that `next`, a string, completes. */
 function isFromClause(token: Token, next: Token): boolean {
   return (
     tokenIsIdentifierOrKeyword(token.kind) &&
@@ -204,132 +182,11 @@ function toImport(specifier: Token, modulePath: string): Import {
   return { specifier: specifier.value, target, line: specifier.line };
 }
 
-/** Token kinds that open a class or interface declaration. */
-const DECLARATION_KEYWORDS: ReadonlySet<SyntaxKind> = new Set([
-  SyntaxKind.ClassKeyword,
-  SyntaxKind.InterfaceKeyword,
-]);
-
-/** Token kinds a member name follows in a declaration body: a body start, a member end, or a modifier. */
-const MEMBER_STARTS: ReadonlySet<SyntaxKind> = new Set([
-  SyntaxKind.OpenBraceToken,
-  SyntaxKind.SemicolonToken,
-  SyntaxKind.StaticKeyword,
-  SyntaxKind.AbstractKeyword,
-  SyntaxKind.OverrideKeyword,
-  SyntaxKind.PublicKeyword,
-  SyntaxKind.ProtectedKeyword,
-]);
-
-/** Token kinds that open a method signature after its name: parameters or type parameters. */
-const SIGNATURE_STARTS: ReadonlySet<SyntaxKind> = new Set([
-  SyntaxKind.OpenParenToken,
-  SyntaxKind.LessThanToken,
-]);
-
-const BRACE_STEPS: ReadonlyMap<SyntaxKind, number> = new Map([
-  [SyntaxKind.OpenBraceToken, 1],
-  [SyntaxKind.CloseBraceToken, -1],
-]);
-
-interface DeclarationBody {
-  readonly name: string;
-  /** The tokens from the body's `{` to the end of the file. */
-  readonly tokens: readonly Token[];
-}
-
-/** The kind of `tokens[index]`, or `Unknown` past either end. */
-function kindAt(tokens: readonly Token[], index: number): SyntaxKind {
-  return tokens[index]?.kind ?? SyntaxKind.Unknown;
-}
-
-/** Whether `tokens[index]` names a method in a declaration body, given its neighbors. */
-function declaresMethod(tokens: readonly Token[], index: number): boolean {
-  return (
-    kindAt(tokens, index) === SyntaxKind.Identifier &&
-    MEMBER_STARTS.has(kindAt(tokens, index - 1)) &&
-    SIGNATURE_STARTS.has(kindAt(tokens, index + 1))
-  );
-}
-
-/** The bodies of the classes and interfaces `tokens` declare, in source order. */
-function declarationBodies(tokens: readonly Token[]): DeclarationBody[] {
-  return tokens.flatMap((token, index) => {
-    const name = tokens[index + 1];
-    if (!DECLARATION_KEYWORDS.has(token.kind) || name?.kind !== SyntaxKind.Identifier) return [];
-    const rest = tokens.slice(index);
-    const open = rest.findIndex((candidate) => candidate.kind === SyntaxKind.OpenBraceToken);
-    return [{ name: name.value, tokens: rest.slice(open) }];
-  });
-}
-
-/** The methods `body` declares at its own depth, members of nested type literals skipped. */
-function bodyMethods(body: DeclarationBody): string[] {
-  const methods: string[] = [];
-  let depth = 0;
-  for (const [index, token] of body.tokens.entries()) {
-    depth += BRACE_STEPS.get(token.kind) ?? 0;
-    if (depth === 0) break;
-    if (depth === 1 && declaresMethod(body.tokens, index)) methods.push(token.value);
-  }
-  return methods;
-}
-
-/** The functions `tokens` declare. */
-function declaredFunctions(tokens: readonly Token[]): string[] {
-  return tokens.flatMap((token, index) =>
-    tokens[index - 1]?.kind === SyntaxKind.FunctionKeyword ? [token.value] : [],
-  );
-}
-
-const resolver = createRequire(import.meta.url);
-
-/** The declaration files of the package directory holding the module `entry` resolves to. */
-function packageDeclarations(entry: string): string[] {
-  const dir = dirname(resolver.resolve(entry));
-  return readdirSync(dir)
-    .filter((name) => name.endsWith(".d.ts"))
-    .map((name) => readFileSync(join(dir, name), "utf8"));
-}
-
-/** Every method and function name `typescript/ast` declares: calls any module may make on nodes. */
-function syntaxNames(): ReadonlySet<string> {
-  const tokens = packageDeclarations("typescript/ast").map(tokenize);
-  return new Set([
-    ...tokens.flatMap((file) => declarationBodies(file).flatMap(bodyMethods)),
-    ...tokens.flatMap(declaredFunctions),
-  ]);
-}
-
-/**
- * Every method of the {@link COMPILER_CLASSES}, read from the `typescript/async` declarations so it
- * follows the installed compiler. Names `typescript/ast` also declares, such as `getSourceFile`, are
- * left out: reading nodes is every module's right, and a program's `getSourceFile` is caught through
- * {@link COMPILER_RECEIVERS} instead. The {@link OPTIMIZER_METHODS} are left out too.
- */
-function compilerMethods(): ReadonlySet<string> {
-  const entry = resolver.resolve("typescript/async");
-  const api = tokenize(readFileSync(entry.replace(/\.js$/u, ".d.ts"), "utf8"));
-  const syntax = syntaxNames();
-  return new Set(
-    declarationBodies(api)
-      .filter((body) => COMPILER_CLASSES.has(body.name))
-      .flatMap(bodyMethods)
-      .filter((name) => !syntax.has(name) && !OPTIMIZER_METHODS.has(name)),
-  );
-}
-
-const COMPILER_METHODS = compilerMethods();
-
-/** Whether `token`, followed by a token of kind `next`, calls a compiler method. */
-function isCompilerCall(token: Token, next: SyntaxKind | undefined): boolean {
-  return next === SyntaxKind.OpenParenToken && COMPILER_METHODS.has(token.value);
-}
-
 /** Whether `token`, followed by a token of kind `next`, reads a member of a compiler receiver. */
 function isCompilerReceiver(token: Token, next: SyntaxKind | undefined): boolean {
   const isMemberAccess = next === SyntaxKind.DotToken || next === SyntaxKind.QuestionDotToken;
-  return isMemberAccess && COMPILER_RECEIVERS.has(token.value);
+  const isReceiver = token.kind === SyntaxKind.Identifier && COMPILER_RECEIVERS.has(token.value);
+  return isReceiver && isMemberAccess;
 }
 
 /** The imports `tokens` spell out, in source order. */
@@ -342,29 +199,85 @@ function scanImports(tokens: readonly Token[], modulePath: string): Import[] {
   return imports;
 }
 
-/** The identifiers in `tokens` that `matches`, given the kind of the token after each, in source order. */
-function scanReferences(
-  tokens: readonly Token[],
-  matches: (token: Token, next: SyntaxKind | undefined) => boolean,
-): Reference[] {
-  const references: Reference[] = [];
+/** The compiler receivers `tokens` read a member of, in source order. */
+function scanReceivers(tokens: readonly Token[]): Reference[] {
+  const receivers: Reference[] = [];
   for (const [index, token] of tokens.entries()) {
-    if (token.kind === SyntaxKind.Identifier && matches(token, tokens[index + 1]?.kind)) {
-      references.push({ name: token.value, line: token.line });
+    if (isCompilerReceiver(token, tokens[index + 1]?.kind)) {
+      receivers.push({ name: token.value, line: token.line });
     }
   }
-  return references;
+  return receivers;
 }
 
-/** The imports, compiler method calls, and compiler receivers `module` spells out. */
-function scan(module: Module): ScannedModule {
+/** The imports and compiler receivers `module` spells out, beside its compiler method `calls`. */
+function scan(module: Module, calls: readonly Reference[]): ScannedModule {
   const tokens = tokenize(module.text);
   return {
     path: module.path,
     imports: scanImports(tokens, module.path),
-    calls: scanReferences(tokens, isCompilerCall),
-    receivers: scanReferences(tokens, isCompilerReceiver),
+    calls,
+    receivers: scanReceivers(tokens),
   };
+}
+
+/** The 1-based line of the character offset `position`. */
+function lineOf(lineStarts: readonly number[], position: number): number {
+  return lineStarts.findLastIndex((start) => start <= position) + 1;
+}
+
+/** The `b` name node of each `a.b()` call under `root`, in source order. */
+function calledMembers(root: SourceFile): Node[] {
+  const members: Node[] = [];
+  const visit = (node: Node): void => {
+    if (isCallExpression(node) && isPropertyAccessExpression(node.expression)) {
+      members.push(node.expression.name);
+    }
+    node.forEachChild(visit);
+  };
+  visit(root);
+  return members.toSorted((a, b) => a.getStart(root) - b.getStart(root));
+}
+
+function isClassOrInterface(symbol: CheckerSymbol | undefined): boolean {
+  return symbol !== undefined && (symbol.flags & (SymbolFlags.Class | SymbolFlags.Interface)) !== 0;
+}
+
+/**
+ * Whether `member` is declared on a class or interface the compiler API declares.
+ *
+ * @param member - The symbol a call's member name resolves to, if it resolves.
+ * @param apiDirs - The canonical directories, slash-terminated, of the compiler API's declarations.
+ * @returns Whether a declaration of `member` sits under one of `apiDirs`, on a class or interface.
+ */
+function isApiMember(member: CheckerSymbol | undefined, apiDirs: readonly string[]): boolean {
+  if (member === undefined) return false;
+  const inApi = member.declarations.some((declaration) =>
+    apiDirs.some((dir) => declaration.path.startsWith(dir)),
+  );
+  return inApi && isClassOrInterface(member.getParent());
+}
+
+/**
+ * The calls in `file` whose method the compiler API declares, resolved through `project`'s checker.
+ *
+ * @param project - The project whose program holds `file`.
+ * @param file - The absolute path of the module checked.
+ * @param apiDirs - The canonical directories, slash-terminated, of the compiler API's declarations.
+ * @returns Each such call's method name and line, in source order.
+ * @throws Error when `file` is not in the project's program.
+ */
+function apiCalls(project: Project, file: string, apiDirs: readonly string[]): Reference[] {
+  const source = project.program.getSourceFile(file);
+  if (source === undefined) throw new Error(`${file} is not in the project's program`);
+  const members = calledMembers(source);
+  const symbols = project.checker.getSymbolAtLocation(members);
+  const lineStarts = computeLineStarts(source.text);
+  return members.flatMap((member, index) =>
+    isApiMember(symbols[index], apiDirs)
+      ? [{ name: member.getText(source), line: lineOf(lineStarts, member.getStart(source)) }]
+      : [],
+  );
 }
 
 /** A rule reporting each module named in `paths` that is absent. */
@@ -438,10 +351,107 @@ export const OPTIMIZER_RULES: readonly Rule[] = [
   }),
 ];
 
-/** Every violation of `rules` among `modules`, rule by rule. */
-export function checkBoundaries(modules: readonly Module[], rules: readonly Rule[]): string[] {
-  const scanned = modules.map(scan);
-  return rules.flatMap((rule) => rule(scanned));
+/** A strict tsconfig for a project of synthetic modules, every `.ts` file under it included. */
+const MODULES_TSCONFIG = JSON.stringify({
+  compilerOptions: {
+    strict: true,
+    target: "es2024",
+    lib: ["es2024"],
+    module: "nodenext",
+    noEmit: true,
+    types: [],
+  },
+  include: ["**/*.ts"],
+});
+
+const resolver = createRequire(import.meta.url);
+
+function slashPath(path: string): string {
+  return path.split(sep).join("/");
+}
+
+/** The directories, slash-separated and slash-terminated, of the compiler API's declarations. */
+const API_DIRS: readonly string[] = [...COMPILER_ENTRIES].map(
+  (entry) => `${slashPath(dirname(resolver.resolve(entry)))}/`,
+);
+
+const TYPESCRIPT_DIR = dirname(resolver.resolve("typescript/package.json"));
+
+function nearestTsconfig(dir: string): string {
+  const candidate = join(dir, "tsconfig.json");
+  if (existsSync(candidate)) return candidate;
+  const parent = dirname(dir);
+  if (parent === dir) throw new Error(`no tsconfig.json at or above ${dir}`);
+  return nearestTsconfig(parent);
+}
+
+/**
+ * Writes `modules` as a project under a new temp directory, linking the installed `typescript` into
+ * its `node_modules` so the compiler API's declarations resolve.
+ *
+ * @param modules - The modules, each written at its path.
+ * @returns The project directory.
+ */
+function writeModules(modules: readonly Module[]): string {
+  const root = writeProject({
+    "tsconfig.json": MODULES_TSCONFIG,
+    ...Object.fromEntries(modules.map((module) => [module.path, module.text])),
+  });
+  mkdirSync(join(root, "node_modules"));
+  symlinkSync(TYPESCRIPT_DIR, join(root, "node_modules", "typescript"), "junction");
+  return root;
+}
+
+/** Checks modules against boundary rules, resolving calls through one compiler process. */
+export interface BoundaryChecker {
+  /**
+   * Checks the modules under `dir` in place, typed by the nearest `tsconfig.json` at or above it.
+   *
+   * @param dir - The directory whose modules are checked.
+   * @param rules - The rules to check.
+   * @returns Every violation, rule by rule.
+   * @throws Error when no `tsconfig.json` sits at or above `dir`, or one of its modules is not in
+   *   that project.
+   */
+  checkDirectory(dir: string, rules: readonly Rule[]): string[];
+  /**
+   * Checks `modules` as a project of their own.
+   *
+   * @param modules - The modules checked, keyed by their path in the project.
+   * @param rules - The rules to check.
+   * @returns Every violation, rule by rule.
+   */
+  checkModules(modules: readonly Module[], rules: readonly Rule[]): string[];
+  close(): void;
+}
+
+/** A checker running on a compiler process it starts; close it to stop the process. */
+export function openBoundaryChecker(): BoundaryChecker {
+  const api = new API();
+  const check = (root: string, modules: readonly Module[], rules: readonly Rule[]): string[] => {
+    const tsconfig = nearestTsconfig(root);
+    const snapshot = api.createSnapshot({ openProjects: [tsconfig] });
+    try {
+      // The API learns the file system's case sensitivity from its first request, so canonical
+      // names wait for the snapshot.
+      const apiDirs = API_DIRS.map((dir) => api.getCanonicalFileName(dir));
+      const project = snapshot.getConfiguredProject(tsconfig);
+      if (project === undefined) throw new Error(`the compiler opened no project for ${tsconfig}`);
+      const scanned = modules.map((module) =>
+        scan(module, apiCalls(project, join(root, module.path), apiDirs)),
+      );
+      return rules.flatMap((rule) => rule(scanned));
+    } finally {
+      snapshot.dispose();
+    }
+  };
+  return {
+    checkDirectory: (dir, rules) => check(dir, readModules(dir), rules),
+    checkModules: (modules, rules) => check(writeModules(modules), modules, rules),
+    close: () => {
+      api.close();
+    },
+  };
 }
 
 /** Every TypeScript module under `dir`, test files excluded, in path order. */
@@ -449,5 +459,5 @@ export function readModules(dir: string): Module[] {
   return readdirSync(dir, { recursive: true, encoding: "utf8" })
     .filter((rel) => rel.endsWith(".ts") && !rel.endsWith(".test.ts"))
     .toSorted()
-    .map((rel) => ({ path: rel.split(sep).join("/"), text: readFileSync(join(dir, rel), "utf8") }));
+    .map((rel) => ({ path: slashPath(rel), text: readFileSync(join(dir, rel), "utf8") }));
 }
