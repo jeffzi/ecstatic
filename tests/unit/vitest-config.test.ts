@@ -1,21 +1,47 @@
 import { execFile } from "node:child_process";
+import { globSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, type TestContext } from "vitest";
 import { createVitest, type TestProject, type Vitest } from "vitest/node";
 
 import { packageBin } from "../package-bin.js";
+import { countHits } from "./inline-each.js";
+import { processesStartedSince, runningProcesses, waitUntilDead } from "./optimizer/processes.js";
+import { SPAWN_TIMEOUT_MS } from "./optimizer/project.js";
 
 const execFileAsync = promisify(execFile);
 
+// The projects whose plugin list carries the optimizer. A test passes there whether or not a module
+// was rewritten, since a rewrite keeps the runtime's behavior, so only the module text tells.
+const OPTIMIZED_PROJECTS: ReadonlySet<string> = new Set(["unit-optimized", "unit-ndebug"]);
+
+// Each optimized project starts a compiler process of about 218 MB, so the run-ending checks open
+// their own Vitest from one project rather than from every project that runs this file.
+const LIFECYCLE_PROJECT = "unit";
+
 const ROOT = resolve(import.meta.dirname, "../..");
+
+const VITEST_CONFIG = join(ROOT, "vitest.config.ts");
+
+// What the optimizer's rewrite of an inline `each` adds to a module: the shape guard's call.
+const REWRITE_MARKER = "assertShape";
 
 const SKIP_CHECKED = join(ROOT, "tests", "skip-checked.ts");
 
 const CORPUS_TEST = join(ROOT, "tests", "optimizer", "corpus.test.ts");
 
 const VITE_SMOKE_TEST = join(ROOT, "tests", "optimizer", "vite-smoke.test.ts");
+
+const INLINE_EACH_MODULE = join(ROOT, "tests", "unit", "inline-each.ts");
+
+// The optimizer's and the plugin's own tests drive the optimizer directly; an optimized project
+// runs only the tests of the runtime it rewrites.
+const RUNTIME_UNIT_TESTS = globSync("tests/unit/**/*.test.ts", { cwd: ROOT })
+  .filter((file) => !/^tests[\\/]unit[\\/](optimizer|plugin)[\\/]/u.test(file))
+  .map((file) => join(ROOT, file))
+  .toSorted();
 
 const SHARED_OPTIONS = {
   allowOnly: false,
@@ -27,13 +53,48 @@ const SHARED_OPTIONS = {
 
 let vitest: Vitest;
 
+function openVitest(): Promise<Vitest> {
+  return createVitest("test", { watch: false, config: VITEST_CONFIG });
+}
+
 beforeAll(async () => {
-  vitest = await createVitest("test", { watch: false, config: join(ROOT, "vitest.config.ts") });
+  vitest = await openVitest();
 });
 
 afterAll(async () => {
   await vitest.close();
 });
+
+/** What a Vitest saw of a run that transformed {@link INLINE_EACH_MODULE} in every project, then closed. */
+interface ClosedRun {
+  /** The names of the projects whose transform of the file calls `assertShape`. */
+  readonly rewritten: readonly string[];
+  /** The child processes this process started while the projects transformed the file. */
+  readonly started: readonly number[];
+}
+
+/** Opens a Vitest over the config, transforms {@link INLINE_EACH_MODULE} in every project, and closes it. */
+async function transformThenClose(): Promise<ClosedRun> {
+  const before = await runningProcesses();
+  const run = await openVitest();
+  const codes = await Promise.all(
+    run.projects.map(async (project) => {
+      const result = await project.vite.environments.ssr.transformRequest(INLINE_EACH_MODULE);
+      return { name: project.name, code: result?.code ?? "" };
+    }),
+  );
+  const started = await processesStartedSince(before);
+  await run.close();
+  const rewritten = codes
+    .filter(({ code }) => code.includes(REWRITE_MARKER))
+    .map(({ name }) => name);
+  return { rewritten: rewritten.toSorted(), started };
+}
+
+/** Skips the running test unless it runs in {@link LIFECYCLE_PROJECT}. */
+function skipOutsideLifecycleProject({ skip, task }: TestContext): void {
+  skip(task.file.projectName !== LIFECYCLE_PROJECT, `checked from ${LIFECYCLE_PROJECT}`);
+}
 
 /** Picks the resolved options every project must share with the root config. */
 function sharedOptions(project: TestProject): typeof SHARED_OPTIONS {
@@ -65,6 +126,23 @@ describe("vitest config", () => {
 
     expect(actual).toStrictEqual(expected);
   });
+
+  it("rewrites test modules through the optimizer in exactly the optimized projects", ({
+    task,
+  }) => {
+    const rewritten = countHits.toString().includes(REWRITE_MARKER);
+
+    expect(rewritten).toBe(OPTIMIZED_PROJECTS.has(task.file.projectName ?? ""));
+  });
+
+  it.each([...OPTIMIZED_PROJECTS])(
+    "runs the runtime unit tests, without the optimizer and plugin tests, in %s",
+    async (name) => {
+      const { testFiles } = await vitest.getProjectByName(name).globTestFiles();
+
+      expect(testFiles.toSorted()).toStrictEqual(RUNTIME_UNIT_TESTS);
+    },
+  );
 
   it("type-checks every type test file of the types project", async () => {
     const types = vitest.getProjectByName("types");
@@ -115,9 +193,45 @@ describe("vitest config", () => {
 
     expect(actual).toStrictEqual({
       unit: { ndebug: undefined, skipsChecked: false },
+      "unit-optimized": { ndebug: undefined, skipsChecked: false },
       "unit-ndebug": { ndebug: true, skipsChecked: true },
       fixtures: { ndebug: undefined, skipsChecked: false },
       "fixtures-ndebug": { ndebug: true, skipsChecked: false },
     });
+  });
+
+  describe("when a run closes after every project transformed a module with an inline each", () => {
+    let closed: Promise<ClosedRun> | undefined;
+
+    /** The closed run, opened by whichever test of this group runs first. */
+    async function closedRun(): Promise<ClosedRun> {
+      closed ??= transformThenClose();
+      return closed;
+    }
+
+    it(
+      "rewrote the module in exactly the optimized projects",
+      async (context) => {
+        skipOutsideLifecycleProject(context);
+
+        const { rewritten } = await closedRun();
+
+        expect(rewritten).toStrictEqual([...OPTIMIZED_PROJECTS].toSorted());
+      },
+      SPAWN_TIMEOUT_MS,
+    );
+
+    it(
+      "ends the one compiler process each optimized project started",
+      async (context) => {
+        skipOutsideLifecycleProject(context);
+
+        const { started } = await closedRun();
+
+        expect(started).toHaveLength(OPTIMIZED_PROJECTS.size);
+        await expect(Promise.all(started.map(waitUntilDead))).resolves.toBeDefined();
+      },
+      SPAWN_TIMEOUT_MS,
+    );
   });
 });
