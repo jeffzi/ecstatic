@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add the `ecstatic/vite` plugin, which compiles a single-storage, unfiltered `each()` call with an
+  inline callback into a loop over the storage's columns
+
 ### Changed
 
 - Reject `__proto__` as a component name in `archetype()` and `Archetype()`, alongside the other
