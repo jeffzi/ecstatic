@@ -12,7 +12,7 @@ export function scenario(): unknown {
   ];
   const axes: readonly ("x" | "y")[] = ["x", "y"];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 18, column 7: a computed access`
   each(movers, (e) => {
     for (const axis of axes) {
       e.Position[axis] += 10;

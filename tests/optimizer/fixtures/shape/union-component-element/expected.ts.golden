@@ -14,7 +14,7 @@ export function scenario(): unknown {
   spawn(picked);
   const visited: number[] = [];
 
-  // expect-diagnostic: 99910 SHAPE_UNRESOLVED
+  // expect-diagnostic: 99910 SHAPE_UNRESOLVED 3
   each(picked, (e) => {
     visited.push(e.id);
   });

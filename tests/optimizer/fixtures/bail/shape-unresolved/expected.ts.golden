@@ -11,7 +11,7 @@ export function scenario(): unknown {
   const untyped: Storage = movers;
   const visited: number[] = [];
 
-  // expect-diagnostic: 99910 SHAPE_UNRESOLVED
+  // expect-diagnostic: 99910 SHAPE_UNRESOLVED 3
   each(untyped, (e) => {
     visited.push(e.id);
   });

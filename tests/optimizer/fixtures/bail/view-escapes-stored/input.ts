@@ -10,7 +10,7 @@ export function scenario(): unknown {
   spawn(movers, { Position: { x: 2, y: 0 } });
   const visited: number[] = [];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 15, column 18: the view as a value`
   each(movers, (e) => {
     const view = e;
     visited.push(view.id);

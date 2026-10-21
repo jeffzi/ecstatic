@@ -11,7 +11,7 @@ export function scenario(): unknown {
   const axes: readonly ("x" | "y")[] = ["x", "y"];
   const sums: number[] = [];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 18, column 15: a computed access`
   each(movers, (e) => {
     let sum = 0;
     for (const axis of axes) {

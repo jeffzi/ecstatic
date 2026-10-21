@@ -14,7 +14,7 @@ function visitAll<Flying extends boolean>(parts: MoverParts<Flying>, visited: nu
   spawn(wide);
   spawn(wide);
 
-  // expect-diagnostic: 99910 SHAPE_UNRESOLVED
+  // expect-diagnostic: 99910 SHAPE_UNRESOLVED 3
   each(storage, (e) => {
     visited.push(e.id);
   });

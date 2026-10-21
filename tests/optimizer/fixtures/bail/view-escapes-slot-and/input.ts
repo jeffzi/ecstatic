@@ -13,7 +13,7 @@ export function scenario(): unknown {
   spawn(masts, { Position: { x: 2, y: 0 } });
   const colors: unknown[] = [];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 19, column 19: a slot as a value`
   each(masts, (e) => {
     // oxlint-disable-next-line typescript/prefer-optional-chain, typescript/strict-boolean-expressions -- the slot as the value of `&&` is the escape under test
     const color = e.Pennant && e.Pennant.color;

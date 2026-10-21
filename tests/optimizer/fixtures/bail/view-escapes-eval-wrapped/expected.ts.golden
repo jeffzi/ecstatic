@@ -16,13 +16,13 @@ export function scenario(): unknown {
     spawn(movers, { Position: { x: 2, y: 0 } }),
   ];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 23, column 5: a direct eval`
   each(movers, (e) => {
     e.Position.y = 0;
     // oxlint-disable-next-line no-eval -- a direct eval through `as` is the behavior under test: the optimizer keeps the runtime call
     (eval as (source: string) => unknown)("e.Position.x *= 10");
   });
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 29, column 5: a direct eval`
   each(movers, (e) => {
     e.Position.y = 0;
     // oxlint-disable-next-line no-eval -- a direct eval through `satisfies` is the behavior under test: the optimizer keeps the runtime call

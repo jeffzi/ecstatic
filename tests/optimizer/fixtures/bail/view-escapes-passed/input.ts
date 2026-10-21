@@ -13,7 +13,7 @@ export function scenario(): unknown {
     visited.push(view.id);
   };
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 18, column 12: the view as a value`
   each(movers, (e) => {
     record(e);
   });

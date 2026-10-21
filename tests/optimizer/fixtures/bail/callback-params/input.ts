@@ -11,7 +11,7 @@ export function scenario(): unknown {
     spawn(movers, { Position: { x: 2, y: 0 } }),
   ];
 
-  // expect-diagnostic: 99914 CALLBACK_PARAMS
+  // expect-diagnostic: 99914 CALLBACK_PARAMS 3
   each(movers, (e, step = 3) => {
     e.Position.x += step;
   });

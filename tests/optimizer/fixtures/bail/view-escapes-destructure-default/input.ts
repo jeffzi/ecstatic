@@ -14,7 +14,7 @@ export function scenario(): unknown {
   const fallback = { level: -1 };
   const levels: number[] = [];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 19, column 13: a destructuring form that does not lower`
   each(warded, (e) => {
     const { Ward: { level } = fallback } = e;
     levels.push(level);

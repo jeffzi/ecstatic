@@ -11,7 +11,7 @@ export function scenario(): unknown {
   const methods: string[] = [];
   const keyOf = (view: { readonly id: number }): string => `row${String(view.id)}`;
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 17, column 14: the view as a value`
   each(movers, (e) => {
     class Probe {
       [keyOf(e)](): void {}

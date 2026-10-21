@@ -11,7 +11,7 @@ export function scenario(): unknown {
     spawn(movers, { Position: { x: 2, y: 0 } }),
   ];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 17, column 26: a direct eval`
   each(movers, (e) => {
     // oxlint-disable-next-line no-eval -- a direct eval in the body is the behavior under test: the optimizer keeps the runtime call
     const step: number = eval("2 * 3");

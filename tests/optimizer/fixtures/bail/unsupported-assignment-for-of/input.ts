@@ -12,7 +12,7 @@ export function scenario(): unknown {
   ];
   const seen: number[] = [];
 
-  // expect-diagnostic: 99919 UNSUPPORTED_ASSIGNMENT
+  // expect-diagnostic: 99919 UNSUPPORTED_ASSIGNMENT 3
   each(movers, (e) => {
     for (e.Position.x of [5, 6]) {
       seen.push(e.Position.x);

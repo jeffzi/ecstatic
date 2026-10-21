@@ -11,7 +11,7 @@ export function scenario(): unknown {
     spawn(movers, { Position: { x: 2, y: 0 } }),
   ];
 
-  // expect-diagnostic: 99916 CALLBACK_GENERATOR
+  // expect-diagnostic: 99916 CALLBACK_GENERATOR 3
   each(movers, function* (e) {
     e.Position.x = 99;
     yield e.id;

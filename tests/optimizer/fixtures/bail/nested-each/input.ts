@@ -14,10 +14,10 @@ export function scenario(): unknown {
   const names: string[] = [];
   const pairs: number[][] = [];
 
-  // expect-diagnostic: 99917 CALLBACK_FUNCTION_BINDINGS
+  // expect-diagnostic: 99917 CALLBACK_FUNCTION_BINDINGS 3
   each(movers, function pair(outer) {
     names.push(pair.name);
-    // expect-diagnostic: 99914 CALLBACK_PARAMS
+    // expect-diagnostic: 99914 CALLBACK_PARAMS 5
     each(statues, (inner, weight = 2) => {
       pairs.push([outer.id, inner.id, inner.Health.hp * weight]);
     });

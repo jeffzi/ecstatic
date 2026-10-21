@@ -13,7 +13,7 @@ export function scenario(): unknown {
   const xs: number[] = [];
 
   for (const storage of [movers, statues]) {
-    // expect-diagnostic: 99910 SHAPE_UNRESOLVED
+    // expect-diagnostic: 99910 SHAPE_UNRESOLVED 5
     each(storage, (e) => {
       visited.push(e.id);
       xs.push(e.Position.x);

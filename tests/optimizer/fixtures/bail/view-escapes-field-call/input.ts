@@ -16,7 +16,7 @@ export function scenario(): unknown {
   });
   const receivers: (string | undefined)[] = [];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 21, column 20: a field called as a method`
   each(hooked, (e) => {
     receivers.push(e.Hook.run?.());
   });

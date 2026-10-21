@@ -12,7 +12,7 @@ export function scenario(): unknown {
   ];
   const visited: number[] = [];
 
-  // expect-diagnostic: warning 99915 CALLBACK_ASYNC
+  // expect-diagnostic: warning 99915 CALLBACK_ASYNC 3
   each(
     movers,
     // oxlint-disable-next-line typescript/no-misused-promises -- the async callback is the behavior under test: the optimizer leaves it a runtime call and warns

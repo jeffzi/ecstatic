@@ -10,7 +10,7 @@ export function scenario(): unknown {
   spawn(switched);
   const seen: unknown[] = [];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 16, column 15: arithmetic on a boolean field`
   each(switched, (e) => {
     // @ts-expect-error -- incrementing a boolean field is the behavior under test
     seen.push(e.Switch.on++, e.Switch.on);

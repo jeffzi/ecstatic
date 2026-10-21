@@ -11,7 +11,7 @@ export function scenario(): unknown {
   const held: number[] = [];
   const idOf = (view: { readonly id: number }): number => view.id;
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 17, column 33: the view as a value`
   each(movers, (e) => {
     class Probe {
       static readonly id = idOf(e);

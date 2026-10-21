@@ -14,7 +14,7 @@ export function scenario(): unknown {
   const labels: string[] = [];
   const fallback = { label: "none" };
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 19, column 19: a slot as a value`
   each(wearers, (e) => {
     const badge = e.Badge ?? fallback;
     labels.push(badge.label);

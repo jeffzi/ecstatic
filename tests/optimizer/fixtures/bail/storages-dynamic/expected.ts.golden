@@ -12,7 +12,7 @@ export function scenario(): unknown {
   const storages = [movers, statues];
   const visited: number[] = [];
 
-  // expect-diagnostic: 99912 STORAGES_DYNAMIC
+  // expect-diagnostic: 99912 STORAGES_DYNAMIC 3
   each(storages, (e) => {
     visited.push(e.id);
   });

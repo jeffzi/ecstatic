@@ -3,7 +3,7 @@ import { createWorld, each, register, spawn } from "ecstatic";
 import { Mover } from "../../schema.js";
 
 function visitAll<T>(storage: T, visited: number[]): T {
-  // expect-diagnostic: 99910 SHAPE_UNRESOLVED
+  // expect-diagnostic: 99910 SHAPE_UNRESOLVED 3
   each(
     // @ts-expect-error -- an argument typed by an unconstrained type parameter is the form under test
     storage,

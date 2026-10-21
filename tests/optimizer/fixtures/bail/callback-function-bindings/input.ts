@@ -12,7 +12,7 @@ export function scenario(): unknown {
   ];
   const names: string[] = [];
 
-  // expect-diagnostic: 99917 CALLBACK_FUNCTION_BINDINGS
+  // expect-diagnostic: 99917 CALLBACK_FUNCTION_BINDINGS 3
   each(movers, function tally(e) {
     e.Position.x += 1;
     names.push(tally.name);

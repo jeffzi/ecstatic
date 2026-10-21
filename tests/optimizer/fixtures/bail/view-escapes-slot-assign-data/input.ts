@@ -10,7 +10,7 @@ export function scenario(): unknown {
   spawn(movers, { Position: { x: 2, y: 0 } });
   const xs: number[] = [];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 15, column 5: an assignment to a slot`
   each(movers, (e) => {
     e.Position = { x: e.Position.x * 10, y: 0 };
     xs.push(e.Position.x);

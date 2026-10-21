@@ -10,7 +10,7 @@ export function scenario(): unknown {
   let thrown = "none";
 
   try {
-    // expect-diagnostic: 99918 VIEW_ESCAPES
+    // expect-diagnostic: 99918 VIEW_ESCAPES 5 `line 16, column 7: an assignment to a slot`
     each(movers, (e) => {
       // @ts-expect-error -- assigning the read-only id is the behavior under test
       e.id = 0;

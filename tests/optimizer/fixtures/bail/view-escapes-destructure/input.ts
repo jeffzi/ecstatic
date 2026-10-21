@@ -10,7 +10,7 @@ export function scenario(): unknown {
   spawn(movers, { Position: { x: 2, y: 0 } });
   const keyCounts: number[] = [];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 15, column 13: a destructuring form that does not lower`
   each(movers, (e) => {
     const { ...copy } = e.Position;
     keyCounts.push(Object.keys(copy).length);

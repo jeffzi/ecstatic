@@ -11,7 +11,7 @@ export function scenario(): unknown {
   let last: unknown = undefined;
   let rows = 0;
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 16, column 12: the view as a value`
   each(movers, (e) => {
     last = e;
     rows += 1;

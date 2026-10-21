@@ -10,7 +10,7 @@ export function scenario(): unknown {
   spawn(movers, { Position: { x: 2, y: 0 } });
   const xs: number[] = [];
 
-  // expect-diagnostic: 99914 CALLBACK_PARAMS
+  // expect-diagnostic: 99914 CALLBACK_PARAMS 3
   each(movers, ({ Position: { x } }) => {
     // oxlint-disable-next-line no-var -- a var redeclaring the parameter is the behavior under test: the optimizer keeps the runtime call
     var x: number = x * 10;

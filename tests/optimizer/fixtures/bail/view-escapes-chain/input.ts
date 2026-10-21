@@ -13,7 +13,7 @@ export function scenario(): unknown {
   spawn(knights, { Position: { x: 2, y: 0 } });
   const lengths: number[] = [];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 18, column 18: an optional chain past a field`
   each(knights, (e) => {
     lengths.push(e.Crest?.motto.length ?? -1);
   });

@@ -20,7 +20,12 @@ import {
   type FileBail,
 } from "../../src/plugin/optimizer/diagnostics.js";
 import { RULES, type Rule } from "../../src/plugin/optimizer/emit/catalog.js";
-import { REASONS, type ReasonInfo, reasonInfo } from "../../src/plugin/optimizer/facts.js";
+import {
+  DETAIL_PLACEHOLDER,
+  REASONS,
+  type ReasonInfo,
+  reasonInfo,
+} from "../../src/plugin/optimizer/facts.js";
 import { type Bail, plan, type PlanResult } from "../../src/plugin/optimizer/plan.js";
 import {
   createRewriter,
@@ -54,10 +59,15 @@ const EXPECT_PREFIX = "// expect-diagnostic:";
  */
 const EXPECT_MARKER = /expect[-_ ]?diagnostics?\b/iu;
 
-/** The grammar of an expected-diagnostic comment: "warning" for a reason reported in every build, the code, the ID. */
-const EXPECT_COMMENT = /^\/\/ expect-diagnostic: (warning )?(\d+) ([A-Z_]+)$/u;
+/**
+ * The grammar of an expected-diagnostic comment: "warning" for a reason reported in every build, the
+ * code, the ID, the 1-based column of the call on the line below, and, in backticks, the detail the
+ * reason's text substitutes when it has one.
+ */
+const EXPECT_COMMENT =
+  /^\/\/ expect-diagnostic: (warning )?(\d+) ([A-Z_]+) ([1-9]\d*)(?: `(.+)`)?$/u;
 
-const EXPECT_GRAMMAR = `${EXPECT_PREFIX} [warning ]<code> <ID>`;
+const EXPECT_GRAMMAR = `${EXPECT_PREFIX} [warning ]<code> <ID> <column>[ \`<detail>\`]`;
 
 /** Starts a rewrite claim: a comment saying the fixture's rewrite applies the rule it names. */
 const CLAIM_PREFIX = "// rewrite-applies:";
@@ -76,17 +86,21 @@ interface Expected {
   readonly file: string;
   readonly id: string;
   readonly line: number;
+  readonly column: number;
   readonly code: number;
+  readonly detail: string | undefined;
   readonly warning: boolean;
 }
 
-/** One diagnostic as the harness compares it: where, which reason, and in which category. */
+/** One diagnostic as the harness compares it: where, which reason with which detail, and in which category. */
 interface Found {
   readonly file: string;
   readonly id: string;
   readonly category: BailDiagnostic["category"];
   readonly line: number;
+  readonly column: number;
   readonly code: number;
+  readonly detail: string | undefined;
 }
 
 /** One rule a fixture's rewrite claim says its rewrite applies, with the file and line of the claim. */
@@ -124,6 +138,28 @@ const REASONS_BY_CODE: ReadonlyMap<number, ReasonInfo> = new Map(
 
 const RULE_NAMES: ReadonlySet<string> = new Set(RULES);
 
+/** Whether the text of `info` substitutes a bail's detail. */
+function hasDetail(info: ReasonInfo): boolean {
+  return info.text.includes(DETAIL_PLACEHOLDER);
+}
+
+/**
+ * The detail `message` carries for the reason `info`, read from where the reason's text places it.
+ *
+ * @param info - The reason the message reports.
+ * @param message - The diagnostic's message.
+ * @returns The text standing in the placeholder, or `undefined` when the reason substitutes no
+ *   detail or the message does not hold the reason's text around it.
+ */
+function detailOf(info: ReasonInfo | undefined, message: string): string | undefined {
+  if (info === undefined || !hasDetail(info)) return undefined;
+  const [before = "", after = ""] = info.text.split(DETAIL_PLACEHOLDER);
+  const start = message.indexOf(before);
+  const end = message.lastIndexOf(after);
+  if (start === -1 || end < start + before.length) return undefined;
+  return message.slice(start + before.length, end);
+}
+
 /** Whether `name` names a rule of the rewrite catalog. */
 function isRule(name: string): name is Rule {
   return RULE_NAMES.has(name);
@@ -160,7 +196,7 @@ function parseExpectation(fixture: string, file: string, comment: string, line: 
       `${at}: ${JSON.stringify(comment)} does not read ${JSON.stringify(EXPECT_GRAMMAR)}`,
     );
   }
-  const [, mark, codeText = "", id = ""] = match;
+  const [, mark, codeText = "", id = "", columnText = "", detail] = match;
   const code = Number(codeText);
   const info = REASONS_BY_CODE.get(code);
   if (info?.id !== id) {
@@ -171,7 +207,12 @@ function parseExpectation(fixture: string, file: string, comment: string, line: 
   if (warning !== isWarning) {
     throw new Error(`${at}: ${id} is marked warning = ${warning}, want ${isWarning}`);
   }
-  return { file, id, line: line + 1, code, warning };
+  const takesDetail = hasDetail(info);
+  if ((detail !== undefined) !== takesDetail) {
+    const want = takesDetail ? "needs" : "takes no";
+    throw new Error(`${at}: ${id} ${want} a detail`);
+  }
+  return { file, id, line: line + 1, column: Number(columnText), code, detail, warning };
 }
 
 /** Every diagnostic the comments of `content`, the text of `file` in `fixture`, call for, in line order. */
@@ -244,12 +285,13 @@ function appliedIn(run: CorpusRun, fixture: string): Set<Rule> {
   return rules;
 }
 
-/** `list` sorted by file, line, code, then category. */
+/** `list` sorted by file, line, column, code, then category. */
 function sortedFound(list: readonly Found[]): Found[] {
   return list.toSorted((a, b) => {
     const byFile = a.file.localeCompare(b.file);
     if (byFile !== 0) return byFile;
     if (a.line !== b.line) return a.line - b.line;
+    if (a.column !== b.column) return a.column - b.column;
     if (a.code !== b.code) return a.code - b.code;
     return a.category.localeCompare(b.category);
   });
@@ -260,19 +302,30 @@ function wanted(all: readonly Expected[], strict: boolean): Found[] {
   return sortedFound(
     all
       .filter((e) => strict || e.warning)
-      .map(({ file, id, line, code }) => ({
+      .map(({ file, id, line, column, code, detail }) => ({
         file,
         id,
         category: strict ? "error" : "warning",
         line,
+        column,
         code,
+        detail,
       })),
   );
 }
 
 /** A diagnostic as the harness compares it, with its file named by base name. */
-function foundOf({ file, category, line, code }: BailDiagnostic): Found {
-  return { file: basename(file), id: REASONS_BY_CODE.get(code)?.id ?? "", category, line, code };
+function foundOf({ file, category, line, column, code, message }: BailDiagnostic): Found {
+  const info = REASONS_BY_CODE.get(code);
+  return {
+    file: basename(file),
+    id: info?.id ?? "",
+    category,
+    line,
+    column,
+    code,
+    detail: detailOf(info, message),
+  };
 }
 
 /** `diagnostics` grouped by the fixture directory of their file, each group sorted. */
@@ -580,17 +633,62 @@ describe("benchmarks", () => {
 describe("expect-diagnostic comments", () => {
   const shape = reasonInfo("SHAPE_UNRESOLVED");
   const async = reasonInfo("CALLBACK_ASYNC");
+  const escapes = reasonInfo("VIEW_ESCAPES");
+  const internal = reasonInfo("INTERNAL");
+  const escape = "line 9, column 12: the view as a value";
 
   it.each([
     {
-      name: "a strict reason as code then ID",
-      comment: `// expect-diagnostic: ${shape.code} ${shape.id}`,
-      expected: { file: INPUT_FILE, id: shape.id, line: 8, code: shape.code, warning: false },
+      name: "a strict reason as code, ID, then column",
+      comment: `// expect-diagnostic: ${shape.code} ${shape.id} 3`,
+      expected: {
+        file: INPUT_FILE,
+        id: shape.id,
+        line: 8,
+        column: 3,
+        code: shape.code,
+        detail: undefined,
+        warning: false,
+      },
     },
     {
       name: "a warning reason after the warning mark",
-      comment: `// expect-diagnostic: warning ${async.code} ${async.id}`,
-      expected: { file: INPUT_FILE, id: async.id, line: 8, code: async.code, warning: true },
+      comment: `// expect-diagnostic: warning ${async.code} ${async.id} 15`,
+      expected: {
+        file: INPUT_FILE,
+        id: async.id,
+        line: 8,
+        column: 15,
+        code: async.code,
+        detail: undefined,
+        warning: true,
+      },
+    },
+    {
+      name: "a reason with a detail, the detail in backticks after the column",
+      comment: `// expect-diagnostic: ${escapes.code} ${escapes.id} 3 \`${escape}\``,
+      expected: {
+        file: INPUT_FILE,
+        id: escapes.id,
+        line: 8,
+        column: 3,
+        code: escapes.code,
+        detail: escape,
+        warning: false,
+      },
+    },
+    {
+      name: "the internal reason with its detail",
+      comment: `// expect-diagnostic: ${internal.code} ${internal.id} 5 \`Error: banana\``,
+      expected: {
+        file: INPUT_FILE,
+        id: internal.id,
+        line: 8,
+        column: 5,
+        code: internal.code,
+        detail: "Error: banana",
+        warning: false,
+      },
     },
   ])("parse $name, marking the line below", ({ comment, expected }) => {
     const parsed = parseExpectation(SAMPLE_FIXTURE, INPUT_FILE, comment, 7);
@@ -599,42 +697,111 @@ describe("expect-diagnostic comments", () => {
   });
 
   it.each([
-    { name: "ID before code", comment: `${EXPECT_PREFIX} ${shape.id} ${shape.code}` },
+    { name: "ID before code", comment: `${EXPECT_PREFIX} ${shape.id} ${shape.code} 3` },
     {
       name: "trailing warning mark",
-      comment: `${EXPECT_PREFIX} ${async.code} ${async.id} warning`,
+      comment: `${EXPECT_PREFIX} ${async.code} ${async.id} 3 warning`,
     },
-    { name: "missing ID", comment: `${EXPECT_PREFIX} ${shape.code}` },
+    { name: "missing ID", comment: `${EXPECT_PREFIX} ${shape.code} 3` },
+    { name: "missing column", comment: `${EXPECT_PREFIX} ${shape.code} ${shape.id}` },
+    { name: "column zero", comment: `${EXPECT_PREFIX} ${shape.code} ${shape.id} 0` },
+    { name: "column not a number", comment: `${EXPECT_PREFIX} ${shape.code} ${shape.id} three` },
     {
       name: "ID and code of different reasons",
-      comment: `${EXPECT_PREFIX} ${shape.code} ${async.id}`,
+      comment: `${EXPECT_PREFIX} ${shape.code} ${async.id} 3`,
     },
-    { name: "code outside the catalog", comment: `${EXPECT_PREFIX} 12345 ${shape.id}` },
+    { name: "code outside the catalog", comment: `${EXPECT_PREFIX} 12345 ${shape.id} 3` },
     {
       name: "warning mark on a strict reason",
-      comment: `${EXPECT_PREFIX} warning ${shape.code} ${shape.id}`,
+      comment: `${EXPECT_PREFIX} warning ${shape.code} ${shape.id} 3`,
     },
     {
       name: "warning reason without the mark",
-      comment: `${EXPECT_PREFIX} ${async.code} ${async.id}`,
+      comment: `${EXPECT_PREFIX} ${async.code} ${async.id} 3`,
     },
-    { name: "plural keyword", comment: `// expect-diagnostics: ${shape.code} ${shape.id}` },
+    {
+      name: "a detail reason without its detail",
+      comment: `${EXPECT_PREFIX} ${escapes.code} ${escapes.id} 3`,
+    },
+    {
+      name: "the internal reason without its detail",
+      comment: `${EXPECT_PREFIX} ${internal.code} ${internal.id} 3`,
+    },
+    {
+      name: "a detail on a reason without one",
+      comment: `${EXPECT_PREFIX} ${shape.code} ${shape.id} 3 \`${escape}\``,
+    },
+    {
+      name: "a detail outside backticks",
+      comment: `${EXPECT_PREFIX} ${escapes.code} ${escapes.id} 3 ${escape}`,
+    },
+    {
+      name: "an empty detail",
+      comment: `${EXPECT_PREFIX} ${escapes.code} ${escapes.id} 3 \`\``,
+    },
+    { name: "plural keyword", comment: `// expect-diagnostics: ${shape.code} ${shape.id} 3` },
     {
       name: "no space after the slashes",
-      comment: `//expect-diagnostic: ${shape.code} ${shape.id}`,
+      comment: `//expect-diagnostic: ${shape.code} ${shape.id} 3`,
     },
-    { name: "no colon", comment: `// expect-diagnostic ${shape.code} ${shape.id}` },
+    { name: "no colon", comment: `// expect-diagnostic ${shape.code} ${shape.id} 3` },
     {
       name: "after code on its line",
-      comment: `export const kiwi = 2; ${EXPECT_PREFIX} ${shape.code} ${shape.id}`,
+      comment: `export const kiwi = 2; ${EXPECT_PREFIX} ${shape.code} ${shape.id} 3`,
     },
-    { name: "in a block comment", comment: `/* expect-diagnostic: ${shape.code} ${shape.id} */` },
+    {
+      name: "in a block comment",
+      comment: `/* expect-diagnostic: ${shape.code} ${shape.id} 3 */`,
+    },
   ])("reject $name, naming the fixture and line", ({ comment }) => {
     const content = `export const banana = 1;\n  ${comment}\nconsole.log(banana);\n`;
 
     expect(() => fileExpectations(SAMPLE_FIXTURE, INPUT_FILE, content)).toThrow(
       `fixture ${SAMPLE_FIXTURE}: ${INPUT_FILE}:2:`,
     );
+  });
+});
+
+describe("foundOf", () => {
+  const pos = {
+    file: join(CORPUS_ROOT, SAMPLE_FIXTURE, INPUT_FILE),
+    offset: 40,
+    line: 4,
+    column: 3,
+  };
+
+  it.each([
+    { reason: "VIEW_ESCAPES", detail: "line 5, column 7: a key outside the shape", strict: true },
+    { reason: "INTERNAL", detail: "Error: banana (`kiwi`)", strict: true },
+    { reason: "INTERNAL", detail: "Error: banana (`kiwi`)", strict: false },
+  ] as const)(
+    "reads the $reason detail from the message, strict $strict",
+    ({ reason, detail, strict }) => {
+      const [diagnostic] = bailDiagnostics([{ call: 40, op: "each", reason, pos, detail }], strict);
+
+      const found = diagnostic === undefined ? undefined : foundOf(diagnostic);
+
+      expect(found?.detail).toBe(detail);
+    },
+  );
+
+  it("reads no detail for a reason whose text has none", () => {
+    const [diagnostic] = bailDiagnostics(
+      [{ call: 40, op: "each", reason: "SHAPE_UNRESOLVED", pos }],
+      true,
+    );
+
+    const found = diagnostic === undefined ? undefined : foundOf(diagnostic);
+
+    expect(found).toStrictEqual({
+      file: INPUT_FILE,
+      id: "SHAPE_UNRESOLVED",
+      category: "error",
+      line: 4,
+      column: 3,
+      code: reasonInfo("SHAPE_UNRESOLVED").code,
+      detail: undefined,
+    });
   });
 });
 
@@ -740,7 +907,15 @@ describe("catalogGaps", () => {
 describe("strayDiagnostics", () => {
   const shape = reasonInfo("SHAPE_UNRESOLVED");
   const diagnostic: Found[] = [
-    { file: "schema.ts", id: shape.id, category: "error", line: 3, code: shape.code ?? 0 },
+    {
+      file: "schema.ts",
+      id: shape.id,
+      category: "error",
+      line: 3,
+      column: 1,
+      code: shape.code ?? 0,
+      detail: undefined,
+    },
   ];
   const none = new Map<string, Found[]>();
 

@@ -11,7 +11,7 @@ export function scenario(): unknown {
     spawn(movers, { Position: { x: 3, y: 4 } }),
   ];
 
-  // expect-diagnostic: 99919 UNSUPPORTED_ASSIGNMENT
+  // expect-diagnostic: 99919 UNSUPPORTED_ASSIGNMENT 3
   each(movers, (e) => {
     [e.Position.x, e.Position.y] = [e.Position.y, e.Position.x];
   });

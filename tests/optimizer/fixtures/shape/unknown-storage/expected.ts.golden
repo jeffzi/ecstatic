@@ -10,7 +10,7 @@ export function scenario(): unknown {
   const opaque: unknown = movers;
   const visited: number[] = [];
 
-  // expect-diagnostic: 99910 SHAPE_UNRESOLVED
+  // expect-diagnostic: 99910 SHAPE_UNRESOLVED 3
   each(
     // @ts-expect-error -- an unknown storage argument is the form under test
     opaque,

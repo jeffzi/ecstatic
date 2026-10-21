@@ -12,7 +12,7 @@ export function scenario(): unknown {
   spawn(statues, { Health: { hp: 4 } });
   const pairs: number[][] = [];
 
-  // expect-diagnostic: 99918 VIEW_ESCAPES
+  // expect-diagnostic: 99918 VIEW_ESCAPES 3 `line 18, column 19: a reference from a nested callback that keeps its runtime call`
   each(movers, (outer) => {
     each(statues, [Health], (inner) => {
       pairs.push([outer.id, inner.id]);

@@ -13,7 +13,7 @@ function visitAll<Extra extends readonly (typeof Velocity)[]>(
   spawn(wide);
   spawn(wide);
 
-  // expect-diagnostic: 99910 SHAPE_UNRESOLVED
+  // expect-diagnostic: 99910 SHAPE_UNRESOLVED 3
   each(storage, (e) => {
     visited.push(e.id);
   });

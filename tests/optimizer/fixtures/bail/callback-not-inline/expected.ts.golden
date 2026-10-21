@@ -13,7 +13,7 @@ export function scenario(): unknown {
     visited.push(e.id);
   };
 
-  // expect-diagnostic: 99913 CALLBACK_NOT_INLINE
+  // expect-diagnostic: 99913 CALLBACK_NOT_INLINE 3
   each(movers, visit);
 
   return { visited };
