@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { EscapeKind } from "../../../../src/plugin/optimizer/facts.js";
+import type { EscapeKind, ViewUse } from "../../../../src/plugin/optimizer/facts.js";
 import { SPAWN_TIMEOUT_MS } from "../project.js";
 import {
   CallbackProject,
@@ -25,6 +25,17 @@ interface EscapeCase {
 }
 
 const VALUE_ESCAPE_CASES: readonly EscapeCase[] = [
+  {
+    name: "the view read through an optional chain",
+    source: `each(enemies, (e) => {
+	visit(e?.Position);
+	visit(e?.id);
+});`,
+    want: [
+      { mark: "e?.Position", kind: "view" },
+      { mark: "e?.id", kind: "view" },
+    ],
+  },
   {
     name: "the view passed, stored, compared, and returned",
     source: `each(enemies, (e) => {
@@ -315,12 +326,127 @@ const EVALUATION_ESCAPE_CASES: readonly EscapeCase[] = [
   },
 ];
 
+/** A class expression whose static block binds the view and a slot by alias and by pattern. */
+const STATIC_BLOCK_BINDINGS = `class {
+			static {
+				const p = e.Position;
+				const { Velocity: v } = e;
+				const { y } = e.Position;
+				visit(p.x + v.dx + y);
+			}
+		}`;
+
+/** The escapes of the bindings in `STATIC_BLOCK_BINDINGS`, wherever the class expression sits. */
+const NESTED_BINDING_ESCAPES: readonly WantEscape[] = [
+  { mark: "e.Position;", kind: "nested" },
+  { mark: "e;", kind: "nested" },
+  { mark: "e.Position;", nth: 1, kind: "nested" },
+];
+
+const NESTED_BINDING_CASES: readonly EscapeCase[] = [
+  {
+    name: "bindings in a class static block inside a method body",
+    source: `each(enemies, (e) => {
+	class Probe {
+		m(): void {
+			visit(${STATIC_BLOCK_BINDINGS});
+		}
+	}
+	visit(Probe);
+});`,
+    want: NESTED_BINDING_ESCAPES,
+  },
+  {
+    name: "bindings in a class static block inside a parameter default",
+    source: `each(enemies, (e) => {
+	class Probe {
+		m(q = ${STATIC_BLOCK_BINDINGS}): void {
+			visit(q);
+		}
+	}
+	visit(Probe);
+});`,
+    want: NESTED_BINDING_ESCAPES,
+  },
+  {
+    name: "bindings in a class static block inside a nested function",
+    source: `each(enemies, (e) => {
+	const later = () => ${STATIC_BLOCK_BINDINGS};
+	visit(later);
+});`,
+    want: NESTED_BINDING_ESCAPES,
+  },
+  {
+    name: "bindings in a class static block inside an instance field initializer",
+    source: `each(enemies, (e) => {
+	class Probe {
+		own = ${STATIC_BLOCK_BINDINGS};
+	}
+	visit(Probe);
+});`,
+    want: NESTED_BINDING_ESCAPES,
+  },
+];
+
 const ESCAPE_CASES: readonly EscapeCase[] = [
   ...VALUE_ESCAPE_CASES,
   ...FORM_ESCAPE_CASES,
   ...OPERATION_ESCAPE_CASES,
   ...PATTERN_ESCAPE_CASES,
   ...EVALUATION_ESCAPE_CASES,
+  ...NESTED_BINDING_CASES,
+];
+
+/** The view uses of the bindings in `STATIC_BLOCK_BINDINGS` when its static block runs with the callback. */
+const STATIC_BLOCK_USES: readonly Pick<ViewUse, "kind" | "comp" | "field" | "alias">[] = [
+  { kind: "alias", comp: "Position", field: "", alias: false },
+  { kind: "destructure", comp: "", field: "", alias: false },
+  { kind: "alias", comp: "Velocity", field: "", alias: false },
+  { kind: "destructure", comp: "Position", field: "", alias: false },
+  { kind: "field-read", comp: "Position", field: "y", alias: false },
+  { kind: "field-read", comp: "Position", field: "x", alias: true },
+  { kind: "field-read", comp: "Velocity", field: "dx", alias: true },
+];
+
+/** Sources binding the view and its slots in class static blocks that run when the callback runs. */
+const EVALUATED_BINDING_CASES: readonly { name: string; source: string }[] = [
+  {
+    name: "a static block of a class in a member decorator",
+    source: `${MARK_DECL}each(enemies, (e) => {
+	class Probe {
+		@mark(${STATIC_BLOCK_BINDINGS})
+		m(): void {}
+	}
+	visit(Probe);
+});`,
+  },
+  {
+    name: "a static block of a class in a computed member name",
+    source: `each(enemies, (e) => {
+	class Probe {
+		[String(${STATIC_BLOCK_BINDINGS})](): void {}
+	}
+	visit(Probe);
+});`,
+  },
+  {
+    name: "a static block of a class in a parameter decorator",
+    source: `${MARK_DECL}each(enemies, (e) => {
+	class Probe {
+		m(@mark(${STATIC_BLOCK_BINDINGS}) q: unknown): void {}
+	}
+	visit(Probe);
+});`,
+  },
+  {
+    name: "a static block of a class in a static field initializer",
+    source: `each(enemies, (e) => {
+	class Probe {
+		static own = ${STATIC_BLOCK_BINDINGS};
+	}
+	visit(Probe);
+});`,
+  },
 ];
 
 /** Lets the view escape once directly in the callback and once from a nested function. */
@@ -341,7 +467,12 @@ const NESTED_LOOPS_SOURCE = `each(enemies, (e) => {
 
 const project = new CallbackProject(
   [],
-  [...ESCAPE_CASES.map(({ source }) => source), POSITIONED_ESCAPES_SOURCE, NESTED_LOOPS_SOURCE],
+  [
+    ...ESCAPE_CASES.map(({ source }) => source),
+    ...EVALUATED_BINDING_CASES.map(({ source }) => source),
+    POSITIONED_ESCAPES_SOURCE,
+    NESTED_LOOPS_SOURCE,
+  ],
 );
 
 beforeAll(() => project.open(), SPAWN_TIMEOUT_MS);
@@ -382,6 +513,27 @@ describe("summarizeCallback", () => {
         ["e);", "e.id"].map((mark) => caseOccurrence(located, mark)),
       );
     });
+  });
+
+  describe("when a class static block runs with the callback", () => {
+    it.each(EVALUATED_BINDING_CASES)(
+      "records the bindings in $name as view uses, with no escape",
+      async ({ source }) => {
+        const located = await project.viewCall(source);
+
+        const { callback } = await project.summarize(located);
+
+        expect({
+          uses: callback.viewUses.map(({ kind, comp, field, alias }) => ({
+            kind,
+            comp,
+            field,
+            alias,
+          })),
+          escapes: callback.escapes,
+        }).toStrictEqual({ uses: STATIC_BLOCK_USES, escapes: [] });
+      },
+    );
   });
 
   describe("when a nested loop callback references an outer view", () => {

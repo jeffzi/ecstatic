@@ -6,6 +6,7 @@ import {
   type ObjectBindingPattern,
   type ParameterDeclaration,
   type SourceFile,
+  type VariableDeclaration,
 } from "typescript/ast";
 import {
   isArrowFunction,
@@ -231,12 +232,12 @@ async function classifyReferences(
     Promise.all(scan.deferred.map(async ({ loop }) => await loop)),
   ]);
   const classifier = new ViewClassifier({
-    fn,
     shapes,
     view,
     pattern,
     symbols,
     declarations,
+    ownDeclarations: scan.ownDeclarations,
     globalUndefined,
   });
   classifier.classifyParamPattern();
@@ -304,11 +305,13 @@ interface DeferredReference {
 /**
  * Collects, without querying the checker, the identifiers a callback's body can reference its view
  * through: those it evaluates, in walk order, and those in code that runs only when called. The
- * checker queries they need are then issued together.
+ * checker queries they need are then issued together. It also collects the variable declarations
+ * the callback runs when it runs.
  */
 class ReferenceScan {
   readonly evaluated: Identifier[] = [];
   readonly deferred: DeferredReference[] = [];
+  readonly ownDeclarations = new Set<VariableDeclaration>();
   readonly #scope: CallbackScope;
 
   constructor(scope: CallbackScope) {
@@ -326,6 +329,7 @@ class ReferenceScan {
       if (!isNamePosition(node)) this.evaluated.push(node);
       return;
     }
+    if (isVariableDeclaration(node)) this.ownDeclarations.add(node);
     if (isNestedFunction(node)) {
       this.#scanNested(
         node,

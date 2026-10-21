@@ -70,25 +70,24 @@ import {
 } from "typescript/ast/is";
 import { visitNode } from "typescript/ast/visitor";
 
-import type { NodeTable } from "../nodes.js";
+import { type NodeTable, tableNode } from "../nodes.js";
 import type { EachInlining } from "../plan.js";
 import { boundNames } from "../syntax.js";
 import { bodyRule, inDeadZone, inOwnCode, isCodeBoundary, outerReferences } from "./body-rules.js";
 import type { Rule } from "./catalog.js";
 import {
   assignTo,
-  binary,
+  commaList,
   declaration,
   letStatement,
   parenthesized,
   type Visit,
 } from "./expressions.js";
-import { tableNode } from "./lowering.js";
 import type { NameGenerator } from "./names.js";
 
 /**
  * The expressions whose text starts with their first child: an expression statement of one reads
- * as a block or a function declaration when that child, followed down, does.
+ * as a block, a function declaration, or a class declaration when that child, followed down, does.
  */
 const LEADING_CHILD_KINDS: ReadonlySet<SyntaxKind> = new Set([
   SyntaxKind.PostfixUnaryExpression,
@@ -106,11 +105,13 @@ const LEADING_CHILD_KINDS: ReadonlySet<SyntaxKind> = new Set([
 
 /**
  * The rule a returned value applies by the kind of the expression its text starts with: the kinds
- * an expression statement must parenthesize.
+ * an expression statement must parenthesize, as it would otherwise read as a block, a function
+ * declaration, or a class declaration.
  */
 const RETURN_RULES: ReadonlyMap<SyntaxKind, Rule> = new Map([
   [SyntaxKind.ObjectLiteralExpression, "return-object-literal"],
   [SyntaxKind.FunctionExpression, "return-function-expression"],
+  [SyntaxKind.ClassExpression, "return-class-expression"],
 ]);
 
 /** What a {@link Transplant} rewrites, and where it takes its names and records its rules. */
@@ -189,7 +190,8 @@ export class Transplant {
    * @param node - A node of the body.
    * @param visit - Visits the parts of `node` the rewrite keeps.
    * @returns The rewrite, or undefined when the transplant leaves `node` to the caller.
-   * @throws Error when an object pattern element of a `var` binding name has no key and binds no name.
+   * @throws Error when an object pattern element of a `var` binding name binds no name, or has no
+   *   key and binds a pattern, or a `for…in` or `for…of` head of the callback declares no binding.
    */
   visit(node: Node, visit: Visit): Node | undefined {
     const label = this.#relabeled.get(node);
@@ -357,8 +359,8 @@ export class Transplant {
 
   /**
    * Records the rules of a return of the callback: without a value, or with one that starts with
-   * an object literal, a function expression, or anything else; the labeled continue; and a return
-   * inside `try … finally`.
+   * an object literal, a function expression, a class expression, or anything else; the labeled
+   * continue; and a return inside `try … finally`.
    *
    * @param node - The return.
    * @param nested - Whether an inner loop or switch lies above it.
@@ -399,7 +401,8 @@ export class Transplant {
    * @param visit - Visits the parts the rewrite keeps.
    * @returns The statement with the head's assignments, or its assignment target, in place of the
    *   list; undefined for any other node.
-   * @throws Error when an object pattern element of a `var` binding name has no key and binds no name.
+   * @throws Error when an object pattern element of a `var` binding name binds no name, or has no
+   *   key and binds a pattern, or a `for…in` or `for…of` head of the callback declares no binding.
    */
   #forHead(node: Node, visit: Visit): Node | undefined {
     if (!isForStatement(node) && !isForInStatement(node) && !isForOfStatement(node)) {
@@ -417,9 +420,9 @@ export class Transplant {
         statement,
       );
     }
-    const target = commaList(
-      initializer.declarations.map((decl) => this.#target(decl.name, visit)),
-    );
+    const [decl] = initializer.declarations;
+    if (decl === undefined) throw new Error("emit: a for-in or for-of head declares no binding");
+    const target = this.#target(decl.name, visit);
     const expression = visitNode(node.expression, visit, isExpression);
     return isForInStatement(node)
       ? updateForInStatement(node, node.awaitModifier, target, expression, statement)
@@ -447,7 +450,8 @@ export class Transplant {
    * @param visit - Visits the initializers and the targets' defaults and computed keys.
    * @returns The comma list assigning each declaration of `list` that has an initializer, in
    *   order; undefined when none has.
-   * @throws Error when an object pattern element of a `var` binding name has no key and binds no name.
+   * @throws Error when an object pattern element of a `var` binding name binds no name, or has no
+   *   key and binds a pattern.
    */
   #assignments(list: VariableDeclarationList, visit: Visit): Expression | undefined {
     const assigned: Expression[] = [];
@@ -456,7 +460,8 @@ export class Transplant {
       const value = visitNode(decl.initializer, visit, isExpression);
       assigned.push(assignTo(this.#target(decl.name, visit), value));
     }
-    return assigned.length === 0 ? undefined : commaList(assigned);
+    const last = assigned.pop();
+    return last === undefined ? undefined : commaList(...assigned, last);
   }
 
   /**
@@ -466,7 +471,8 @@ export class Transplant {
    * @param name - The binding name.
    * @param visit - Visits the pattern's defaults and computed keys.
    * @returns The target.
-   * @throws Error when an object pattern element of a `var` binding name has no key and binds no name.
+   * @throws Error when an object pattern element of a `var` binding name binds no name, or has no
+   *   key and binds a pattern.
    */
   #target(name: BindingName, visit: Visit): Expression {
     if (isIdentifier(name)) return name;
@@ -489,16 +495,17 @@ export class Transplant {
    * @param element - The element.
    * @param visit - Visits its default and computed key.
    * @returns `...target`, `key: target = fallback`, or `name = fallback`.
-   * @throws Error when `element` has no key and binds no name.
+   * @throws Error when `element` binds no name, or has no key and binds a pattern.
    */
   #objectTarget(element: BindingElement, visit: Visit): ObjectLiteralElementLike {
     const { name, propertyName } = element;
+    if (name === undefined) throw new Error("emit: an object pattern element binds no name");
     if (propertyName !== undefined) {
       const key = visitNode(propertyName, visit, isPropertyName);
-      return propertyAssignment(key, this.#arrayTarget(element, visit));
+      return propertyAssignment(key, this.#defaulted(name, element, visit));
     }
-    if (name === undefined || !isIdentifier(name)) {
-      throw new Error("emit: an object pattern element without a key binds no name");
+    if (!isIdentifier(name)) {
+      throw new Error("emit: an object pattern element without a key binds a pattern");
     }
     if (element.dotDotDotToken !== undefined) return createSpreadAssignment(name);
     return shorthandAssignment(name, this.#fallback(element, visit));
@@ -515,6 +522,20 @@ export class Transplant {
     const { name } = element;
     if (name === undefined) return createOmittedExpression();
     if (element.dotDotDotToken !== undefined) return createSpreadElement(this.#target(name, visit));
+    return this.#defaulted(name, element, visit);
+  }
+
+  /**
+   * The assignment target of a binding element's name, under the element's default.
+   *
+   * @param name - The element's binding name.
+   * @param element - The element.
+   * @param visit - Visits the default and the name's own defaults and computed keys.
+   * @returns `target = fallback`, or `target` alone when `element` has no default.
+   * @throws Error when an object pattern element in `name` binds no name, or has no key and binds a
+   *   pattern.
+   */
+  #defaulted(name: BindingName, element: BindingElement, visit: Visit): Expression {
     return withDefault(this.#target(name, visit), this.#fallback(element, visit));
   }
 
@@ -571,23 +592,13 @@ function shorthandAssignment(
 }
 
 /**
- * Expressions evaluated in order as one.
- *
- * @param expressions - The expressions, at least one.
- * @returns `first, ..., last`.
- */
-function commaList(expressions: readonly Expression[]): Expression {
-  return expressions.reduce((list, next) => binary(list, SyntaxKind.CommaToken, next));
-}
-
-/**
  * An expression run as a statement.
  *
  * @param expression - The expression.
  * @returns The statement, whose expression is parenthesized when its text would otherwise read as
- *   a block or a function declaration.
+ *   a block, a function declaration, or a class declaration.
  */
-function expressionStatement(expression: Expression): Statement {
+export function expressionStatement(expression: Expression): Statement {
   const reads = RETURN_RULES.has(leftmostExpression(expression).kind);
   return createExpressionStatement(reads ? parenthesized(expression) : expression);
 }

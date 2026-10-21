@@ -7,13 +7,14 @@ const shapeKey = "c10:LadderStep{1:x=n}|";
 // rewrite-applies: return-in-finally
 // rewrite-applies: return-object-literal
 // rewrite-applies: return-function-expression
+// rewrite-applies: return-class-expression
 import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
 
 const Step = component("LadderStep", { x: 0 });
 
 /**
- * Returns early from the callback: with no value; with a value, an object literal and a function expression
- * included, whose expression still runs; from under a nested loop and a `switch`, which ends the row rather than
+ * Returns early from the callback: with no value; with a value, an object literal, a function expression, and a
+ * class expression included, whose expression still runs; from under a nested loop and a `switch`, which ends the row rather than
  * the inner statement; and from inside `try … finally`, whose `finally` still runs.
  *
  * @returns What each row ran before it ended, in visit order.
@@ -56,6 +57,14 @@ export function scenario(): unknown {
               if (LadderStepRecord_1.x[i_1] === 2) {
                   (function () {
                       trace.push("never");
+                  });
+                  continue;
+              }
+              if (LadderStepRecord_1.x[i_1] === 3) {
+                  (class {
+                      static {
+                          trace.push(`class ${LadderStepRecord_1.x[i_1]}`);
+                      }
                   });
                   continue;
               }

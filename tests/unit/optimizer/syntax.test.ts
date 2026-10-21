@@ -1,4 +1,11 @@
-import { type Expression, type Node, type Statement, SyntaxKind } from "typescript/ast";
+import {
+  type Expression,
+  type Identifier,
+  isIdentifier,
+  type Node,
+  type Statement,
+  SyntaxKind,
+} from "typescript/ast";
 import {
   isExpressionStatement,
   isNonNullExpression,
@@ -11,6 +18,7 @@ import type { ProjectView, Session } from "../../../src/plugin/optimizer/session
 import {
   arithmeticOperator,
   boundNames,
+  isReference,
   logicalOperator,
   outermostParens,
   skipWrappers,
@@ -48,7 +56,76 @@ const BOUND_CASES = [
   { name: "an array elision", source: "const [a, , b] = v;", expected: ["a", "b"] },
 ];
 
-const SOURCES = [...SKIP_CASES, ...PARENS_CASES, ...BOUND_CASES].map(({ source }) => source);
+const REFERENCE_CASES = [
+  {
+    name: "a label declaration",
+    source: "foo: for (;;) break foo;",
+    text: "foo",
+    nth: 0,
+    expected: false,
+  },
+  {
+    name: "a break label",
+    source: "foo: for (;;) break foo;",
+    text: "foo",
+    nth: 1,
+    expected: false,
+  },
+  {
+    name: "a continue label",
+    source: "foo: for (;;) continue foo;",
+    text: "foo",
+    nth: 1,
+    expected: false,
+  },
+  {
+    name: "a value inside a labeled body",
+    source: "foo: { x; }",
+    text: "x",
+    nth: 0,
+    expected: true,
+  },
+  {
+    name: "a class extends clause",
+    source: "class C extends Base {}",
+    text: "Base",
+    nth: 0,
+    expected: true,
+  },
+  {
+    name: "a generic class extends clause",
+    source: "class C extends Base<number> {}",
+    text: "Base",
+    nth: 0,
+    expected: true,
+  },
+  {
+    name: "the namespace of a class extends clause",
+    source: "class C extends ns.Base {}",
+    text: "ns",
+    nth: 0,
+    expected: true,
+  },
+  {
+    name: "an interface extends clause",
+    source: "interface I extends Base {}",
+    text: "Base",
+    nth: 0,
+    expected: false,
+  },
+  {
+    name: "an implements clause",
+    source: "class C implements Base {}",
+    text: "Base",
+    nth: 0,
+    expected: false,
+  },
+  { name: "a type annotation", source: "let v: Base;", text: "Base", nth: 0, expected: false },
+];
+
+const SOURCES = [...SKIP_CASES, ...PARENS_CASES, ...BOUND_CASES, ...REFERENCE_CASES].map(
+  ({ source }) => source,
+);
 
 /** An assignment operator and the binary operators it maps to; `undefined` when it has none. */
 interface AssignmentOperator {
@@ -144,6 +221,16 @@ async function firstStatement(source: string): Promise<Statement> {
   return statement;
 }
 
+/** The identifiers under `node` named `name`, in source order. */
+function identifiersNamed(node: Node, name: string): Identifier[] {
+  const found: Identifier[] = [];
+  node.forEachChild((child) => {
+    if (isIdentifier(child) && child.text === name) found.push(child);
+    found.push(...identifiersNamed(child, name));
+  });
+  return found;
+}
+
 /** The expression of the expression statement `source`. */
 async function expressionOf(source: string): Promise<Expression> {
   const statement = await firstStatement(source);
@@ -194,6 +281,21 @@ describe("boundNames", () => {
 
     expect(names).toStrictEqual(expected);
   });
+});
+
+describe("isReference", () => {
+  it.each(REFERENCE_CASES)(
+    "answers $expected for $name",
+    async ({ source, text, nth, expected }) => {
+      const statement = await firstStatement(source);
+      const id = identifiersNamed(statement, text)[nth];
+      if (id === undefined) throw new Error(`${source} names ${text} fewer than ${nth + 1} times`);
+
+      const reference = isReference(id);
+
+      expect(reference).toBe(expected);
+    },
+  );
 });
 
 describe("arithmeticOperator", () => {

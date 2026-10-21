@@ -1,4 +1,5 @@
 import {
+  type BinaryExpression,
   type BindingElement,
   type ElementAccessExpression,
   type Expression,
@@ -14,7 +15,6 @@ import {
   isBindingElement,
   isDeleteExpression,
   isElementAccessExpression,
-  isFunctionLikeDeclaration,
   isIdentifier,
   isObjectBindingPattern,
   isPropertyAccessExpression,
@@ -25,20 +25,12 @@ import { hasExpression } from "typescript/ast/utils";
 import type { CheckerSymbol } from "../compiler.js";
 import {
   type ArchShape,
-  type Component,
   componentField,
   type EscapeKind,
-  shapeComponent,
+  type Operand,
   type UseKind,
 } from "../facts.js";
-import {
-  arithmeticOperator,
-  type InlineCallback,
-  outermostParens,
-  outermostWrapper,
-  skipWrappers,
-} from "../syntax.js";
-import { isInstanceInitializer } from "./evaluated.js";
+import { arithmeticOperator, outermostParens, outermostWrapper, skipWrappers } from "../syntax.js";
 import {
   blockScope,
   destructuredPattern,
@@ -51,11 +43,9 @@ import {
   isTestPosition,
   isUpdateOf,
   isWriteTarget,
-  literalElementKey,
   patternKey,
 } from "./roles.js";
-
-const ID_KEY = "id";
+import { ID_KEY, type SlotInfo, slotInfo, viewKey } from "./view-key.js";
 
 /** A view use found in a callback, before its node is registered. */
 export interface FoundUse {
@@ -64,6 +54,8 @@ export interface FoundUse {
   readonly comp: string;
   readonly field: string;
   readonly alias: boolean;
+  /** The operand of a `compare` use's comparison that is the slot; absent for every other kind. */
+  readonly slotOperand?: Operand;
 }
 
 /** A view escape found in a callback, before its nodes are registered. */
@@ -78,7 +70,6 @@ export type FoundEscape =
 
 /** What classifying a callback's view references reads, every checker answer resolved ahead. */
 export interface ViewContext {
-  readonly fn: InlineCallback;
   /** The site's resolved shapes; with none, every key reads as a data slot holding any field. */
   readonly shapes: readonly ArchShape[];
   /** The symbol of the identifier first parameter; undefined for any other form. */
@@ -89,21 +80,27 @@ export interface ViewContext {
   readonly symbols: ReadonlyMap<Node, CheckerSymbol | undefined>;
   /** The callback's declarations that can alias a slot, by the symbol they declare. */
   readonly declarations: ReadonlyMap<CheckerSymbol, Node>;
+  /** The variable declarations that run when the callback runs, none in code that runs when called. */
+  readonly ownDeclarations: ReadonlySet<Node>;
   /** The identifiers that read the global `undefined`. */
   readonly globalUndefined: ReadonlySet<Node>;
 }
 
-/** What every shape of a site holds under one view key. */
-interface SlotInfo {
-  /** The key's component in each shape; empty when no shape resolved. */
-  readonly comps: readonly Component[];
-  readonly tag: boolean;
-}
-
-/** How a use reaches its slot: through an alias or not, and the field it reads. */
+/**
+ * How a use reaches its slot: through an alias or not, the field it reads, and for a comparison,
+ * which operand the slot is.
+ */
 interface UseDetail {
   readonly alias?: boolean;
   readonly field?: string;
+  readonly slotOperand?: Operand | undefined;
+}
+
+/** Where a use whose slot's presence alone matters is recorded, and what it is. */
+interface TestUse {
+  readonly node: Node;
+  readonly kind: UseKind;
+  readonly slotOperand?: Operand | undefined;
 }
 
 /** A data slot or tag of the view, by its key. */
@@ -134,7 +131,7 @@ export class ViewClassifier {
   /**
    * Creates a classifier for one callback's view references.
    *
-   * @param context - The callback, the site's shapes, and the resolved symbols to classify against.
+   * @param context - The site's shapes, and the resolved symbols and declarations to classify against.
    */
   constructor(context: ViewContext) {
     this.#context = context;
@@ -184,8 +181,9 @@ export class ViewClassifier {
   }
 
   #use(node: Node, kind: UseKind, slot: SlotRef | undefined, how: UseDetail = {}): void {
-    const { alias = false, field = "" } = how;
-    this.uses.push({ node, kind, comp: slot?.comp ?? "", field, alias });
+    const { alias = false, field = "", slotOperand } = how;
+    const use = { node, kind, comp: slot?.comp ?? "", field, alias };
+    this.uses.push(slotOperand === undefined ? use : { ...use, slotOperand });
   }
 
   #referent(id: Identifier): Referent {
@@ -208,7 +206,7 @@ export class ViewClassifier {
   /**
    * The slot a declaration aliases: `const p = e.C` or `const p = e.C!` for a data slot `C`, `e.C`
    * spelled as `#viewKey` reads it, or the property `C: p` or `C` of a pattern destructuring the
-   * view, declared by the callback's own code rather than by a nested function.
+   * view, declared by code that runs when the callback runs.
    *
    * @param decl - The declaration of the symbol a reference reads.
    * @returns The aliased slot, or undefined when `decl` aliases none.
@@ -218,7 +216,9 @@ export class ViewClassifier {
     const initializer = constIdentifierInitializer(decl);
     if (initializer === undefined) return undefined;
     const slot = this.#dataKeySlot(this.#viewKey(skipWrappers(initializer)));
-    return slot === undefined || slot.info.tag || this.#inNestedCode(decl) ? undefined : slot;
+    return slot === undefined || slot.info.tag || !this.#context.ownDeclarations.has(decl)
+      ? undefined
+      : slot;
   }
 
   /**
@@ -232,20 +232,14 @@ export class ViewClassifier {
   }
 
   /**
-   * The key an access reads from the view: `e.K`, or `e["C"]` whose string literal names a
-   * component of the shape, the only way to reach a component whose name is no identifier.
+   * The key an access reads from the view, as {@link viewKey} decides it.
    *
    * @param access - The expression to read.
-   * @returns The key, or undefined for an optional access and any other expression.
+   * @returns The key, or undefined when `access` is no access or reads no view key.
    */
   #viewKey(access: Node): string | undefined {
     if (!isPropertyAccessExpression(access) && !isElementAccessExpression(access)) return undefined;
-    if (access.questionDotToken !== undefined || !this.#isView(skipWrappers(access.expression))) {
-      return undefined;
-    }
-    if (isPropertyAccessExpression(access)) return access.name.text;
-    const key = literalElementKey(access);
-    return key === undefined || key === ID_KEY || this.#slot(key) === undefined ? undefined : key;
+    return viewKey(access, this.#isView(skipWrappers(access.expression)), this.#context.shapes);
   }
 
   /**
@@ -284,7 +278,7 @@ export class ViewClassifier {
       decl.initializer !== undefined &&
       destructuredPattern(decl.initializer) === pattern &&
       this.#isView(skipWrappers(decl.initializer)) &&
-      !this.#inNestedCode(decl)
+      this.#context.ownDeclarations.has(decl)
     );
   }
 
@@ -342,15 +336,15 @@ export class ViewClassifier {
 
   /**
    * Records the reference an identifier makes to the view by the expression around it, past any
-   * parentheses and non-null assertions: `e.K`, `e[...]`, or the value a pattern destructures. Any
-   * other expression, `e?.K` included, is a `view` escape.
+   * parentheses and non-null assertions: `e.K` when {@link viewKey} reads it as a key, `e[...]`, or
+   * the value a pattern destructures. Any other expression, `e?.K` included, is a `view` escape.
    *
    * @param id - The identifier reading the view.
    */
   #classifyView(id: Identifier): void {
     const outer = outermostWrapper(id);
     const up = outer.parent;
-    if (isPropertyAccessOn(up, outer) && up.questionDotToken === undefined) {
+    if (isPropertyAccessOn(up, outer) && this.#viewKey(up) !== undefined) {
       this.#classifyKey(up);
     } else if (isElementAccessOn(up, outer)) {
       this.#classifyElement(up);
@@ -365,8 +359,7 @@ export class ViewClassifier {
    * @param access - The element access on the view.
    */
   #classifyElement(access: ElementAccessExpression): void {
-    const key = this.#viewKey(access);
-    const slot = key === undefined ? undefined : this.#slot(key);
+    const slot = this.#dataKeySlot(this.#viewKey(access));
     if (slot === undefined) this.escape(access, "computed");
     else this.#classifySlot(access, slot, false);
   }
@@ -424,11 +417,17 @@ export class ViewClassifier {
    */
   #classifySlotPosition(outer: Node, slot: SlotRef, alias: boolean): void {
     const test = this.#testUse(outer);
-    if (test !== undefined) this.#use(test.node, test.kind, slot, { alias });
-    else if (isWriteTarget(outer)) this.escape(outer, "slot-assign");
-    else if (slot.info.tag) this.#use(outer, "tag", slot, { alias });
-    else if (!alias) this.#classifySlotValue(outer, slot);
-    else this.escape(outer, "slot-value");
+    if (test !== undefined) {
+      this.#use(test.node, test.kind, slot, { alias, slotOperand: test.slotOperand });
+    } else if (isWriteTarget(outer)) {
+      this.escape(outer, "slot-assign");
+    } else if (slot.info.tag) {
+      this.#use(outer, "tag", slot, { alias });
+    } else if (!alias) {
+      this.#classifySlotValue(outer, slot);
+    } else {
+      this.escape(outer, "slot-value");
+    }
   }
 
   /**
@@ -436,12 +435,15 @@ export class ViewClassifier {
    * global `undefined`, or the left of a `??` whose own value is tested.
    *
    * @param outer - The slot reference with its outermost wrapper.
-   * @returns The node the use is recorded at and its kind, or undefined when `outer` is in none.
+   * @returns The node the use is recorded at, its kind, and for a comparison the operand `outer`
+   *   is; undefined when `outer` is in none.
    */
-  #testUse(outer: Node): { readonly node: Node; readonly kind: UseKind } | undefined {
+  #testUse(outer: Node): TestUse | undefined {
     const up = outer.parent;
     if (isTestPosition(outer)) return { node: outer, kind: "presence" };
-    if (this.#isNullishComparison(up)) return { node: up, kind: "compare" };
+    if (this.#isNullishComparison(up)) {
+      return { node: up, kind: "compare", slotOperand: up.left === outer ? "left" : "right" };
+    }
     if (isBinary(up, SyntaxKind.QuestionQuestionToken) && up.left === outer && isTestPosition(up)) {
       return { node: up, kind: "coalesce" };
     }
@@ -541,7 +543,7 @@ export class ViewClassifier {
    * @param node - The node to test.
    * @returns Whether `node` is such a comparison.
    */
-  #isNullishComparison(node: Node): boolean {
+  #isNullishComparison(node: Node): node is BinaryExpression {
     if (!isBinaryExpression(node)) return false;
     switch (node.operatorToken.kind) {
       case SyntaxKind.EqualsEqualsEqualsToken:
@@ -567,37 +569,13 @@ export class ViewClassifier {
    *   disagree on whether it is a tag.
    */
   #slot(comp: string): SlotRef | undefined {
-    const comps: Component[] = [];
-    let tag = false;
-    for (const [i, shape] of this.#context.shapes.entries()) {
-      const component = shapeComponent(shape, comp);
-      const isTag = component?.fields.length === 0;
-      if (component === undefined || (i > 0 && tag !== isTag)) return undefined;
-      tag = isTag;
-      comps.push(component);
-    }
-    return { comp, info: { comps, tag } };
+    const info = slotInfo(this.#context.shapes, comp);
+    return info === undefined ? undefined : { comp, info };
   }
 
   #isView(node: Node): boolean {
     const { view, symbols } = this.#context;
     return view !== undefined && isIdentifier(node) && symbols.get(node) === view;
-  }
-
-  /**
-   * Whether a node lies in code that runs only when called: a function nested in the callback, or
-   * an instance field's initializer.
-   *
-   * @param node - A node inside the callback.
-   * @returns Whether nested code holds `node`.
-   */
-  #inNestedCode(node: Node): boolean {
-    let child = node;
-    for (let parent = node.parent; parent !== this.#context.fn; parent = parent.parent) {
-      if (isFunctionLikeDeclaration(parent) || isInstanceInitializer(parent, child)) return true;
-      child = parent;
-    }
-    return false;
   }
 }
 

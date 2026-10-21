@@ -41,7 +41,7 @@ import {
 import { visitEachChild, visitNode } from "typescript/ast/visitor";
 
 import { shapeKey, type ViewUse } from "../facts.js";
-import type { NodeTable } from "../nodes.js";
+import { type NodeTable, tableNode } from "../nodes.js";
 import type { EachInlining } from "../plan.js";
 import type { Session } from "../session.js";
 import { type InlineCallback, isInlineCallback } from "../syntax.js";
@@ -55,14 +55,18 @@ import {
   member,
   numeric,
   string,
+  type Visit,
 } from "./expressions.js";
-import { Lowering, tableNode } from "./lowering.js";
+import { Lowering } from "./lowering.js";
 import { NameGenerator } from "./names.js";
 import { printSpliced, type PrintedFile, type Replacement } from "./print.js";
-import { Transplant } from "./transplant.js";
+import { expressionStatement, Transplant } from "./transplant.js";
 
 /** The entry point generated code reaches the runtime through. */
 const INTERNAL_MODULE = "ecstatic/internal";
+
+/** The base name of each local every loop adds: the storage, its row count, and the row index. */
+const LOOP_LOCALS = { storage: "storage", count: "n", row: "i" } as const;
 
 /** What a file with at least one rewrite declares once, ahead of its own statements. */
 interface Preamble {
@@ -274,10 +278,9 @@ class Loop {
     if (storageArgument === undefined || callback === undefined || !isInlineCallback(callback)) {
       throw new Error("emit: the call has no storage or no inline callback");
     }
-    const bases = ["storage", "n", "i"];
-    const storage = this.#names.unique("storage");
-    const n = this.#names.unique("n");
-    const i = this.#names.unique("i");
+    const storage = this.#names.unique(LOOP_LOCALS.storage);
+    const n = this.#names.unique(LOOP_LOCALS.count);
+    const i = this.#names.unique(LOOP_LOCALS.row);
     const { shape, mode } = this.#inlining;
     this.#applied.add(mode === "hoisted" ? "mode-hoisted" : "mode-realloc-safe");
     const lowering = new Lowering({
@@ -308,7 +311,10 @@ class Loop {
       createPostfixUnaryExpression(createIdentifier(i), SyntaxKind.MinusMinusToken),
       createBlock(body, true),
     );
-    transplant.noteOuterReferences(call, callback, [...bases, ...lowering.baseNames]);
+    transplant.noteOuterReferences(call, callback, [
+      ...Object.values(LOOP_LOCALS),
+      ...lowering.baseNames,
+    ]);
     return createBlock(
       [
         constStatement([declaration(storage, storageArgument)]),
@@ -372,7 +378,7 @@ class Loop {
    * @throws Error when a use has no lowering.
    */
   #rowBody(callback: InlineCallback, lowering: Lowering, transplant: Transplant): Statement[] {
-    const visit = (node: Node): Node => {
+    const visit: Visit = (node) => {
       transplant.noteBodyRule(node, callback);
       const use = lowering.useOf(node);
       if (use !== undefined) return lowering.lower(node, use, visit);
@@ -391,7 +397,7 @@ class Loop {
       const bindings = transplant.bindings(body.statements);
       if (bindings !== undefined) statements.unshift(bindings);
     } else {
-      statements = [createExpressionStatement(visitNode(body, visit, isExpression))];
+      statements = [expressionStatement(visitNode(body, visit, isExpression))];
     }
     if (parameters === undefined) return statements;
     return [letStatement(parameters), createBlock(statements, true)];
@@ -413,7 +419,7 @@ class Loop {
  * @param visit - Visits each child.
  * @returns `node` when the visit changed no child, else the updated node.
  */
-function visitChildren(node: Node, visit: (node: Node) => Node): Node {
+function visitChildren(node: Node, visit: Visit): Node {
   const updated = visitEachChild(node, visit);
   if (updated === node) return updated;
   const before = childLists(node);

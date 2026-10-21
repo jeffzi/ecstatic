@@ -201,6 +201,17 @@ describe("built package", () => {
     expect(existsSync(join(distDir, `${stem}.js`))).toBe(true);
   });
 
+  it("declares only the plugin factory and the EcstaticOptions type in the built vite entry", () => {
+    const declarations = readFileSync(join(distDir, "plugin", "vite.d.ts"), "utf8");
+
+    const exported = declarations.match(/^export .+$/gmu);
+
+    expect(exported).toStrictEqual([
+      'export type { EcstaticOptions } from "./options.js";',
+      "export default function ecstatic(options?: EcstaticOptions): Plugin;",
+    ]);
+  });
+
   it("exposes a working assertShape from the built internal entry", async () => {
     const runtime: unknown = await import(pathToFileURL(join(distDir, "index.js")).href);
     const internal: unknown = await import(pathToFileURL(join(distDir, "internal.js")).href);

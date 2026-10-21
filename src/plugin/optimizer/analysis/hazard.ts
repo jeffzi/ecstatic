@@ -46,6 +46,7 @@ import {
   isPrimitiveType,
   typeReadRuns,
 } from "./type-reads.js";
+import { viewKey } from "./view-key.js";
 
 /** What hazard classification knows about the call whose callback it walks. */
 export interface HazardScope {
@@ -309,7 +310,8 @@ class HazardWalker {
 
   /**
    * Whether an access is `e.K` or `e.C.f` on the view, in the receiver forms the body walker reads
-   * as view uses: through parentheses and non-null assertions, and with `e["C"]` for `e.C`.
+   * as view uses: through parentheses and non-null assertions, and with the view keys
+   * {@link viewKey} reads.
    *
    * @param access - The access to test.
    * @returns Whether `access` is part of a view use.
@@ -327,14 +329,17 @@ class HazardWalker {
   }
 
   /**
-   * Whether an access is `e.K`, or `e["K"]` with a string literal key, on the view.
+   * Whether an access reads a view key, as {@link viewKey} decides it, of a receiver the checker
+   * resolves to the view.
    *
    * @param access - The access to test.
    * @returns Whether `access` names a key of the view.
+   * @throws When the compiler process has exited.
    */
   async #isViewKey(access: PropertyAccessExpression | ElementAccessExpression): Promise<boolean> {
-    if (isElementAccessExpression(access) && literalElementKey(access) === undefined) return false;
-    return await isViewReference(this.#checker, this.#scope.view, skipWrappers(access.expression));
+    const { view, shapes } = this.#scope;
+    const onView = await isViewReference(this.#checker, view, skipWrappers(access.expression));
+    return viewKey(access, onView, shapes) !== undefined;
   }
 
   /**

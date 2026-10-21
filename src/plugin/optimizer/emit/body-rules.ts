@@ -24,12 +24,11 @@ import {
   isPropertyAssignment,
   isPropertyDeclaration,
   isSourceFile,
-  isTypeNode,
   isVariableDeclaration,
   isVariableStatement,
 } from "typescript/ast/is";
 
-import { boundNames } from "../syntax.js";
+import { boundNames, isReference } from "../syntax.js";
 import type { Rule } from "./catalog.js";
 
 /** The rule a node of the callback's body applies by its kind alone. */
@@ -155,22 +154,6 @@ function isDeclarationName(id: Identifier): boolean {
       isPropertyAssignment(parent)) &&
     parent.name === id
   );
-}
-
-/**
- * Whether an identifier that names no declaration refers to a binding.
- *
- * @param id - The identifier.
- * @returns False when `id` is part of a type, a property name, a label, or the name of a
- *   meta-property; true otherwise.
- */
-function isReference(id: Identifier): boolean {
-  for (let node: Node = id; !isSourceFile(node); node = node.parent) {
-    if (isTypeNode(node)) return false;
-  }
-  const { parent } = id;
-  if (KIND_RULES.get(parent.kind) === "user-label") return false;
-  return !((isPropertyAccessExpression(parent) || isMetaProperty(parent)) && parent.name === id);
 }
 
 /**

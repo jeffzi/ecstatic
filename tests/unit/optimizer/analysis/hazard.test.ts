@@ -198,6 +198,14 @@ const HAZARD_FREE_CASES: readonly HazardFreeCase[] = [
 	total = e.Position.x;
 	total = e.Position!.x;
 	total = e.id;
+	total = e.banana;
+});`,
+  },
+  {
+    name: "string keys on a view whose shape is unresolved",
+    source: `each(loose, (e: any) => {
+	total = e["banana"].x;
+	total = e["banana"];
 });`,
   },
   {
@@ -453,6 +461,34 @@ each(enemies, (e) => {
 	assertShape(enemies, "key");
 });`,
     marks: ["loose.run()", "loose.run", "(has)(enemies", "assertShape(enemies"],
+  },
+  {
+    name: "reads of an any-typed view that are not view keys: optional chains, the id string key, and unknown string keys",
+    source: `each(enemies, (e: any) => {
+	total = e?.id;
+	total = e["banana"];
+	total = e["id"];
+	total = e?.["Position"];
+	total = e?.Position.x;
+	total = e["banana"].x;
+});`,
+    marks: [
+      "e?.id",
+      `e["banana"]`,
+      `e["id"]`,
+      `e?.["Position"]`,
+      "e?.Position",
+      "e?.Position.x",
+      `e["banana"].x`,
+      `e["banana"].x`,
+    ],
+  },
+  {
+    name: "the id string key on a view whose shape is unresolved",
+    source: `each(loose, (e: any) => {
+	total = e["id"];
+});`,
+    marks: [`e["id"]`],
   },
   {
     name: "a spawn without its storage",

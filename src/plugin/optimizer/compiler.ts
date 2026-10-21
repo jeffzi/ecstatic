@@ -249,12 +249,13 @@ export async function startCompiler(executable: string | undefined): Promise<Com
  * Ends the compiler process. The process's remote objects are never released: it holds nothing
  * worth releasing at its end, and a release written to a process that died meanwhile fails where no
  * caller can catch it. A process that has not answered the requests in flight and exited by the
- * deadline is killed, so a process that stopped answering cannot hold the close forever.
+ * deadline is killed, so a process that stopped answering cannot hold the close forever. A client
+ * that fails to close also gets its process killed, so no process outlives a failed close.
  *
  * @param compiler - Compiler whose process ends.
  * @param timeoutMs - Milliseconds the process gets to answer the requests in flight and exit before
  *   it is killed.
- * @throws When the client fails to close.
+ * @throws When the client fails to close, with the close error, once the process is killed.
  */
 export async function closeCompiler(compiler: Compiler, timeoutMs: number): Promise<void> {
   const deadline = setTimeout(() => {
@@ -262,6 +263,9 @@ export async function closeCompiler(compiler: Compiler, timeoutMs: number): Prom
   }, timeoutMs);
   try {
     await compiler.end();
+  } catch (error) {
+    compiler.kill();
+    throw error;
   } finally {
     clearTimeout(deadline);
   }

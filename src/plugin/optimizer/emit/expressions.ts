@@ -35,12 +35,11 @@ import {
   isElementAccessExpression,
   isExpression,
   isExpressionStatement,
-  isIdentifier,
   isPropertyAccessExpression,
 } from "typescript/ast/is";
 
 import type { ViewUse } from "../facts.js";
-import { outermostParens, skipParens, skipWrappers } from "../syntax.js";
+import { outermostParens, skipParens } from "../syntax.js";
 
 /** Visits a node of the body, returning what it becomes. */
 export type Visit = (node: Node) => Node;
@@ -259,19 +258,6 @@ export function keyword(kind: SyntaxKind.TrueKeyword | SyntaxKind.FalseKeyword):
  */
 export function isValueUsed(node: Node): boolean {
   return !isExpressionStatement(outermostParens(node).parent);
-}
-
-/**
- * Whether an expression spells `null` or `undefined`.
- *
- * @param node - The expression.
- * @returns Whether it is a nullish literal.
- */
-export function isNullishLiteral(node: Expression): boolean {
-  const inner = skipWrappers(node);
-  return (
-    inner.kind === SyntaxKind.NullKeyword || (isIdentifier(inner) && inner.text === "undefined")
-  );
 }
 
 /**

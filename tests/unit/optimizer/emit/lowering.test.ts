@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { closeProject, SPAWN_TIMEOUT_MS } from "../project.js";
 import {
+  CASE_PRELUDE,
   EmitProject,
   everyRun,
   RUN_TIMEOUT_MS,
@@ -230,6 +231,70 @@ const VIEW_CASES: readonly RunCase[] = [
     expected: [true, true, false, false, false, true, true, false, false, false, false, true, true],
   },
   {
+    name: "boolean logical assignments whose value is unused store the column's result",
+    source: `export function scenario(): unknown {
+    const { storage, ids } = guarded();
+    each(storage, (e) => {
+        e.Flags.on &&= false;
+        e.Flags.on ||= e.Position.x > 1;
+        e.Flags.on ??= false;
+        if (e.Shield) {
+            e.Shield.up ||= true;
+            e.Shield.up &&= false;
+            e.Shield.up ??= true;
+        }
+    });
+    return { on: ids.map((id) => get(storage, id, Flags.on)), up: get(storage, ids[0]!, Shield.up) };
+}
+`,
+    expected: { on: [false, true], up: false },
+  },
+  {
+    name: "a number assignment yields the assigned value, or the current one when a logical form short-circuits",
+    source: `export function scenario(): unknown {
+    const { storage, ids } = guarded();
+    const trace: unknown[] = [];
+    each(storage, (e) => {
+        trace.push((e.Position.x = e.Position.x + 1), (e.Position.x += 10), (e.Position.y ||= 4));
+        trace.push((e.Position.y &&= 0), (e.Position.x &&= 7), (e.Position.y ??= 9));
+        if (e.Shield) {
+            trace.push((e.Shield.hp = 2), (e.Shield.hp *= 3), (e.Shield.hp ||= 1));
+            trace.push((e.Shield.level &&= 0), (e.Shield.level ||= 8));
+        }
+    });
+    return {
+        trace,
+        xs: ids.map((id) => get(storage, id, Position.x)),
+        ys: ids.map((id) => get(storage, id, Position.y)),
+        hp: get(storage, ids[0]!, Shield.hp),
+        level: get(storage, ids[0]!, Shield.level),
+    };
+}
+`,
+    expected: {
+      trace: [3, 13, 4, 0, 7, 0, 2, 12, 4, 0, 7, 0, 2, 6, 6, 0, 8],
+      xs: [7, 7],
+      ys: [0, 0],
+      hp: 6,
+      level: 8,
+    },
+  },
+  {
+    name: "a plain field assignment yields the assigned value, or the current one when a logical form short-circuits",
+    source: `export function scenario(): unknown {
+    const { storage, ids } = marked();
+    const trace: unknown[] = [];
+    each(storage, (e) => {
+        if (e.Mark) {
+            trace.push((e.Mark.first ??= 4), (e.Mark.first ??= 5), (e.Mark.second = 6), (e.Mark.second ||= 1));
+        }
+    });
+    return { trace, first: get(storage, ids[0]!, Mark.first), second: get(storage, ids[0]!, Mark.second) };
+}
+`,
+    expected: { trace: [4, 4, 6, 6], first: 4, second: 6 },
+  },
+  {
     name: "presence tests and comparisons with undefined and null, negated forms included",
     source: `export function scenario(): unknown {
     const { storage } = guarded();
@@ -301,6 +366,20 @@ const VIEW_CASES: readonly RunCase[] = [
 }
 `,
     expected: [false, false, true, false, false, true, false, true, false, false, true, false],
+  },
+  {
+    name: "a slot alias named undefined compared with null on either side",
+    source: `export function scenario(): unknown {
+    const { storage } = guarded();
+    const trace: unknown[] = [];
+    each(storage, (e) => {
+        const undefined = e.Position;
+        trace.push(undefined === null, undefined !== null, null === undefined);
+    });
+    return trace;
+}
+`,
+    expected: [false, true, false, false, true, false],
   },
   {
     name: "a slot coalesced in a test reads the right-hand side only when the slot is disabled",
@@ -610,6 +689,28 @@ describe("EmitFile", () => {
       },
       RUN_TIMEOUT_MS,
     );
+
+    it("throws naming the component when a compare use names no slot operand", async () => {
+      const planned =
+        await project.planned(`${CASE_PRELUDE}${THREE_MOVERS}    const seen: boolean[] = [];
+    each(movers, (e) => {
+        seen.push(e.Position == null);
+    });
+    return seen;
+}
+`);
+
+      const emitting = project.emit(planned, {
+        inline: (file, inlining, uses) => {
+          file.inline(
+            inlining,
+            uses.map(({ slotOperand: _, ...use }) => use),
+          );
+        },
+      });
+
+      await expect(emitting).rejects.toThrow(/\bPosition\b.*\bslot operand\b/);
+    });
 
     it.each(GROWTH_CASES)(
       "leaves the columns the runtime leaves in realloc-safe mode: $name",

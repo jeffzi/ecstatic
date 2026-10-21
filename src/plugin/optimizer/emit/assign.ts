@@ -35,6 +35,17 @@ import {
 } from "./expressions.js";
 import type { Lowering } from "./lowering.js";
 
+/** A field assignment and what every lowering of it reads about its left-hand side and value. */
+interface Assigned {
+  readonly node: BinaryExpression;
+  readonly use: ViewUse;
+  readonly slot: Expression;
+  /** Whether the field stores its value encoded as 1/0. */
+  readonly boolean: boolean;
+  /** Whether the code around the assignment reads the value it yields. */
+  readonly valueUsed: boolean;
+}
+
 /**
  * An assignment to the field of a use, keeping the order the field setter sees: the slot, then
  * the right-hand side, then the store. A boolean field stores its value encoded as 1/0, and the
@@ -55,32 +66,45 @@ export function lowerAssign(
   use: ViewUse,
   visit: Visit,
 ): Expression {
-  const slot = slotOf(node.left, use);
+  const assigned: Assigned = {
+    node,
+    use,
+    slot: slotOf(node.left, use),
+    boolean: lowering.field(use).kind === "boolean",
+    valueUsed: isValueUsed(node),
+  };
   lowering.noteSlot(use, "write-required-field", "write-optional-field");
-  lowering.noteNonNull(slot);
-  if (lowering.field(use).kind === "boolean") {
+  lowering.noteNonNull(assigned.slot);
+  if (assigned.boolean) {
     lowering.note("write-boolean-field");
-    if (isValueUsed(node)) lowering.note("boolean-assignment-value");
+    if (assigned.valueUsed) lowering.note("boolean-assignment-value");
   }
-  if (lowering.mode === "realloc-safe") return assignInOrder(lowering, node, use, visit);
-  return assignHoisted(lowering, node, use, visit);
+  if (lowering.mode === "realloc-safe") return assignInOrder(lowering, assigned, visit);
+  return assignHoisted(lowering, assigned, visit);
 }
 
 /**
- * A prefix or postfix update of the field of a use; analysis never reports one on a boolean
- * field.
+ * A prefix or postfix update of the field of a use. Analysis never reports one on a boolean
+ * field, whose column holds 1/0: incrementing it in place would store 2 or -1 where the runtime
+ * setter stores a boolean.
  *
  * @param lowering - The loop's lowering.
  * @param node - The update.
  * @param use - The field-update use.
  * @returns The lowered update.
- * @throws Error when the operand is no field access.
+ * @throws Error when the field is boolean, the operand is no field access, or the loop's shape
+ *   has no such field.
  */
 export function lowerUpdate(
   lowering: Lowering,
   node: PrefixUnaryExpression | PostfixUnaryExpression,
   use: ViewUse,
 ): Expression {
+  if (lowering.field(use).kind === "boolean") {
+    throw new Error(
+      `emit: the field update of ${use.comp}.${use.field} targets a boolean field, which has no increment or decrement lowering`,
+    );
+  }
   lowering.note("update-field");
   const slot = slotOf(node.operand, use);
   lowering.noteNonNull(slot);
@@ -93,27 +117,22 @@ export function lowerUpdate(
  * An assignment in hoisted mode, whose column never moves while the loop runs.
  *
  * @param lowering - The loop's lowering.
- * @param node - The assignment.
- * @param use - The field-assign use.
+ * @param assigned - The assignment, its use and slot, its field kind, and whether its value is
+ *   used.
  * @param visit - Visits the right-hand side.
  * @returns The lowered assignment.
  */
-function assignHoisted(
-  lowering: Lowering,
-  node: BinaryExpression,
-  use: ViewUse,
-  visit: Visit,
-): Expression {
+function assignHoisted(lowering: Lowering, assigned: Assigned, visit: Visit): Expression {
+  const { node, use, slot, boolean, valueUsed } = assigned;
   const operator = node.operatorToken.kind;
-  const slot = slotOf(node.left, use);
   const target = (): Expression => lowering.atRow(lowering.guardedColumn(use, slot));
   const value = visitNode(node.right, visit, isExpression);
-  if (lowering.field(use).kind !== "boolean") return binary(target(), operator, value);
+  if (!boolean) return binary(target(), operator, value);
   const current = decode(target());
   // A decoded boolean is never nullish, so the right-hand side never runs.
   if (operator === SyntaxKind.QuestionQuestionEqualsToken) return current;
   let store: Expression;
-  if (isValueUsed(node)) {
+  if (valueUsed) {
     const held = lowering.temp("value");
     const encoded = encode(parenthesized(assignTo(createIdentifier(held), value)));
     store = commaList(assignTo(target(), encoded), createIdentifier(held));
@@ -135,21 +154,16 @@ function assignHoisted(
  * that disables the component does not make the store throw.
  *
  * @param lowering - The loop's lowering.
- * @param node - The assignment.
- * @param use - The field-assign use.
+ * @param assigned - The assignment, its use and slot, its field kind, and whether its value is
+ *   used.
  * @param visit - Visits the right-hand side.
  * @returns The lowered assignment.
  * @throws Error when the operator is no assignment.
  */
-function assignInOrder(
-  lowering: Lowering,
-  node: BinaryExpression,
-  use: ViewUse,
-  visit: Visit,
-): Expression {
+function assignInOrder(lowering: Lowering, assigned: Assigned, visit: Visit): Expression {
+  const { node, use, slot, boolean, valueUsed } = assigned;
   const operator = node.operatorToken.kind;
-  const boolean = lowering.field(use).kind === "boolean";
-  const { steps, column } = heldColumn(lowering, use, slotOf(node.left, use));
+  const { steps, column } = heldColumn(lowering, use, slot);
   const field = (): Expression => lowering.atRow(column());
   // A decoded boolean is never nullish, so the right-hand side never runs.
   if (boolean && operator === SyntaxKind.QuestionQuestionEqualsToken) {
@@ -168,13 +182,11 @@ function assignInOrder(
       assignTo(field(), heldName()),
     );
   }
-  const assigned = assignTo(heldName(), value);
+  const hold = assignTo(heldName(), value);
   const write = assignTo(field(), boolean ? encode(heldName()) : heldName());
-  const yieldsHeld = boolean && isValueUsed(node);
+  const yieldsHeld = boolean && valueUsed;
   const store = (...before: Expression[]): Expression =>
-    yieldsHeld
-      ? commaList(...before, assigned, write, heldName())
-      : commaList(...before, assigned, write);
+    yieldsHeld ? commaList(...before, hold, write, heldName()) : commaList(...before, hold, write);
   if (operator === SyntaxKind.EqualsToken) return store(...steps);
   const short = logicalOperator(operator);
   if (short === undefined) {

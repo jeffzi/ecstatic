@@ -40,8 +40,8 @@ import {
 } from "typescript/ast/is";
 import { visitNode } from "typescript/ast/visitor";
 
-import type { ArchShape, Field, NodeID, ViewUse } from "../facts.js";
-import type { NodeTable } from "../nodes.js";
+import type { ArchShape, Field, ViewUse } from "../facts.js";
+import { type NodeTable, tableNode } from "../nodes.js";
 import type { Mode } from "../plan.js";
 import { skipParens, skipWrappers } from "../syntax.js";
 import { lowerAssign, lowerUpdate } from "./assign.js";
@@ -52,7 +52,6 @@ import {
   declaration,
   decode,
   IDENTIFIER_NAME,
-  isNullishLiteral,
   keyword,
   letStatement,
   member,
@@ -71,27 +70,6 @@ interface Column {
   readonly field: string;
   /** The hoisted local holding the column; undefined in realloc-safe mode. */
   readonly local: string | undefined;
-}
-
-/**
- * The node `table` maps `id` to, when it passes `test`.
- *
- * @param table - The file's node table.
- * @param id - The node's ID.
- * @param what - What the node is, for the error.
- * @param test - The kind the node must have.
- * @returns The node.
- * @throws Error when `table` holds no node of `id`, or one that fails `test`.
- */
-export function tableNode<T extends Node>(
-  table: NodeTable,
-  id: NodeID,
-  what: string,
-  test: (node: Node) => node is T,
-): T {
-  const node = table.node(id);
-  if (node === undefined || !test(node)) throw new Error(`emit: no ${what} has node ${id}`);
-  return node;
 }
 
 function anyNode(_node: Node): _node is Node {
@@ -522,11 +500,10 @@ export class Lowering {
    * @param use - The compare use.
    * @returns A constant for a strict comparison with `null`, else the slot's presence or its
    *   negation.
+   * @throws Error when `use` names no slot operand.
    */
   #compare(node: BinaryExpression, use: ViewUse): Expression {
-    const [slot, other] = isNullishLiteral(node.left)
-      ? [node.right, node.left]
-      : [node.left, node.right];
+    const [slot, other] = compareOperands(node, use);
     const operator = node.operatorToken.kind;
     const strict =
       operator === SyntaxKind.EqualsEqualsEqualsToken ||
@@ -620,4 +597,19 @@ function noLowering(use: ViewUse): Error {
 
 function negate(operand: Expression): Expression {
   return createPrefixUnaryExpression(SyntaxKind.ExclamationToken, operand);
+}
+
+/**
+ * The operands of a nullish comparison, the slot first, by the side analysis recorded.
+ *
+ * @param node - The comparison.
+ * @param use - The compare use of `node`.
+ * @returns The slot operand, then the `null` or `undefined` it is compared with.
+ * @throws Error when `use` names no slot operand.
+ */
+function compareOperands(node: BinaryExpression, use: ViewUse): [Expression, Expression] {
+  if (use.slotOperand === undefined) {
+    throw new Error(`emit: the compare use of ${use.comp} names no slot operand`);
+  }
+  return use.slotOperand === "left" ? [node.left, node.right] : [node.right, node.left];
 }

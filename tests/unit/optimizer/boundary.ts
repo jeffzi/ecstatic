@@ -56,6 +56,7 @@ const COMPILER_RECEIVERS: ReadonlySet<string> = new Set([
 
 const COMPILER_MODULE = "compiler.ts";
 const PURE_MODULES: ReadonlySet<string> = new Set(["facts.ts", "plan.ts"]);
+const SYNTAX_MODULE = "syntax.ts";
 const COMPILER_ENTRIES: ReadonlySet<string> = new Set(["typescript/async", "typescript/sync"]);
 
 const EMIT_DIR = "emit/";
@@ -64,6 +65,7 @@ const ANALYSIS_DIR = "analysis/";
 const TSGO = "only compiler.ts reaches tsgo";
 const PURE = "facts.ts and plan.ts import nothing from typescript";
 const EMIT = "emit imports nothing from analysis";
+const SYNTAX = "syntax.ts imports nothing from emit";
 
 /** Tokens after which a slash divides rather than opening a regular expression. */
 const EXPRESSION_ENDS: ReadonlySet<SyntaxKind> = new Set([
@@ -328,10 +330,11 @@ function forbidCompilerCalls(from: (path: string) => boolean, reason: string): R
 
 /**
  * The optimizer's boundaries: only `compiler.ts` reaches tsgo, the pure modules import no
- * `typescript`, and no module under `emit/` imports one under `analysis/`.
+ * `typescript`, no module under `emit/` imports one under `analysis/`, and `syntax.ts`, which both
+ * share, imports nothing under `emit/`.
  */
 export const OPTIMIZER_RULES: readonly Rule[] = [
-  requireModules([COMPILER_MODULE, ...PURE_MODULES]),
+  requireModules([COMPILER_MODULE, ...PURE_MODULES, SYNTAX_MODULE]),
   forbidImports({
     from: (path) => path !== COMPILER_MODULE,
     imports: (imported) => COMPILER_ENTRIES.has(imported.specifier),
@@ -348,6 +351,11 @@ export const OPTIMIZER_RULES: readonly Rule[] = [
     from: (path) => path.startsWith(EMIT_DIR),
     imports: (imported) => imported.target?.startsWith(ANALYSIS_DIR) === true,
     reason: EMIT,
+  }),
+  forbidImports({
+    from: (path) => path === SYNTAX_MODULE,
+    imports: (imported) => imported.target?.startsWith(EMIT_DIR) === true,
+    reason: SYNTAX,
   }),
 ];
 

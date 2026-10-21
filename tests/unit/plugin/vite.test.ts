@@ -4,7 +4,6 @@ import { basename, join } from "node:path";
 import { normalizePath } from "vite";
 import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vitest";
 
-import { fileKey } from "../../../src/plugin/file-key.js";
 import ecstatic from "../../../src/plugin/vite.js";
 import { locate } from "../optimizer/locate.js";
 import {
@@ -180,8 +179,10 @@ describe("ecstatic() for Vite", () => {
       expect(plugin.enforce).toBe("pre");
     });
 
-    it.each([
+    it.each<{ name: string; options: object; key: string }>([
       { name: "an unknown key", options: { banana: true }, key: "banana" },
+      { name: "a key every object inherits", options: { constructor: true }, key: "constructor" },
+      { name: "another inherited key", options: { toString: true }, key: "toString" },
       { name: "a strict that is not a boolean", options: { strict: "yes" }, key: "strict" },
       { name: "a project that is not a string", options: { project: 42 }, key: "project" },
     ])("throws naming $key and listing the valid keys when given $name", ({ options, key }) => {
@@ -189,6 +190,7 @@ describe("ecstatic() for Vite", () => {
         createUnchecked(options);
       };
 
+      expect(create).toThrow(TypeError);
       expect(create).toThrow(key);
       expect(create).toThrow("project");
       expect(create).toThrow("strict");
@@ -374,26 +376,4 @@ describe("ecstatic() for Vite", () => {
     },
     SPAWN_TIMEOUT_MS,
   );
-});
-
-describe("fileKey", () => {
-  it.each([
-    { vite: "c:/work/app/main.ts", native: "C:\\work\\app\\main.ts" },
-    { vite: "C:/work/app/main.ts", native: "c:\\work\\app\\main.ts" },
-    { vite: "/home/me/app/main.ts", native: "/home/me/app/main.ts" },
-  ])("matches the Vite id $vite to the native path $native", ({ vite, native }) => {
-    const key = fileKey(vite);
-
-    expect(key).toBe(fileKey(native));
-  });
-
-  it.each([
-    { first: "C:/work/app/main.ts", second: "D:/work/app/main.ts" },
-    { first: "C:/work/App/main.ts", second: "C:/work/app/main.ts" },
-    { first: "/home/Me/app/main.ts", second: "/home/me/app/main.ts" },
-  ])("tells $first from $second", ({ first, second }) => {
-    const key = fileKey(first);
-
-    expect(key).not.toBe(fileKey(second));
-  });
 });

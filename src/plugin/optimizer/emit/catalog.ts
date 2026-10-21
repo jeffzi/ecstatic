@@ -73,6 +73,9 @@ export const RULES = [
   // Runs a returned expression that starts with a function expression as a statement, which the
   // printer parenthesizes so it does not read as a function declaration.
   "return-function-expression",
+  // Runs a returned expression that starts with a class expression as a statement, which the
+  // printer parenthesizes so it does not read as a class declaration.
+  "return-class-expression",
   // Continues the labeled row loop from a return under an inner loop or switch.
   "return-labeled",
   "return-in-finally",

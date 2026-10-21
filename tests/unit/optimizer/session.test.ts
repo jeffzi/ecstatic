@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { getTouchingPropertyName } from "typescript/ast";
+import { getTouchingPropertyName, type Node, type SourceFile } from "typescript/ast";
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import {
@@ -17,10 +17,17 @@ import {
   openSession,
   type ProjectView,
   type Session,
+  SessionEndedError,
   type SessionOptions,
 } from "../../../src/plugin/optimizer/session.js";
 import { isAlive, processesStartedSince, runningProcesses, waitUntilDead } from "./processes.js";
-import { appTsconfig, removeProjects, runtimeProject, writeProject } from "./project.js";
+import {
+  appTsconfig,
+  killCompiler,
+  removeProjects,
+  runtimeProject,
+  writeProject,
+} from "./project.js";
 
 /** How long a case that starts its own compiler process may take on a slow CI runner. */
 const SPAWN_TIMEOUT_MS = 30_000;
@@ -76,10 +83,14 @@ function file(rel: string, dir = root): string {
   return join(dir, ...rel.split("/"));
 }
 
+/** The identifier of the value declared as `const name` in `source`. */
+function declaredName(source: SourceFile, name: string): Node {
+  return getTouchingPropertyName(source, source.text.indexOf(`const ${name}`) + 6);
+}
+
 /** The property names of the type of the value declared as `name` in `rel`, as `view`'s checker sees it. */
 async function propertyNames(view: ProjectView, rel: string, name: string): Promise<string[]> {
-  const source = await view.sourceFile(file(rel));
-  const identifier = getTouchingPropertyName(source, source.text.indexOf(`const ${name}`) + 6);
+  const identifier = declaredName(await view.sourceFile(file(rel)), name);
   const symbol = await resolveSymbol(view.checker, identifier);
   if (symbol === undefined) throw new Error(`${name} resolves to no symbol in ${rel}`);
   const type = await typeOfSymbol(view.checker, symbol);
@@ -318,13 +329,37 @@ describe("ProjectView.emit", () => {
   });
 });
 
+describe("ProjectView.endedError", () => {
+  it("answers undefined for a failure on a live session", async () => {
+    const view = await session.update();
+
+    const ended = view.endedError(new Error("banana split"));
+
+    expect(ended).toBeUndefined();
+  });
+
+  it("answers a session error it is given with that error", async () => {
+    const view = await session.update();
+    const given = new SessionEndedError("banana split");
+
+    const ended = view.endedError(given);
+
+    expect(ended).toBe(given);
+  });
+});
+
 describe("Session.close", () => {
   let closed: OwnSession;
   let staleView: ProjectView;
+  let staleName: Node;
 
   beforeAll(async () => {
     closed = await openOwnSession();
     staleView = await closed.session.update();
+    staleName = declaredName(
+      await staleView.sourceFile(file("app/loaded.ts", closed.dir)),
+      "loaded",
+    );
     await closed.session.close();
   }, SPAWN_TIMEOUT_MS);
 
@@ -340,11 +375,27 @@ describe("Session.close", () => {
       query: () => staleView.sourceFile(file("app/loaded.ts", closed.dir)),
     },
     { name: "ProjectView.emit", query: () => staleView.emit(file("app/emitted.ts", closed.dir)) },
+    { name: "ProjectView.checker query", query: () => resolveSymbol(staleView.checker, staleName) },
+    {
+      name: "direct ProjectView.checker call",
+      query: () => staleView.checker.getSymbolAtLocation(staleName),
+    },
   ])("makes a later $name reject naming the closed session", async ({ query }) => {
     const querying = query();
 
+    await expect(querying).rejects.toBeInstanceOf(SessionEndedError);
     await expect(querying).rejects.toThrow(/closed/);
     await expect(querying).rejects.toThrow(closed.session.tsconfig);
+  });
+
+  it("names a failure through an earlier view as the closed session's", () => {
+    const failure = new Error("banana split");
+
+    const ended = staleView.endedError(failure);
+
+    expect(ended).toBeInstanceOf(SessionEndedError);
+    expect(ended?.message).toMatch(/closed/);
+    expect(ended?.message).toContain(closed.session.tsconfig);
   });
 
   it("is harmless a second time", async () => {
@@ -496,6 +547,45 @@ describe("when the compiler process exits mid-session", () => {
 
       await expect(updating).rejects.toThrow(/exited/);
       await expect(updating).rejects.toThrow(crashed.tsconfig);
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  it(
+    "rejects a checker query through an earlier view naming the exit, with the original error as its cause",
+    async () => {
+      const { session: crashed, pid, dir } = await openOwnSession();
+      onTestFinished(() => crashed.close());
+      const view = await crashed.update();
+      const name = declaredName(await view.sourceFile(file("app/loaded.ts", dir)), "loaded");
+      process.kill(pid, "SIGKILL");
+      await waitUntilDead(pid);
+
+      const resolving = resolveSymbol(view.checker, name);
+
+      await expect(resolving).rejects.toBeInstanceOf(SessionEndedError);
+      await expect(resolving).rejects.toThrow(/exited/);
+      await expect(resolving).rejects.toThrow(crashed.tsconfig);
+      await expect(resolving).rejects.toHaveProperty("cause", expect.any(Error));
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  it(
+    "names a failure through an earlier view as the exit, carrying that failure as its cause",
+    async () => {
+      const { session: crashed, pid } = await openOwnSession();
+      onTestFinished(() => crashed.close());
+      const view = await crashed.update();
+      await killCompiler(crashed, pid);
+      const failure = new Error("banana split");
+
+      const ended = view.endedError(failure);
+
+      expect(ended).toBeInstanceOf(SessionEndedError);
+      expect(ended?.message).toMatch(/exited/);
+      expect(ended?.message).toContain(crashed.tsconfig);
+      expect(ended?.cause).toBe(failure);
     },
     SPAWN_TIMEOUT_MS,
   );

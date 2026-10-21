@@ -3,8 +3,9 @@
  * and the text Vite handed the session.
  */
 import { readFile } from "node:fs/promises";
+import { sep } from "node:path";
 
-import { fileKey } from "./file-key.js";
+import { fileKey } from "./optimizer/file-names.js";
 import { createRewriter, type Rewriter, type RewrittenModule } from "./optimizer/rewrite.js";
 import { openSession, type Session } from "./optimizer/session.js";
 
@@ -28,6 +29,8 @@ export interface ServedRewrite extends RewrittenModule {
 export class ServedProject {
   readonly #session: Session;
   readonly #rewriter: Rewriter;
+  /** The separator the session joins its file names with. */
+  readonly #separator: string;
   /** The program's non-declaration files, keyed by {@link fileKey}. */
   readonly #rewritable: ReadonlyMap<string, string>;
   /** Every file name the session gave, keyed by {@link fileKey}. */
@@ -45,16 +48,28 @@ export class ServedProject {
   /**
    * @param session - The open session; the project owns it from here on.
    * @param programFiles - Every file the program holds, declaration files included.
+   * @param separator - The separator the session joins its file names with; `path.sep` when absent.
    */
-  constructor(session: Session, programFiles: readonly string[]) {
+  constructor(session: Session, programFiles: readonly string[], separator: string = sep) {
     this.#session = session;
     this.#rewriter = createRewriter(session);
-    for (const name of programFiles) this.#names.set(fileKey(name), name);
+    this.#separator = separator;
+    for (const name of programFiles) this.#names.set(this.#key(name), name);
     this.#rewritable = new Map(
       programFiles
         .filter((name) => !DECLARATION_FILE.test(name))
-        .map((name) => [fileKey(name), name]),
+        .map((name) => [this.#key(name), name]),
     );
+  }
+
+  /**
+   * The {@link fileKey} of a file name, in the session's separator.
+   *
+   * @param name - The file name.
+   * @returns The name's key.
+   */
+  #key(name: string): string {
+    return fileKey(name, this.#separator);
   }
 
   /** How many files of the program the plugin may rewrite. */
@@ -70,7 +85,7 @@ export class ServedProject {
    *   source file or only a declaration file.
    */
   programFile(id: string): string | undefined {
-    return this.#rewritable.get(fileKey(id));
+    return this.#rewritable.get(this.#key(id));
   }
 
   /**
@@ -82,17 +97,17 @@ export class ServedProject {
    * @throws When the session is closed, its compiler process exited, or the rewrite fails.
    */
   async rewrite(file: string, code: string): Promise<ServedRewrite> {
-    const before = this.#pending[file] ?? this.#served.get(fileKey(file));
+    const before = this.#pending[file] ?? this.#served.get(this.#key(file));
     const files = { ...this.#pending, [file]: code };
     this.#removed.delete(file);
     const removed = [...this.#removed];
     this.#removed.clear();
     this.#pending = {};
-    for (const [name, text] of Object.entries(files)) this.#served.set(fileKey(name), text);
-    for (const name of removed) this.#served.set(fileKey(name), undefined);
+    for (const [name, text] of Object.entries(files)) this.#served.set(this.#key(name), text);
+    for (const name of removed) this.#served.set(this.#key(name), undefined);
     const view = await this.#session.update(files, removed);
     const rewritten = await this.#rewriter.rewrite(view, file);
-    for (const name of rewritten.consulted) this.#names.set(fileKey(name), name);
+    for (const name of rewritten.consulted) this.#names.set(this.#key(name), name);
     return { ...rewritten, replaced: before !== undefined && before !== code };
   }
 
@@ -106,7 +121,7 @@ export class ServedProject {
    * @throws When a changed file the session serves cannot be read.
    */
   async changed(id: string, event: ChangeEvent): Promise<void> {
-    const key = fileKey(id);
+    const key = this.#key(id);
     const name = this.#names.get(key) ?? id;
     if (!this.#served.has(key)) {
       this.#session.notifyChanged([name]);

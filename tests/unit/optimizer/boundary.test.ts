@@ -16,6 +16,7 @@ const OPTIMIZER_DIR = fileURLToPath(new URL("../../../src/plugin/optimizer/", im
 const TSGO = "only compiler.ts reaches tsgo";
 const PURE = "facts.ts and plan.ts import nothing from typescript";
 const EMIT = "emit imports nothing from analysis";
+const SYNTAX = "syntax.ts imports nothing from emit";
 
 /** A compiler module reaching tsgo, as only it may, and re-exporting the API types others use. */
 const COMPILER: Module = {
@@ -48,6 +49,7 @@ const CLEAN: readonly Module[] = [
   COMPILER,
   { path: "facts.ts", text: "export interface Fact { readonly id: number }\n" },
   { path: "plan.ts", text: 'import type { Fact } from "./facts.js";\n' },
+  { path: "syntax.ts", text: "export const isLabel = (text: string): boolean => text !== '';\n" },
 ];
 
 /** A module at `path` whose text is `lines` joined by newlines. */
@@ -284,6 +286,11 @@ describe("optimizer boundaries", () => {
         },
         expected: [`emit/emit.ts:1 imports ../analysis/analyze.js: ${EMIT}`],
       },
+      {
+        name: "syntax.ts imports an emit module",
+        module: { path: "syntax.ts", text: 'import type { Rule } from "./emit/catalog.js";' },
+        expected: [`syntax.ts:1 imports ./emit/catalog.js: ${SYNTAX}`],
+      },
     ])("reports it when $name", ({ module, expected }) => {
       const violations = boundaries.checkModules(withModule(module), OPTIMIZER_RULES);
 
@@ -365,7 +372,7 @@ describe("optimizer boundaries", () => {
   });
 
   describe("when a module the rules name is missing", () => {
-    it.each(["compiler.ts", "facts.ts", "plan.ts"])("reports %s", (path) => {
+    it.each(["compiler.ts", "facts.ts", "plan.ts", "syntax.ts"])("reports %s", (path) => {
       const violations = boundaries.checkModules(without(path), OPTIMIZER_RULES);
 
       expect(violations).toStrictEqual([`${path} is missing: the boundary rules name it`]);

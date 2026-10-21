@@ -46,15 +46,16 @@ export interface Rewriter {
    * A call whose rewrite throws, or that resolves to another package root than the file's first
    * rewritten call, keeps its runtime call and becomes an `INTERNAL` bail; the file's other calls
    * are still rewritten. When that root's `DEBUG` copy cannot be taken, every planned rewrite
-   * becomes an `INTERNAL` bail and the file is left unchanged. When analyzing the file throws, the
-   * file is left unchanged and reported as one file bail.
+   * becomes an `INTERNAL` bail and the file is left unchanged. When analyzing the file throws for
+   * any reason but the session ending, the file is left unchanged and reported as one file bail.
    *
    * @param view - The project as the session serves it.
    * @param file - Absolute name of the file to rewrite.
    * @returns The rewritten module, its bails, and the files the rewrite depends on.
    * @throws When the file is not part of the program, the session is closed or its process
-   *   exited, or the session cannot print the rewritten file; and when reading a site's call, op,
-   *   or position throws, or the plan names a call analysis did not report: an analysis bug.
+   *   exited, even during analysis, or the session cannot print the rewritten file; and when
+   *   reading a site's call, op, or position throws, or the plan names a call analysis did not
+   *   report: an analysis bug.
    */
   rewrite(view: ProjectView, file: string): Promise<RewrittenModule>;
 }
@@ -110,9 +111,9 @@ function inlineInto(file: EmitFile, inlining: EachInlining, uses: readonly ViewU
  * @param view - The project as the session serves it.
  * @param file - Absolute name of the file to rewrite.
  * @returns The rewritten module.
- * @throws When the file is not part of the program, or the session cannot serve or print it; and
- *   when reading a site's call, op, or position throws, or the plan names a call analysis did not
- *   report: an analysis bug.
+ * @throws When the file is not part of the program, the session ends, even during analysis, or
+ *   the session cannot serve or print the file; and when reading a site's call, op, or position
+ *   throws, or the plan names a call analysis did not report: an analysis bug.
  */
 async function rewriteModule(
   context: RewriteContext,
@@ -124,6 +125,8 @@ async function rewriteModule(
   try {
     analysis = await context.analyze(view.checker, source, context.roots);
   } catch (error) {
+    const ended = view.endedError(error);
+    if (ended !== undefined) throw ended;
     return {
       output: undefined,
       bails: [],

@@ -4,13 +4,14 @@
 // rewrite-applies: return-in-finally
 // rewrite-applies: return-object-literal
 // rewrite-applies: return-function-expression
+// rewrite-applies: return-class-expression
 import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
 
 const Step = component("LadderStep", { x: 0 });
 
 /**
- * Returns early from the callback: with no value; with a value, an object literal and a function expression
- * included, whose expression still runs; from under a nested loop and a `switch`, which ends the row rather than
+ * Returns early from the callback: with no value; with a value, an object literal, a function expression, and a
+ * class expression included, whose expression still runs; from under a nested loop and a `switch`, which ends the row rather than
  * the inner statement; and from inside `try … finally`, whose `finally` still runs.
  *
  * @returns What each row ran before it ended, in visit order.
@@ -35,6 +36,13 @@ export function scenario(): unknown {
     if (e.LadderStep.x === 2) {
       return function () {
         trace.push("never");
+      };
+    }
+    if (e.LadderStep.x === 3) {
+      return class {
+        static {
+          trace.push(`class ${e.LadderStep.x}`);
+        }
       };
     }
     return note(e.LadderStep.x * 10);

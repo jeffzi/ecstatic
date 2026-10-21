@@ -266,6 +266,9 @@ export type UseKind =
   | "alias"
   | "destructure";
 
+/** An operand of a binary expression. */
+export type Operand = "left" | "right";
+
 /** One reference to a callback's view parameter, or to an alias of one of its slots. */
 export interface ViewUse {
   /** The component of every use but `id`. */
@@ -281,6 +284,8 @@ export interface ViewUse {
   readonly kind: UseKind;
   /** Set when the use reaches the slot through an alias, `p.f` rather than `e.C.f`. */
   readonly alias: boolean;
+  /** The operand of a `compare` use's comparison that is the slot; absent for every other kind. */
+  readonly slotOperand?: Operand;
 }
 
 /**

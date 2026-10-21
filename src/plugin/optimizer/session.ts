@@ -36,8 +36,15 @@ export interface SessionOptions {
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 5000;
 
+/** Thrown by a request to a session that is closed or whose compiler process exited. */
+export class SessionEndedError extends Error {}
+
 /** The project as one update of a session left it. */
 export interface ProjectView {
+  /**
+   * The program's type checker. A query through it rejects as the view's other requests do when the
+   * session is closed or its compiler process exited.
+   */
   readonly checker: Checker;
   /**
    * The program's parse of a project file.
@@ -69,6 +76,16 @@ export interface ProjectView {
    * @throws When the session is closed or its compiler process exited.
    */
   errors(): Promise<string>;
+  /**
+   * The error a failed compiler call should reject with when the session has ended. It covers
+   * calls on any object the checker handed out, not only those made through the checker itself.
+   *
+   * @param error - What the failed call threw.
+   * @returns `error` itself when it is already a {@link SessionEndedError}; else, when the session
+   *   is closed or its compiler process exited, a {@link SessionEndedError} naming the session,
+   *   carrying `error` as its cause when the process exited; else `undefined`.
+   */
+  endedError(error: unknown): SessionEndedError | undefined;
 }
 
 /** One compiler process with one project loaded. */
@@ -218,13 +235,40 @@ class ProjectSession implements Session {
   #view(snapshot: Snapshot): ProjectView {
     const project = configuredProject(snapshot, this.tsconfig);
     return {
-      checker: project.checker,
+      checker: this.#guarded(project.checker),
       sourceFile: async (file) =>
         await this.#query(async () => await projectSourceFile(project, file)),
       emit: async (file) => await this.#query(async () => await emitJavaScript(project, file)),
       sourceFileNames: async () => await this.#query(async () => await programFileNames(project)),
       errors: async () => await this.#query(async () => await programErrors(project)),
+      endedError: (error) =>
+        error instanceof SessionEndedError
+          ? error
+          : (this.#closedError() ?? this.#exitedError(error)),
     };
+  }
+
+  /**
+   * `checker` with every method call refused once this session is closed, and every rejection
+   * named after this session once its compiler process exited.
+   *
+   * @param checker - The checker of one of this session's snapshots.
+   * @returns The guarded checker.
+   */
+  #guarded(checker: Checker): Checker {
+    return new Proxy(checker, {
+      get: (target, key) => {
+        const member: unknown = Reflect.get(target, key);
+        if (typeof member !== "function") return member;
+        return (...args: unknown[]): unknown => {
+          // Every checker method answers with a promise, so a closed session's refusal is one too.
+          const closed = this.#closedError();
+          if (closed !== undefined) return Promise.reject(closed);
+          const result: unknown = Reflect.apply(member, target, args);
+          return result instanceof Promise ? this.#named(result) : result;
+        };
+      },
+    });
   }
 
   /**
@@ -232,17 +276,57 @@ class ProjectSession implements Session {
    *
    * @param request - The compiler request to run.
    * @returns What `request` resolves to.
-   * @throws When the session is closed or its compiler process exited, or whatever `request` throws.
+   * @throws {@link SessionEndedError} when the session is closed or its compiler process exited;
+   *   otherwise whatever `request` throws.
    */
   async #query<T>(request: () => Promise<T>): Promise<T> {
-    if (this.#closing !== undefined) throw new Error(`the session on ${this.tsconfig} is closed`);
+    this.#assertOpen();
+    return await this.#named(request());
+  }
+
+  /** Refuses a request with a {@link SessionEndedError} once this session is closed. */
+  #assertOpen(): void {
+    const closed = this.#closedError();
+    if (closed !== undefined) throw closed;
+  }
+
+  /**
+   * Awaits `pending`, naming this session when its compiler process exited.
+   *
+   * @param pending - A request already sent to the compiler process.
+   * @returns What `pending` resolves to.
+   * @throws {@link SessionEndedError} when the compiler process exited, carrying the request's
+   *   error as its cause; otherwise whatever `pending` rejects with.
+   */
+  async #named<T>(pending: Promise<T>): Promise<T> {
     try {
-      return await request();
+      return await pending;
     } catch (error) {
-      if (!this.#compiler.exited) throw error;
-      throw new Error(`the compiler process of the session on ${this.tsconfig} exited`, {
-        cause: error,
-      });
+      throw this.#exitedError(error) ?? error;
     }
+  }
+
+  /**
+   * The error a request rejects with once this session is closed.
+   *
+   * @returns The error naming this session, or `undefined` while the session is open.
+   */
+  #closedError(): SessionEndedError | undefined {
+    if (this.#closing === undefined) return undefined;
+    return new SessionEndedError(`the session on ${this.tsconfig} is closed`);
+  }
+
+  /**
+   * The error a request rejects with once this session's compiler process exited.
+   *
+   * @param cause - What the request threw.
+   * @returns The error naming this session and carrying `cause`, or `undefined` while the process
+   *   runs.
+   */
+  #exitedError(cause: unknown): SessionEndedError | undefined {
+    if (!this.#compiler.exited) return undefined;
+    return new SessionEndedError(`the compiler process of the session on ${this.tsconfig} exited`, {
+      cause,
+    });
   }
 }

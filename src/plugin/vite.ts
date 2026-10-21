@@ -6,20 +6,13 @@ import { resolve } from "node:path";
 
 import type { Environment, EnvironmentModuleNode, Plugin, Rolldown } from "vite";
 
-import { fileKey } from "./file-key.js";
 import { bailDiagnostics, locatedMessage } from "./optimizer/diagnostics.js";
+import { fileKey } from "./optimizer/file-names.js";
 import type { RewrittenModule } from "./optimizer/rewrite.js";
+import { type EcstaticOptions, OPTION_KEYS } from "./options.js";
 import type { ServedProject } from "./served-project.js";
 
-/** Options of {@link ecstatic}. */
-export interface EcstaticOptions {
-  /** The tsconfig whose program the plugin rewrites, resolved from Vite's root; `tsconfig.json` when absent. */
-  readonly project?: string;
-  /** Whether a call that cannot be optimized fails the module's transform; `false` when absent. */
-  readonly strict?: boolean;
-}
-
-const OPTION_KEYS: ReadonlySet<string> = new Set(["project", "strict"]);
+export type { EcstaticOptions } from "./options.js";
 
 const DEFAULT_PROJECT = "tsconfig.json";
 
@@ -72,7 +65,7 @@ export default function ecstatic(options: EcstaticOptions = {}): Plugin {
       const file = project.programFile(id);
       if (file === undefined) return undefined;
       const rewritten = await project.rewrite(file, code);
-      consultedBy.set(id, new Set(rewritten.consulted.map(fileKey)));
+      consultedBy.set(id, new Set(rewritten.consulted.map((name) => fileKey(name))));
       for (const consulted of rewritten.consulted) this.addWatchFile(consulted);
       reportBails(this, id, rewritten, strict);
       if (rewritten.replaced) await reloadDependents(this.environment, consultedBy, id);
@@ -191,9 +184,10 @@ function reportBails(
  * @throws TypeError naming the offending key and listing the valid ones.
  */
 function checkOptions(options: object): void {
-  const valid = `the valid options are ${[...OPTION_KEYS].join(", ")}`;
+  const valid = `the valid options are ${Object.keys(OPTION_KEYS).join(", ")}`;
   for (const key of Object.keys(options)) {
-    if (!OPTION_KEYS.has(key)) throw new TypeError(`ecstatic: unknown option "${key}"; ${valid}`);
+    if (!Object.hasOwn(OPTION_KEYS, key))
+      throw new TypeError(`ecstatic: unknown option "${key}"; ${valid}`);
   }
   if ("project" in options && typeof options.project !== "string") {
     throw new TypeError(`ecstatic: the option "project" must be a string; ${valid}`);

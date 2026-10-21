@@ -1,9 +1,17 @@
 import { SourceMap } from "node:module";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { getTouchingPropertyName, type SourceFile } from "typescript/ast";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vitest";
 
 import { analyze } from "../../../src/plugin/optimizer/analysis/analyze.js";
-import { sourceFileName } from "../../../src/plugin/optimizer/compiler.js";
+import {
+  type Checker,
+  resolveSymbol,
+  sourceFileName,
+  type Type,
+  typeOfSymbol,
+  typeSymbol,
+} from "../../../src/plugin/optimizer/compiler.js";
 import { bailDiagnostics } from "../../../src/plugin/optimizer/diagnostics.js";
 import type { EmitFile } from "../../../src/plugin/optimizer/emit/emit.js";
 import type { Position, ViewUse } from "../../../src/plugin/optimizer/facts.js";
@@ -14,7 +22,11 @@ import {
   type RewriteSeams,
   type RewrittenModule,
 } from "../../../src/plugin/optimizer/rewrite.js";
-import type { ProjectView, Session } from "../../../src/plugin/optimizer/session.js";
+import {
+  type ProjectView,
+  type Session,
+  SessionEndedError,
+} from "../../../src/plugin/optimizer/session.js";
 import { locate } from "./locate.js";
 import {
   ASYNC_CALL,
@@ -29,8 +41,11 @@ import {
   STATUES_CALL,
 } from "./main-project.js";
 import { declarationCounts, NAMESPACE_IMPORT, ROW_LOOP } from "./printed.js";
+import { processesStartedSince, runningProcesses, waitUntilDead } from "./processes.js";
 import {
   closeProject,
+  killCompiler,
+  type OpenProject,
   openProject,
   projectPath,
   runtimeCopy,
@@ -333,6 +348,44 @@ function twoShapesAt(target: Position): RewriteSeams {
   };
 }
 
+/** The type of the value declared as `const name` in `source`, as `checker` sees it. */
+async function typeOfDeclared(checker: Checker, source: SourceFile, name: string): Promise<Type> {
+  const identifier = getTouchingPropertyName(source, source.text.indexOf(`const ${name}`) + 6);
+  const symbol = await resolveSymbol(checker, identifier);
+  if (symbol === undefined) throw new Error(`${name} resolves to no symbol`);
+  return typeOfSymbol(checker, symbol);
+}
+
+interface OwnProject extends OpenProject {
+  readonly pid: number;
+}
+
+/** Opens a session of its own on the main project and returns it with its compiler's process ID. */
+async function openOwnProject(): Promise<OwnProject> {
+  const before = await runningProcesses();
+  const own = await openProject(mainProject());
+  const started = await processesStartedSince(before);
+  const [pid] = started;
+  if (started.length !== 1 || pid === undefined) {
+    throw new Error(`expected one new compiler process, found ${started.length}`);
+  }
+  return { ...own, pid };
+}
+
+/** Rewrites the main file on `own`, running `during` inside the analysis before the real analysis. */
+function rewriteDuringAnalysis(
+  own: OwnProject,
+  during: (checker: Checker, source: SourceFile) => Promise<void>,
+): Promise<RewrittenModule> {
+  const seams: RewriteSeams = {
+    analyze: async (checker, source, roots) => {
+      await during(checker, source);
+      return analyze(checker, source, roots);
+    },
+  };
+  return createRewriter(own.session, seams).rewrite(own.view, projectPath(own.root, MAIN_FILE));
+}
+
 describe("createRewriter", () => {
   describe("rewrite", () => {
     describe("when the module has eligible sites", () => {
@@ -611,6 +664,106 @@ describe("createRewriter", () => {
           },
         ]);
       });
+    });
+
+    describe("when the session ends while analyzing the file", () => {
+      const endings = [
+        {
+          name: "closes",
+          error: expect.objectContaining({ message: expect.stringMatching(/closed/u) }),
+          end: (own: OwnProject) => own.session.close(),
+        },
+        {
+          name: "loses its compiler process",
+          error: expect.objectContaining({
+            message: expect.stringMatching(/exited/u),
+            cause: expect.any(Error),
+          }),
+          end: async (own: OwnProject) => {
+            process.kill(own.pid, "SIGKILL");
+            await waitUntilDead(own.pid);
+          },
+        },
+      ];
+
+      it.each(endings)(
+        "rejects naming the session when it $name before a checker query",
+        async ({ error, end }) => {
+          const own = await openOwnProject();
+          onTestFinished(() => own.session.close());
+
+          const rewriting = rewriteDuringAnalysis(own, () => end(own));
+
+          await expect(rewriting).rejects.toBeInstanceOf(SessionEndedError);
+          await expect(rewriting).rejects.toMatchObject(error);
+          await expect(rewriting).rejects.toThrow(own.session.tsconfig);
+        },
+        SPAWN_TIMEOUT_MS,
+      );
+
+      it.each(endings)(
+        "rejects naming the session when it $name before a query on a type the checker returned",
+        async ({ error, end }) => {
+          const own = await openOwnProject();
+          onTestFinished(() => own.session.close());
+          const failures: unknown[] = [];
+
+          const rewriting = rewriteDuringAnalysis(own, async (checker, source) => {
+            const type = await typeOfDeclared(checker, source, "movers");
+            await end(own);
+            try {
+              await typeSymbol(type);
+            } catch (failure) {
+              failures.push(failure);
+              throw failure;
+            }
+          });
+
+          await expect(rewriting).rejects.toBeInstanceOf(SessionEndedError);
+          await expect(rewriting).rejects.toMatchObject(error);
+          await expect(rewriting).rejects.toThrow(own.session.tsconfig);
+          expect(failures).toStrictEqual([expect.any(Error)]);
+          expect(failures[0]).not.toBeInstanceOf(SessionEndedError);
+        },
+        SPAWN_TIMEOUT_MS,
+      );
+
+      it.each([
+        {
+          name: "closes",
+          error: (): object =>
+            expect.objectContaining({ message: expect.stringMatching(/closed/u) }),
+          end: (own: OwnProject) => own.session.close(),
+        },
+        {
+          name: "loses its compiler process",
+          error: (thrown: Error): object =>
+            expect.objectContaining({
+              message: expect.stringMatching(/exited/u),
+              cause: thrown,
+            }),
+          end: async (own: OwnProject) => {
+            await killCompiler(own.session, own.pid);
+          },
+        },
+      ])(
+        "rejects naming the session when it $name and analysis then fails for another reason",
+        async ({ error, end }) => {
+          const own = await openOwnProject();
+          onTestFinished(() => own.session.close());
+          const thrown = new Error("banana split");
+
+          const rewriting = rewriteDuringAnalysis(own, async () => {
+            await end(own);
+            throw thrown;
+          });
+
+          await expect(rewriting).rejects.toBeInstanceOf(SessionEndedError);
+          await expect(rewriting).rejects.toMatchObject(error(thrown));
+          await expect(rewriting).rejects.toThrow(own.session.tsconfig);
+        },
+        SPAWN_TIMEOUT_MS,
+      );
     });
 
     describe("when the DEBUG copy cannot be taken", () => {

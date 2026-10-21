@@ -38,3 +38,24 @@ export class NodeTable {
     return this.#nodes[id];
   }
 }
+
+/**
+ * The node `table` maps `id` to, when it passes `test`.
+ *
+ * @param table - The file's node table.
+ * @param id - The node's ID.
+ * @param what - What the node is, for the error.
+ * @param test - The kind the node must have.
+ * @returns The node.
+ * @throws Error when `table` holds no node of `id`, or one that fails `test`.
+ */
+export function tableNode<T extends Node>(
+  table: NodeTable,
+  id: NodeID,
+  what: string,
+  test: (node: Node) => node is T,
+): T {
+  const node = table.node(id);
+  if (node === undefined || !test(node)) throw new Error(`no ${what} has node ${id}`);
+  return node;
+}

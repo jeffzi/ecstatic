@@ -192,6 +192,7 @@ describe("RULES", () => {
       "return-value",
       "return-object-literal",
       "return-function-expression",
+      "return-class-expression",
       "return-labeled",
       "return-in-finally",
       "return-in-nested-function",
@@ -491,6 +492,18 @@ describe("EmitFile", () => {
           absent: ["return-value", "return-object-literal"],
         },
         {
+          name: "a returned class expression",
+          source: `${MOVER_EACH}    return class {\n        static x = 1;\n    };\n});\n`,
+          expected: ["return-class-expression"],
+          absent: ["return-value", "return-object-literal", "return-function-expression"],
+        },
+        {
+          name: "an expression body that starts with a class expression",
+          source: `each(register(createWorld(), Mover), (e) => class {\n    static x = e.Position.x;\n});\n`,
+          expected: ["expression-body"],
+          absent: ["return-class-expression", "return-value"],
+        },
+        {
           name: "a returned parenthesized object literal",
           source: `${MOVER_EACH}    return ({ x: e.Position.x });\n});\n`,
           expected: ["return-value"],
@@ -601,10 +614,46 @@ describe("EmitFile", () => {
           source: `${SEEN_UNKNOWN}outer: for (let pass = 0; pass < 2; pass++) {\n    ${MOVER_EACH}        seen.push(() => {\n            outer: for (;;) break outer;\n        });\n    });\n    if (pass === 0) continue outer;\n}\n`,
           absent: ["user-label-renamed"],
         },
+        ...["storage", "n", "i"].map((local) => ({
+          name: `an outer binding named like the loop's own ${local}`,
+          source: `const ${local} = 2;\n${SEEN_NUMBERS}${MOVER_EACH}    seen.push(e.Position.x * ${local});\n});\n`,
+          expected: ["outer-binding"] satisfies Rule[],
+        })),
+        ...["storage", "n", "i"].map((local) => ({
+          name: `a class extending an outer class named like the loop's own ${local}`,
+          source: `class ${local} {}\n${SEEN_UNKNOWN}${MOVER_EACH}    seen.push(e.Position.x, class extends ${local} {});\n});\n`,
+          expected: ["outer-binding"] satisfies Rule[],
+        })),
         {
-          name: "outer bindings named like the loop's own",
-          source: `const n = 2;\nconst i = 3;\n${SEEN_NUMBERS}${MOVER_EACH}    seen.push(e.Position.x * n + i);\n});\n`,
+          name: "a class declaration extending an outer class named like the loop's own",
+          source: `class storage {}\n${SEEN_UNKNOWN}${MOVER_EACH}    class Probe extends storage {}\n    seen.push(e.Position.x, Probe);\n});\n`,
           expected: ["outer-binding"],
+        },
+        {
+          name: "a class extending a generic outer class named like the loop's own",
+          source: `class i<T> {\n    held?: T;\n}\n${SEEN_UNKNOWN}${MOVER_EACH}    seen.push(e.Position.x, class extends i<number> {});\n});\n`,
+          expected: ["outer-binding"],
+        },
+        {
+          name: "a class extending a member of an outer object named like the loop's own",
+          source: `const n = { Base: class {} };\n${SEEN_UNKNOWN}${MOVER_EACH}    seen.push(e.Position.x, class extends n.Base {});\n});\n`,
+          expected: ["outer-binding"],
+        },
+        ...["storage", "n", "i"].map((local) => ({
+          name: `a body label named like the loop's own ${local}`,
+          source: `${SEEN_NUMBERS}${MOVER_EACH}    ${local}: for (let k = 0; k < 2; k++) {\n        if (k === 1) break ${local};\n        if (k === 0) continue ${local};\n    }\n    seen.push(e.Position.x);\n});\n`,
+          expected: ["user-label"] satisfies Rule[],
+          absent: ["outer-binding"] satisfies Rule[],
+        })),
+        {
+          name: "a class implementing an outer interface named like the loop's own",
+          source: `interface i {\n    readonly x: number;\n}\n${SEEN_UNKNOWN}${MOVER_EACH}    seen.push(e.Position.x, class implements i {\n        readonly x = 1;\n    });\n});\n`,
+          absent: ["outer-binding"],
+        },
+        {
+          name: "a type annotation naming an outer type named like the loop's own",
+          source: `type n = number;\n${SEEN_UNKNOWN}${MOVER_EACH}    const x: n = e.Position.x;\n    seen.push(x);\n});\n`,
+          absent: ["outer-binding"],
         },
         {
           name: "a body binding named like the loop's own",
@@ -640,6 +689,37 @@ describe("EmitFile", () => {
           name: "a read of an outer class declared after the call",
           source: deadZoneSource("seen.push(e.Position.x, later);", "class later {}"),
           expected: ["outer-let-dead-zone"],
+        },
+        ...["let later = class {};", "const later = class {};", "class later {}"].map(
+          (declaration) => ({
+            name: `a class extending an outer ${declaration.split(" ")[0]} declared after the call`,
+            source: deadZoneSource("seen.push(e.Position.x, class extends later {});", declaration),
+            expected: ["outer-let-dead-zone"] satisfies Rule[],
+          }),
+        ),
+        {
+          name: "a class extending an outer class declared after the call, inside a nested function",
+          source: deadZoneSource(
+            "seen.push(e.Position.x, () => class extends later {});",
+            "class later {}",
+          ),
+          absent: ["outer-let-dead-zone"],
+        },
+        {
+          name: "a class implementing an outer class declared after the call",
+          source: deadZoneSource(
+            "seen.push(e.Position.x, class implements later {\n                readonly x = 1;\n            });",
+            "class later {\n        readonly x = 1;\n    }",
+          ),
+          absent: ["outer-let-dead-zone"],
+        },
+        {
+          name: "a type annotation naming an outer class declared after the call",
+          source: deadZoneSource(
+            "const held: later | number = e.Position.x;\n            seen.push(held);",
+            "class later {}",
+          ),
+          absent: ["outer-let-dead-zone"],
         },
         {
           name: "a read of an outer object-pattern const declared after the call",

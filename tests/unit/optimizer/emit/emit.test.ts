@@ -8,6 +8,7 @@ import {
   CASE_PRELUDE,
   EmitProject,
   everyMode,
+  everyRun,
   MODE_SOURCE,
   MODES,
   RUN_TIMEOUT_MS,
@@ -291,6 +292,48 @@ describe("EmitFile", () => {
         const results = await project.runEveryMode(source);
 
         expect(results).toStrictEqual(everyMode(expected));
+      },
+      RUN_TIMEOUT_MS,
+    );
+
+    it.each([
+      {
+        name: "a class expression",
+        body: `class {
+        static {
+            seen.push(e.Position.x);
+        }
+    }`,
+        expected: [2, 1],
+      },
+      {
+        name: "a parenthesized object literal",
+        body: "({ x: e.Position.x * 10 }).x + seen.push(e.Position.x * 10)",
+        expected: [20, 10],
+      },
+      {
+        name: "a function expression",
+        body: `function (x: number) {
+        seen.push(x * 100);
+    }.call(undefined, e.Position.x)`,
+        expected: [200, 100],
+      },
+    ])(
+      "runs an expression body that starts with $name as the runtime call does, with checks on and stripped",
+      async ({ body, expected }) => {
+        const source = `export function scenario(): unknown {
+    const movers = register(createWorld(), Mover);
+    spawn(movers, { Position: { x: 1, y: 0 }, Velocity: { dx: 0, dy: 0 } });
+    spawn(movers, { Position: { x: 2, y: 0 }, Velocity: { dx: 0, dy: 0 } });
+    const seen: unknown[] = [];
+    each(movers, (e) => ${body});
+    return seen;
+}
+`;
+
+        const results = await project.runEverySetting(source);
+
+        expect(results).toStrictEqual(everyRun(expected));
       },
       RUN_TIMEOUT_MS,
     );

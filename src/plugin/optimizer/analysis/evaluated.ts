@@ -139,18 +139,6 @@ export function forEachDeferred(node: Node, visit: (part: Node) => void): void {
   }
 }
 
-/**
- * Whether a node is the initializer of an instance field, which runs each time an instance is
- * built rather than when the class is evaluated.
- *
- * @param member - The node's parent.
- * @param node - The node to test.
- * @returns Whether `node` is the initializer of `member`, an instance field.
- */
-export function isInstanceInitializer(member: Node, node: Node): boolean {
-  return isPropertyDeclaration(member) && member.initializer === node && !isStatic(member);
-}
-
 function visitParameterDecorators(member: FunctionMember, visit: (part: Node) => void): void {
   for (const param of member.parameters) {
     param.forEachChild((child) => {

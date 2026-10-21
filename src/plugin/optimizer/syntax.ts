@@ -5,6 +5,7 @@ import {
   type BindingName,
   type Expression,
   type FunctionExpression,
+  type Identifier,
   type Node,
   NodeFlags,
   type NonNullExpression,
@@ -17,15 +18,20 @@ import {
 import {
   isArrowFunction,
   isAsExpression,
+  isBreakOrContinueStatement,
   isClassLikeDeclaration,
   isExpressionWithTypeArguments,
   isFunctionExpression,
   isHeritageClause,
   isIdentifier,
   isInterfaceDeclaration,
+  isLabeledStatement,
+  isMetaProperty,
   isNonNullExpression,
   isParenthesizedExpression,
+  isPropertyAccessExpression,
   isSatisfiesExpression,
+  isSourceFile,
   isTypeAliasDeclaration,
   isTypeAssertion,
   isTypeNode,
@@ -235,6 +241,25 @@ function isClassExtends(node: Node): boolean {
     clause.token === SyntaxKind.ExtendsKeyword &&
     isClassLikeDeclaration(clause.parent)
   );
+}
+
+/**
+ * Whether an identifier that names no declaration refers to a binding. A class's `extends`
+ * expression is a reference; an `implements` clause is part of a type.
+ *
+ * @param id - The identifier.
+ * @returns False when `id` is part of a type, a property name, a label, or the name of a
+ *   meta-property; true otherwise.
+ */
+export function isReference(id: Identifier): boolean {
+  for (let node: Node = id; !isSourceFile(node); node = node.parent) {
+    if (isTypeOnly(node)) return false;
+  }
+  const { parent } = id;
+  if ((isLabeledStatement(parent) || isBreakOrContinueStatement(parent)) && parent.label === id) {
+    return false;
+  }
+  return !((isPropertyAccessExpression(parent) || isMetaProperty(parent)) && parent.name === id);
 }
 
 /** The keyword a variable declaration list declares with. */

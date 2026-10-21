@@ -11,11 +11,14 @@ import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { expect } from "vitest";
+
 import {
   openSession,
   type ProjectView,
   type Session,
 } from "../../../src/plugin/optimizer/session.js";
+import { waitUntilDead } from "./processes.js";
 
 /** How long opening a compiler session may take on a slow CI runner. */
 export const SPAWN_TIMEOUT_MS = 30_000;
@@ -139,6 +142,23 @@ export async function openProject(files: Readonly<Record<string, string>>): Prom
     await session.close();
     throw error;
   }
+}
+
+/**
+ * Kills the compiler process of `session` and waits until the session has seen it exit. The process
+ * ID going dead is not enough: the session learns of the exit only once this process handles the
+ * exit event, and on Windows a killed process stops answering to its ID before that event arrives.
+ * A request sent after the kill rejects only once the session has seen the exit, so its rejection
+ * naming the exit is the point from which every synchronous check of the session sees it too.
+ *
+ * @param session - Session whose compiler process is killed.
+ * @param pid - Process ID of that compiler process.
+ * @throws When the request sent after the kill does not reject naming the exit.
+ */
+export async function killCompiler(session: Session, pid: number): Promise<void> {
+  process.kill(pid, "SIGKILL");
+  await waitUntilDead(pid);
+  await expect(session.parseText("probe.ts", "")).rejects.toThrow(/exited/u);
 }
 
 /** Closes `session` and deletes every project written. */

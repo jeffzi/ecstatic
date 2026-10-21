@@ -5,6 +5,7 @@ import {
   CASE_PRELUDE,
   EmitProject,
   everyMode,
+  everyRun,
   RUN_TIMEOUT_MS,
   THREE_MOVERS,
 } from "./emit-project.js";
@@ -99,6 +100,56 @@ describe("EmitFile", () => {
 }
 `,
         expected: [30, 1, 2],
+      },
+      {
+        name: "a var list declares and assigns each binding in order, in the body and a for initializer",
+        source: `${THREE_MOVERS}    const seen: unknown[] = [];
+    each(movers, (e) => {
+        var a = e.Position.x, b = a * 10, c: number | undefined;
+        seen.push(a, b, typeof c);
+        for (var j = 0, k = e.Position.x; j < k; j++) {}
+        seen.push(j, k);
+    });
+    return seen;
+}
+`,
+        expected: [3, 30, "undefined", 3, 3, 2, 20, "undefined", 2, 2, 1, 10, "undefined", 1, 1],
+      },
+      {
+        name: "a var object pattern binds keyed, defaulted, and nested values, beside array elisions and rests",
+        source: `${THREE_MOVERS}    const seen: unknown[] = [];
+    const pick = (x: number): { k?: number; m?: { w?: number }; rows: { k?: number[] }[] } =>
+        x === 2 ? { k: 5, rows: [{ k: [7] }, {}] } : x === 1 ? { m: {}, rows: [{ k: [7] }, {}] } : { rows: [{ k: [7] }, {}] };
+    each(movers, (e) => {
+        var { k: v = e.Position.x * 10, m: { w: deep = -1 } = { w: e.Position.x } } = pick(e.Position.x);
+        const found: number[] = [];
+        for (var { k: [a] = [e.Position.x + 100] } of pick(e.Position.x).rows) found.push(a);
+        var [, second, , ...tail] = [0, e.Position.x, 7, 8, 9];
+        seen.push(v, deep, found, a, second, tail);
+    });
+    return seen;
+}
+`,
+        expected: [
+          30,
+          3,
+          [7, 103],
+          103,
+          3,
+          [8, 9],
+          5,
+          2,
+          [7, 102],
+          102,
+          2,
+          [8, 9],
+          10,
+          -1,
+          [7, 101],
+          101,
+          1,
+          [8, 9],
+        ],
       },
       {
         name: "a returned value reading a disabled optional throws as the runtime does",
@@ -501,6 +552,31 @@ describe("EmitFile", () => {
         const results = await project.runEveryMode(source);
 
         expect(results).toStrictEqual(everyMode(expected));
+      },
+      RUN_TIMEOUT_MS,
+    );
+
+    it(
+      "transplants a returned class expression as the runtime runs it, its static blocks included, with checks on and stripped",
+      async () => {
+        const source = `${THREE_MOVERS}    const seen: number[] = [];
+    each(movers, (e) => {
+        if (e.Position.x === 2) {
+            return class {
+                static {
+                    seen.push(e.Position.x * 10);
+                }
+            };
+        }
+        seen.push(e.Position.x);
+    });
+    return seen;
+}
+`;
+
+        const results = await project.runEverySetting(source);
+
+        expect(results).toStrictEqual(everyRun([3, 20, 1]));
       },
       RUN_TIMEOUT_MS,
     );

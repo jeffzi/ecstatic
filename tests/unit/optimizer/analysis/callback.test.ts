@@ -145,6 +145,7 @@ interface WantUse {
   readonly comp?: string;
   readonly field?: string;
   readonly alias?: boolean;
+  readonly slotOperand?: "left" | "right";
 }
 
 /** A source whose callback references the view only in positions that lower, with its uses. */
@@ -184,6 +185,17 @@ const LOOSE_USE_CASES: readonly UseCase[] = [
     name: "a function expression callback",
     source: "each(s, function (e: any) { e.Position.x = 1; });",
     want: [{ kind: "field-assign", comp: "Position", field: "x", mark: "e.Position.x" }],
+  },
+  {
+    name: "slots compared with null on either side",
+    source: `${REGISTER_DECL}each(s, (e: any) => {
+	register(e.Shield === null);
+	register(null === e.Shield);
+});`,
+    want: [
+      { kind: "compare", comp: "Shield", mark: "e.Shield === null", slotOperand: "left" },
+      { kind: "compare", comp: "Shield", mark: "null === e.Shield);", slotOperand: "right" },
+    ],
   },
   {
     name: "a local shadowing the view, which is not the view",
@@ -238,14 +250,52 @@ const LOWERED_USE_CASES: readonly UseCase[] = [
 	const b = undefined !== e.Shield;
 	const c = e.Shield == null || e.Position != null;
 	const d = e.Shield === null;
-	xs.push(+a, +b, +c, +d);
+	const f = null === e.Shield;
+	xs.push(+a, +b, +c, +d, +f);
 });`,
     want: [
-      { kind: "compare", comp: "Shield", mark: "e.Shield === undefined" },
-      { kind: "compare", comp: "Shield", mark: "undefined !== e.Shield" },
-      { kind: "compare", comp: "Shield", mark: "e.Shield == null" },
-      { kind: "compare", comp: "Position", mark: "e.Position != null" },
-      { kind: "compare", comp: "Shield", mark: "e.Shield === null" },
+      { kind: "compare", comp: "Shield", mark: "e.Shield === undefined", slotOperand: "left" },
+      { kind: "compare", comp: "Shield", mark: "undefined !== e.Shield", slotOperand: "right" },
+      { kind: "compare", comp: "Shield", mark: "e.Shield == null", slotOperand: "left" },
+      { kind: "compare", comp: "Position", mark: "e.Position != null", slotOperand: "left" },
+      { kind: "compare", comp: "Shield", mark: "e.Shield === null", slotOperand: "left" },
+      { kind: "compare", comp: "Shield", mark: "null === e.Shield", slotOperand: "right" },
+    ],
+  },
+  {
+    name: "slots compared through parentheses and non-null assertions",
+    source: `each(enemies, (e) => {
+	const a = (e.Shield) === null;
+	const b = undefined !== e.Shield!;
+	xs.push(+a, +b);
+});`,
+    want: [
+      { kind: "compare", comp: "Shield", mark: "(e.Shield) ===", slotOperand: "left" },
+      { kind: "compare", comp: "Shield", mark: "undefined !== e.Shield!", slotOperand: "right" },
+    ],
+  },
+  {
+    name: "a local named undefined aliasing a slot, compared with null",
+    source: `each(enemies, (e) => {
+	const undefined = e.Position;
+	xs.push(+(undefined === null), +(null === undefined));
+});`,
+    want: [
+      { kind: "alias", comp: "Position", mark: "undefined = e.Position" },
+      {
+        kind: "compare",
+        comp: "Position",
+        mark: "undefined === null",
+        alias: true,
+        slotOperand: "left",
+      },
+      {
+        kind: "compare",
+        comp: "Position",
+        mark: "null === undefined",
+        alias: true,
+        slotOperand: "right",
+      },
     ],
   },
   {
@@ -315,7 +365,13 @@ const LOWERED_USE_CASES: readonly UseCase[] = [
       { kind: "field-assign", comp: "Shield", field: "hp", mark: "shield.hp", alias: true },
       { kind: "alias", comp: "Shield", mark: "held = e.Shield!" },
       { kind: "field-read", comp: "Shield", field: "hp", mark: "held.hp", alias: true },
-      { kind: "compare", comp: "Shield", mark: "held === undefined", alias: true },
+      {
+        kind: "compare",
+        comp: "Shield",
+        mark: "held === undefined",
+        alias: true,
+        slotOperand: "left",
+      },
       { kind: "optional-read", comp: "Shield", field: "hp", mark: "held?.hp", alias: true },
     ],
   },
@@ -490,6 +546,7 @@ function wantedUse(
     comp: want.comp ?? "",
     field: want.field ?? "",
     alias: want.alias ?? false,
+    ...(want.slotOperand === undefined ? {} : { slotOperand: want.slotOperand }),
     offset: markOffset(located, mark),
   };
 }

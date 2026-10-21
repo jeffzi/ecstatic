@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import { getTouchingPropertyName, type Node, SyntaxKind } from "typescript/ast";
-import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import {
   declarationFileNames,
@@ -498,24 +498,6 @@ describe("startCompiler", () => {
 });
 
 describe("closeCompiler", () => {
-  it("rejects with the close failure while the process is still running", async () => {
-    const {
-      compiler: { closeCompiler, startCompiler },
-    } = await importWithFakeApi((m) => {
-      m.client = {
-        ...m.client,
-        close: async () => {
-          throw new Error("close refused");
-        },
-      };
-    });
-    const compiler = await startCompiler(undefined);
-
-    const closing = closeCompiler(compiler, 60_000);
-
-    await expect(closing).rejects.toThrow("close refused");
-  });
-
   it("sends no request to the process while closing", async () => {
     const apiRequest = vi.fn(async (_method: string, _params: unknown) => undefined);
     let exit = (): void => {};
@@ -542,5 +524,71 @@ describe("closeCompiler", () => {
     await closeCompiler(compiler, 60_000);
 
     expect(apiRequest).not.toHaveBeenCalled();
+  });
+
+  describe("process shutdown", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** Starts a compiler whose client closes with `close` and whose process exits once killed. */
+    async function startWithClose(close: (exit: () => void) => Promise<void>) {
+      let exit = (): void => {};
+      const kill = vi.fn((_signal: string) => {
+        exit();
+        return true;
+      });
+      const {
+        compiler: { closeCompiler, startCompiler },
+      } = await importWithFakeApi((m) => {
+        m.client = {
+          ...m.client,
+          process: {
+            kill,
+            once: (_event, listener) => {
+              exit = listener;
+            },
+            stdin: { write: () => true },
+          },
+          close: () => close(exit),
+        };
+      });
+      const compiler = await startCompiler(undefined);
+      vi.useFakeTimers();
+      return { closeCompiler, compiler, kill };
+    }
+
+    it("kills the process and rejects with the close failure", async () => {
+      const { closeCompiler, compiler, kill } = await startWithClose(async () => {
+        throw new Error("close refused");
+      });
+
+      const closing = closeCompiler(compiler, 60_000);
+
+      await expect(closing).rejects.toThrow("close refused");
+      expect(kill).toHaveBeenCalled();
+    });
+
+    it("kills nothing when the close finishes before the deadline", async () => {
+      const { closeCompiler, compiler, kill } = await startWithClose(async (exit) => {
+        exit();
+      });
+
+      await closeCompiler(compiler, 60_000);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(kill).not.toHaveBeenCalled();
+    });
+
+    it("kills the process when the close hangs past the deadline", async () => {
+      const { closeCompiler, compiler, kill } = await startWithClose(
+        () => new Promise<void>(() => {}),
+      );
+      void closeCompiler(compiler, 1_000).catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(kill).toHaveBeenCalled();
+    });
   });
 });
