@@ -12,11 +12,7 @@ import {
   type VariableDeclaration,
   SyntaxKind,
 } from "typescript/ast";
-import {
-  createIdentifier,
-  createObjectBindingPattern,
-  createVoidExpression,
-} from "typescript/ast/factory";
+import { createIdentifier, createObjectBindingPattern } from "typescript/ast/factory";
 import {
   isBindingName,
   isExpression,
@@ -35,6 +31,7 @@ import {
   numeric,
   orUndefined,
   parenthesized,
+  undefinedValue,
   type Visit,
 } from "./expressions.js";
 import type { Lowering } from "./lowering.js";
@@ -69,8 +66,9 @@ const NESTED_RULES: Readonly<Record<PatternSite, Rule>> = {
  * @param node - A `const` or `let` declaration, or the pattern itself.
  * @param use - The destructure use of `node`.
  * @returns The declarations.
- * @throws Error when the pattern is no object pattern, or one of its properties has no view use
- *   or a use with no lowering in a pattern.
+ * @throws Error when the pattern is no object pattern, one of its properties has no view use or a
+ *   use with no lowering in a pattern, the loop's shape has no field a property reads, or an alias
+ *   property binds no name.
  */
 export function destructure(
   context: PatternContext,
@@ -170,7 +168,7 @@ function fieldValue(context: PatternContext, element: BindingElement, use: ViewU
   const unset = binary(
     parenthesized(assignTo(createIdentifier(held), read)),
     SyntaxKind.EqualsEqualsEqualsToken,
-    createVoidExpression(numeric("0")),
+    undefinedValue(),
   );
   return conditional(unset, visitNode(fallback, visit, isExpression), createIdentifier(held));
 }

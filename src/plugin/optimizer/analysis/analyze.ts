@@ -18,8 +18,8 @@ import {
 } from "../facts.js";
 import { NodeTable } from "../nodes.js";
 import { nodePosition } from "../position.js";
+import type { InlineCallback } from "../syntax.js";
 import { type CallbackScope, inlineCallback, prepareCallback } from "./callback.js";
-import type { InlineCallback } from "./function-local.js";
 import { type PackageRoots, type Recognized, recognize } from "./roots.js";
 import { resolveShapes } from "./shape.js";
 

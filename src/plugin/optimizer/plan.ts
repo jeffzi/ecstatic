@@ -12,7 +12,6 @@ import {
   type Op,
   type Position,
   type Reason,
-  reasonInfo,
   type Return,
   type Site,
   type ViewEscape,
@@ -32,16 +31,13 @@ export interface Bail {
 }
 
 /**
- * Whether a bail produces a diagnostic.
+ * The message of a thrown value, as an `INTERNAL` bail's detail carries it.
  *
- * @param bail - Bail to report.
- * @param strict - Whether the build runs under strict.
- * @returns `true` always for a warning reason, only under strict for a strict reason, and never for
- *   a silent one.
+ * @param error - The thrown value.
+ * @returns An error's own message, or the value as a string.
  */
-export function isReported(bail: Bail, strict: boolean): boolean {
-  const { category } = reasonInfo(bail.reason);
-  return category === "warning" || (category === "strict" && strict);
+export function thrownMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -197,8 +193,7 @@ class Planner {
       const verdict = this.#verdict(site);
       return "reason" in verdict ? { ...placement, ...verdict } : eachInlining(site, verdict);
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      return { ...placement, reason: "INTERNAL", detail };
+      return { ...placement, reason: "INTERNAL", detail: thrownMessage(error) };
     }
   }
 
@@ -271,8 +266,6 @@ class Planner {
  * Decides the sites of one file, nested sites included: an eligible `each` site gets an inlining,
  * every other site a bail.
  *
- * Bails and rewrites are each in post-order: the sites of one level, the file's top level or the
- * nested sites of one callback, in ascending source offset, each preceded by its own nested sites.
  * An enclosing site is decided only once every site inside its callback is, because whether a
  * reference to its view from a nested callback escapes depends on whether that callback is inlined.
  *
@@ -280,7 +273,9 @@ class Planner {
  * bail carrying the thrown message; every other site is planned as usual.
  *
  * @param sites - The file's top-level sites.
- * @returns The file's bails and rewrites.
+ * @returns The file's bails and rewrites, each in post-order: the sites of one level, the file's top
+ *   level or the nested sites of one callback, in ascending source offset, each preceded by its own
+ *   nested sites.
  * @throws Whatever reading a site's call, op, or position throws: a site that cannot be placed
  *   cannot carry a bail.
  */

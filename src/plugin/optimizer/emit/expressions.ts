@@ -1,5 +1,6 @@
 /**
- * The expressions and declarations the inlined loop is built from, through the factory alone.
+ * The expressions and declarations the inlined loop is built from, through the factory alone, and
+ * the reads of a source expression's shape the lowering keys on.
  */
 
 import {
@@ -9,6 +10,7 @@ import {
   type Node,
   NodeFlags,
   type Statement,
+  type StringLiteral,
   SyntaxKind,
   TokenFlags,
   type VariableDeclaration,
@@ -34,12 +36,11 @@ import {
   isExpression,
   isExpressionStatement,
   isIdentifier,
-  isParenthesizedExpression,
   isPropertyAccessExpression,
 } from "typescript/ast/is";
 
 import type { ViewUse } from "../facts.js";
-import { outermostParens, skipWrappers } from "../syntax.js";
+import { outermostParens, skipParens, skipWrappers } from "../syntax.js";
 
 /** Visits a node of the body, returning what it becomes. */
 export type Visit = (node: Node) => Node;
@@ -111,6 +112,16 @@ export function numeric(text: string): Expression {
 }
 
 /**
+ * A string literal.
+ *
+ * @param text - The string's value.
+ * @returns The literal.
+ */
+export function string(text: string): StringLiteral {
+  return createStringLiteral(text, TokenFlags.None);
+}
+
+/**
  * A member read.
  *
  * @param object - The object read from.
@@ -126,12 +137,7 @@ export function member(object: Expression, name: string): Expression {
       NodeFlags.None,
     );
   }
-  return createElementAccessExpression(
-    object,
-    undefined,
-    createStringLiteral(name, TokenFlags.None),
-    NodeFlags.None,
-  );
+  return createElementAccessExpression(object, undefined, string(name), NodeFlags.None);
 }
 
 /**
@@ -223,7 +229,16 @@ export function conditional(
  * @returns `(condition ? whenTrue : undefined)`.
  */
 export function orUndefined(condition: Expression, whenTrue: Expression): Expression {
-  return conditional(condition, whenTrue, createVoidExpression(numeric("0")));
+  return conditional(condition, whenTrue, undefinedValue());
+}
+
+/**
+ * The `undefined` value, spelled so no binding named `undefined` can shadow it.
+ *
+ * @returns `void 0`.
+ */
+export function undefinedValue(): Expression {
+  return createVoidExpression(numeric("0"));
 }
 
 /**
@@ -234,18 +249,6 @@ export function orUndefined(condition: Expression, whenTrue: Expression): Expres
  */
 export function keyword(kind: SyntaxKind.TrueKeyword | SyntaxKind.FalseKeyword): Expression {
   return createKeywordExpression(kind);
-}
-
-/**
- * Strips the parentheses around an expression.
- *
- * @param node - The parenthesized expression.
- * @returns The expression inside every parenthesis.
- */
-export function skipParens(node: Expression): Expression {
-  let inner = node;
-  while (isParenthesizedExpression(inner)) inner = inner.expression;
-  return inner;
 }
 
 /**

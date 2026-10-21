@@ -583,10 +583,10 @@ const REASON_CATALOG: { readonly [R in Reason]: Omit<ReasonInfo, "id"> } = {
 };
 
 /**
- * Builds a new row on each call: the catalog entry for `reason` with its `id` added.
+ * The catalog row of a reason, built anew on each call.
  *
  * @param reason - Reason to describe.
- * @returns The row, its `id` being `reason`.
+ * @returns The catalog entry for `reason`, with its `id` set to `reason`.
  */
 export function reasonInfo(reason: Reason): ReasonInfo {
   return { id: reason, ...REASON_CATALOG[reason] };

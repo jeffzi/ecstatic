@@ -31,9 +31,14 @@ import {
   shapeComponent,
   type UseKind,
 } from "../facts.js";
-import { arithmeticOperator, outermostParens, skipWrappers } from "../syntax.js";
+import {
+  arithmeticOperator,
+  type InlineCallback,
+  outermostParens,
+  outermostWrapper,
+  skipWrappers,
+} from "../syntax.js";
 import { isInstanceInitializer } from "./evaluated.js";
-import type { InlineCallback } from "./function-local.js";
 import {
   blockScope,
   destructuredPattern,
@@ -47,7 +52,6 @@ import {
   isUpdateOf,
   isWriteTarget,
   literalElementKey,
-  outermostWrapper,
   patternKey,
 } from "./roles.js";
 

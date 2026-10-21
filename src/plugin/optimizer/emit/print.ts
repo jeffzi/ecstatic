@@ -14,6 +14,8 @@ import {
 } from "typescript/ast";
 import { getShebang, skipTrivia } from "typescript/ast/scanner";
 
+import { sourceFileName } from "../compiler.js";
+import { firstTokenOffset, positionShift } from "../position.js";
 import type { Session } from "../session.js";
 
 /** A node printed in place of a node of the source. */
@@ -95,7 +97,7 @@ export async function printSpliced(
     out.skipSource(splice.end);
   }
   out.copySource(text.length);
-  const file = basename(source.fileName);
+  const file = basename(sourceFileName(source));
   return { text: out.text, map: out.sourceMap(file, source.text) };
 }
 
@@ -117,9 +119,11 @@ async function spliced(
   replacements: readonly Replacement[],
 ): Promise<Splice[]> {
   const sorted = replacements.toSorted((a, b) => a.target.pos - b.target.pos);
-  const [preambleLines, printed] = await Promise.all([
+  const [preambleLines, printedLoops] = await Promise.all([
     Promise.all(preamble.map(async (statement) => await session.print(statement))),
-    Promise.all(sorted.map(async ({ node }) => await session.print(node))),
+    Promise.all(
+      sorted.map(async ({ target, node }) => ({ target, printed: await session.print(node) })),
+    ),
   ]);
   const newline = sourceNewline(source.text);
   const shift = positionShift(source);
@@ -131,31 +135,21 @@ async function spliced(
     end: at,
     mapped: false,
   };
-  const loops = sorted.map(({ target }, i) => ({
-    start: skipTrivia(source.text, target.pos - shift) + shift,
+  const loops = printedLoops.map(({ target, printed }) => ({
+    start: firstTokenOffset(source, target),
     end: target.end,
-    printed: printed[i] ?? "",
+    printed,
   }));
-  assertDisjoint(source.fileName, at, loops);
+  const fileName = sourceFileName(source);
+  assertDisjoint(fileName, at, loops);
   const loopSplices = await Promise.all(
     loops.map(async ({ start, end, printed: loop }) => {
       const indentation = lineIndentation(source.text, start - shift);
-      const text = withNewline(await indent(session, source.fileName, loop, indentation), newline);
+      const text = withNewline(await indent(session, fileName, loop, indentation), newline);
       return { text, start, end, mapped: true };
     }),
   );
   return [preambleSplice, ...loopSplices];
-}
-
-/**
- * How far the compiler's positions run past `source.text`: the compiler counts a byte order mark
- * that the text leaves out.
- *
- * @param source - The file to rewrite.
- * @returns The number of characters of byte order mark that open the file.
- */
-function positionShift(source: SourceFile): number {
-  return source.end - source.text.length;
 }
 
 /**
@@ -338,6 +332,9 @@ function isWord(char: string): boolean {
   return WORD.test(char);
 }
 
+/** A source map segment's fields: generated column, source index, original line and column. */
+type Segment = [number, number, number, number];
+
 const BASE64_DIGITS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /**
@@ -353,7 +350,8 @@ function vlq(value: number): string {
     let digit = rest & 31;
     rest >>>= 5;
     if (rest > 0) digit |= 32;
-    digits += BASE64_DIGITS[digit] ?? "";
+    // `digit` is at most 63, so it always indexes the 64-digit alphabet.
+    digits += BASE64_DIGITS.charAt(digit);
   } while (rest > 0);
   return digits;
 }
@@ -372,7 +370,7 @@ class SplicedText {
   readonly #original = new TextPosition();
   #at: number;
   /** The fields of the last segment written, which the next one encodes relative to. */
-  #segment = [0, 0, 0, 0];
+  #segment: Segment = [0, 0, 0, 0];
   /** The generated line the mappings have reached. */
   #segmentLine = 0;
   #segmentOnLine = false;
@@ -484,8 +482,13 @@ class SplicedText {
       this.#segmentOnLine = false;
     }
     if (this.#segmentOnLine) this.#mappings += ",";
-    const fields = [generated.column, 0, this.#original.line, this.#original.column];
-    this.#mappings += fields.map((field, i) => vlq(field - (this.#segment[i] ?? 0))).join("");
+    const fields: Segment = [generated.column, 0, this.#original.line, this.#original.column];
+    const previous = this.#segment;
+    this.#mappings +=
+      vlq(fields[0] - previous[0]) +
+      vlq(fields[1] - previous[1]) +
+      vlq(fields[2] - previous[2]) +
+      vlq(fields[3] - previous[3]);
     this.#segment = fields;
     this.#segmentOnLine = true;
   }

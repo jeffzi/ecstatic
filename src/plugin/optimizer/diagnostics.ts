@@ -4,7 +4,7 @@
  */
 
 import { compareCodeUnits, DETAIL_PLACEHOLDER, type Position, reasonInfo } from "./facts.js";
-import { type Bail, isReported } from "./plan.js";
+import type { Bail } from "./plan.js";
 
 /** An `INTERNAL` bail covering a whole file: analyzing the file threw, so it names no call. */
 export interface FileBail {
@@ -31,7 +31,7 @@ export interface BailDiagnostic {
 }
 
 /**
- * Turns the bails a build reports into diagnostics, ordered by file name, then offset.
+ * Turns the bails a build reports into diagnostics.
  *
  * Under strict, every strict and warning bail, `INTERNAL` included, is an error. Without strict,
  * warning bails are warnings, and an `INTERNAL` bail is a warning whose message starts with its
@@ -40,7 +40,7 @@ export interface BailDiagnostic {
  *
  * @param bails - The bails of the build's files, in any order.
  * @param strict - Whether the build runs under strict.
- * @returns One diagnostic per reported bail.
+ * @returns One diagnostic per reported bail, ordered by file name, then offset.
  */
 export function bailDiagnostics(
   bails: readonly (Bail | FileBail)[],
@@ -53,9 +53,7 @@ export function bailDiagnostics(
   const diagnostics: BailDiagnostic[] = [];
   for (const bail of sorted) {
     const { code } = reasonInfo(bail.reason);
-    if (code === undefined || !(bail.reason === "INTERNAL" || isReported(bail, strict))) {
-      continue;
-    }
+    if (code === undefined || !isReported(bail, strict)) continue;
     const { pos } = bail;
     diagnostics.push({
       file: pos.file,
@@ -68,6 +66,20 @@ export function bailDiagnostics(
     });
   }
   return diagnostics;
+}
+
+/**
+ * Whether a bail produces a diagnostic.
+ *
+ * @param bail - Bail to report.
+ * @param strict - Whether the build runs under strict.
+ * @returns `true` always for an `INTERNAL` bail and a warning reason, only under strict for any
+ *   other strict reason, and never for a silent one.
+ */
+function isReported(bail: Bail | FileBail, strict: boolean): boolean {
+  if (bail.reason === "INTERNAL") return true;
+  const { category } = reasonInfo(bail.reason);
+  return category === "warning" || (category === "strict" && strict);
 }
 
 /**
@@ -84,7 +96,25 @@ function diagnosticMessage(bail: Bail | FileBail, strict: boolean): string {
   if (strict || bail.reason !== "INTERNAL" || !("op" in bail)) {
     return message;
   }
-  return `${bail.pos.file}:${bail.pos.line}:${bail.pos.column}: ${message}`;
+  return locatedMessage(bail.pos.file, bail.pos.line, bail.pos.column, message);
+}
+
+/**
+ * Prefixes a message with the location it is about, as `file:line:column: message`.
+ *
+ * @param file - The file's name.
+ * @param line - The 1-based line.
+ * @param column - The 1-based column, in UTF-16 code units.
+ * @param message - The message.
+ * @returns The located message.
+ */
+export function locatedMessage(
+  file: string,
+  line: number,
+  column: number,
+  message: string,
+): string {
+  return `${file}:${line}:${column}: ${message}`;
 }
 
 /**

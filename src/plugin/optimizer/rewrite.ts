@@ -11,7 +11,7 @@ import { debugPath } from "./emit/debug.js";
 import { createEmitFile, type EmitFile } from "./emit/emit.js";
 import type { PrintedFile } from "./emit/print.js";
 import type { NodeID, Site, ViewUse } from "./facts.js";
-import { type Bail, type EachInlining, plan } from "./plan.js";
+import { type Bail, type EachInlining, plan, thrownMessage } from "./plan.js";
 import type { ProjectView, Session } from "./session.js";
 
 /** One module after analysis, plan, and emit. */
@@ -53,7 +53,8 @@ export interface Rewriter {
    * @param file - Absolute name of the file to rewrite.
    * @returns The rewritten module, its bails, and the files the rewrite depends on.
    * @throws When the file is not part of the program, the session is closed or its process
-   *   exited, or the session cannot print the rewritten file.
+   *   exited, or the session cannot print the rewritten file; and when reading a site's call, op,
+   *   or position throws, or the plan names a call analysis did not report: an analysis bug.
    */
   rewrite(view: ProjectView, file: string): Promise<RewrittenModule>;
 }
@@ -109,7 +110,9 @@ function inlineInto(file: EmitFile, inlining: EachInlining, uses: readonly ViewU
  * @param view - The project as the session serves it.
  * @param file - Absolute name of the file to rewrite.
  * @returns The rewritten module.
- * @throws When the file is not part of the program, or the session cannot serve or print it.
+ * @throws When the file is not part of the program, or the session cannot serve or print it; and
+ *   when reading a site's call, op, or position throws, or the plan names a call analysis did not
+ *   report: an analysis bug.
  */
 async function rewriteModule(
   context: RewriteContext,
@@ -199,16 +202,6 @@ async function emitRewrites(
  */
 function otherRootDetail(root: string, copied: string): string {
   return `the call resolves to the ecstatic package root ${root}, not ${copied}, which the file's DEBUG copy comes from`;
-}
-
-/**
- * The message of a thrown value.
- *
- * @param error - The thrown value.
- * @returns An error's own message, or the value as a string.
- */
-function thrownMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /**

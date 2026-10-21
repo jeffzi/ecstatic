@@ -4,13 +4,11 @@ import {
   type ElementAccessExpression,
   type Identifier,
   type Node,
-  NodeFlags,
   type ObjectBindingPattern,
   SyntaxKind,
 } from "typescript/ast";
 import {
   isArrayLiteralExpression,
-  isAsExpression,
   isAssignmentOperator,
   isBinaryExpression,
   isBindingElement,
@@ -23,7 +21,6 @@ import {
   isForStatement,
   isIdentifier,
   isIfStatement,
-  isNonNullExpression,
   isNoSubstitutionTemplateLiteral,
   isObjectBindingPattern,
   isObjectLiteralExpression,
@@ -32,20 +29,18 @@ import {
   isPrefixUnaryExpression,
   isPropertyAccessExpression,
   isPropertyAssignment,
-  isSatisfiesExpression,
   isShorthandPropertyAssignment,
   isSpreadAssignment,
   isSpreadElement,
   isStringLiteral,
   isTaggedTemplateExpression,
-  isTypeAssertion,
   isVariableDeclaration,
   isVariableDeclarationList,
   isWhileStatement,
 } from "typescript/ast/is";
 
 import { type Checker, type CheckerSymbol, resolveSymbol } from "../compiler.js";
-import { outermostParens } from "../syntax.js";
+import { declarationKind, outermostErased, outermostParens } from "../syntax.js";
 
 /**
  * Whether a node is an `=` whose target is an array or object literal, a pattern the value is
@@ -77,43 +72,6 @@ export function isBinary(node: Node, operator: SyntaxKind): node is BinaryExpres
  */
 function isLiteralPattern(node: Node): boolean {
   return isArrayLiteralExpression(node) || isObjectLiteralExpression(node);
-}
-
-/**
- * The outermost of the parentheses and non-null assertions around a node.
- *
- * @param node - The wrapped node.
- * @returns The outermost wrapper, or `node` itself when there is none.
- */
-export function outermostWrapper(node: Node): Node {
-  let outer = node;
-  while (isParenthesizedExpression(outer.parent) || isNonNullExpression(outer.parent)) {
-    outer = outer.parent;
-  }
-  return outer;
-}
-
-/**
- * The outermost of the wrappers around a node that compile to their operand: parentheses,
- * non-null assertions, and the `as`, `satisfies`, and angle-bracket type assertions.
- *
- * @param node - The wrapped node.
- * @returns The outermost wrapper, or `node` itself when there is none.
- */
-function outermostErased(node: Node): Node {
-  let outer = node;
-  while (isErasedWrapper(outer.parent)) outer = outer.parent;
-  return outer;
-}
-
-function isErasedWrapper(node: Node): boolean {
-  return (
-    isParenthesizedExpression(node) ||
-    isNonNullExpression(node) ||
-    isAsExpression(node) ||
-    isSatisfiesExpression(node) ||
-    isTypeAssertion(node)
-  );
 }
 
 /**
@@ -358,7 +316,6 @@ export function destructuredPattern(expr: Node): ObjectBindingPattern | undefine
  * @returns `let`, `const`, or undefined.
  */
 export function blockScope(list: Node): "let" | "const" | undefined {
-  if ((list.flags & NodeFlags.Using) !== 0) return undefined;
-  if ((list.flags & NodeFlags.Const) !== 0) return "const";
-  return (list.flags & NodeFlags.Let) === 0 ? undefined : "let";
+  const kind = declarationKind(list);
+  return kind === "let" || kind === "const" ? kind : undefined;
 }

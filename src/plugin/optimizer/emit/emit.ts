@@ -7,10 +7,8 @@
  */
 
 import {
-  type ArrowFunction,
   type Block,
   type CallExpression,
-  type FunctionExpression,
   getSynthesizedDeepClone,
   type Node,
   type NodeArray,
@@ -18,7 +16,6 @@ import {
   type SourceFile,
   type Statement,
   SyntaxKind,
-  TokenFlags,
 } from "typescript/ast";
 import {
   createBlock,
@@ -31,7 +28,6 @@ import {
   createImportDeclaration,
   createNamespaceImport,
   createPostfixUnaryExpression,
-  createStringLiteral,
   createVariableDeclarationList,
 } from "typescript/ast/factory";
 import {
@@ -40,7 +36,6 @@ import {
   isCallExpression,
   isExpression,
   isExpressionStatement,
-  isFunctionExpression,
   isVariableDeclarationList,
 } from "typescript/ast/is";
 import { visitEachChild, visitNode } from "typescript/ast/visitor";
@@ -49,6 +44,7 @@ import { shapeKey, type ViewUse } from "../facts.js";
 import type { NodeTable } from "../nodes.js";
 import type { EachInlining } from "../plan.js";
 import type { Session } from "../session.js";
+import { type InlineCallback, isInlineCallback } from "../syntax.js";
 import { inCatalogOrder, type Rule } from "./catalog.js";
 import { type Debug, loadDebug } from "./debug.js";
 import {
@@ -58,6 +54,7 @@ import {
   letStatement,
   member,
   numeric,
+  string,
 } from "./expressions.js";
 import { Lowering, tableNode } from "./lowering.js";
 import { NameGenerator } from "./names.js";
@@ -96,7 +93,8 @@ export interface EmitFile {
    * @param inlining - The planned inlining.
    * @param uses - The view uses of the inlining's callback.
    * @throws Error when a node of the inlining is not in the node table, is not the call or
-   *   callback it should be, or uses the view in a way that has no lowering.
+   *   callback it should be, or uses the view in a way that has no lowering; and whatever
+   *   `beforeCommit` throws, leaving the file as it was.
    */
   inline(inlining: EachInlining, uses: readonly ViewUse[]): void;
   /** The rules of the rewrite catalog the loops inlined so far applied, in catalog order. */
@@ -119,7 +117,8 @@ export interface EmitFile {
  * @param options - How the file is rewritten, and the runtime root it copies `DEBUG` from.
  * @returns The file, ready to inline its calls.
  * @throws When the root's `src/ecstatic/debug.ts` cannot be read or declares no top-level
- *   `DEBUG` with an initializer, naming the file.
+ *   `DEBUG` with an initializer, naming the file; or when the session is closed or its process
+ *   exited.
  */
 export async function createEmitFile(
   session: Session,
@@ -201,10 +200,6 @@ class File implements EmitFile {
   }
 }
 
-function string(text: string): ReturnType<typeof createStringLiteral> {
-  return createStringLiteral(text, TokenFlags.None);
-}
-
 /**
  * The preamble once a loop over a shape key is added: a copy, so a loop that fails to build leaves
  * the file's preamble as it was.
@@ -235,13 +230,6 @@ interface GuardNames {
   readonly namespace: string;
   readonly debug: string;
   readonly key: string;
-}
-
-/** The callback of an inlined call: an inline arrow or function expression. */
-type InlineCallback = ArrowFunction | FunctionExpression;
-
-function isInlineCallback(node: Node): node is InlineCallback {
-  return isArrowFunction(node) || isFunctionExpression(node);
 }
 
 /** What a {@link Loop} builds from, and where it records its names and rules. */

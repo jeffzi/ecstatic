@@ -1,15 +1,25 @@
 import {
+  type ArrowFunction,
+  type AsExpression,
   type BinaryOperator,
   type BindingName,
   type Expression,
+  type FunctionExpression,
   type Node,
+  NodeFlags,
+  type NonNullExpression,
   type ParameterDeclaration,
+  type ParenthesizedExpression,
+  type SatisfiesExpression,
   SyntaxKind,
+  type TypeAssertion,
 } from "typescript/ast";
 import {
+  isArrowFunction,
   isAsExpression,
   isClassLikeDeclaration,
   isExpressionWithTypeArguments,
+  isFunctionExpression,
   isHeritageClause,
   isIdentifier,
   isInterfaceDeclaration,
@@ -20,6 +30,14 @@ import {
   isTypeAssertion,
   isTypeNode,
 } from "typescript/ast/is";
+
+/** A wrapper that compiles to its operand. */
+type ErasedWrapper =
+  | ParenthesizedExpression
+  | NonNullExpression
+  | AsExpression
+  | SatisfiesExpression
+  | TypeAssertion;
 
 const ARITHMETIC_OPERATORS: ReadonlyMap<SyntaxKind, BinaryOperator> = new Map([
   [SyntaxKind.PlusEqualsToken, SyntaxKind.PlusToken],
@@ -46,6 +64,22 @@ const LOGICAL_OPERATORS: ReadonlyMap<SyntaxKind, BinaryOperator> = new Map([
 ]);
 
 /**
+ * An arrow function or function expression written in place as an argument; a function declaration
+ * or a reference to one is not inline.
+ */
+export type InlineCallback = ArrowFunction | FunctionExpression;
+
+/**
+ * Whether a node is an inline callback.
+ *
+ * @param node - The node to test.
+ * @returns Whether `node` is an arrow function or a function expression.
+ */
+export function isInlineCallback(node: Node): node is InlineCallback {
+  return isArrowFunction(node) || isFunctionExpression(node);
+}
+
+/**
  * Strips the parentheses and non-null assertions around an expression, which change nothing at
  * runtime.
  *
@@ -54,7 +88,7 @@ const LOGICAL_OPERATORS: ReadonlyMap<SyntaxKind, BinaryOperator> = new Map([
  */
 export function skipWrappers(node: Expression): Expression {
   let inner = node;
-  while (isParenthesizedExpression(inner) || isNonNullExpression(inner)) inner = inner.expression;
+  while (isTransparentWrapper(inner)) inner = inner.expression;
   return inner;
 }
 
@@ -67,16 +101,48 @@ export function skipWrappers(node: Expression): Expression {
  */
 export function skipErased(node: Expression): Expression {
   let inner = node;
-  while (
-    isParenthesizedExpression(inner) ||
-    isNonNullExpression(inner) ||
-    isAsExpression(inner) ||
-    isSatisfiesExpression(inner) ||
-    isTypeAssertion(inner)
-  ) {
-    inner = inner.expression;
-  }
+  while (isErasedWrapper(inner)) inner = inner.expression;
   return inner;
+}
+
+/**
+ * Strips the parentheses around an expression.
+ *
+ * @param node - The expression.
+ * @returns The expression inside every parenthesis, or `node` when it has none.
+ */
+export function skipParens(node: Expression): Expression {
+  let inner = node;
+  while (isParenthesizedExpression(inner)) inner = inner.expression;
+  return inner;
+}
+
+/**
+ * Whether a node is a parenthesis or a non-null assertion, which change nothing at runtime.
+ *
+ * @param node - The node to test.
+ * @returns Whether `node` is such a wrapper.
+ */
+export function isTransparentWrapper(
+  node: Node,
+): node is ParenthesizedExpression | NonNullExpression {
+  return isParenthesizedExpression(node) || isNonNullExpression(node);
+}
+
+/**
+ * Whether a node is a wrapper that compiles to its operand: parentheses, a non-null assertion, or
+ * an `as`, `satisfies`, or angle-bracket type assertion.
+ *
+ * @param node - The node to test.
+ * @returns Whether `node` is such a wrapper.
+ */
+export function isErasedWrapper(node: Node): node is ErasedWrapper {
+  return (
+    isTransparentWrapper(node) ||
+    isAsExpression(node) ||
+    isSatisfiesExpression(node) ||
+    isTypeAssertion(node)
+  );
 }
 
 /**
@@ -88,6 +154,31 @@ export function skipErased(node: Expression): Expression {
 export function outermostParens(node: Node): Node {
   let outer = node;
   while (isParenthesizedExpression(outer.parent)) outer = outer.parent;
+  return outer;
+}
+
+/**
+ * The outermost of the parentheses and non-null assertions around a node.
+ *
+ * @param node - The wrapped node.
+ * @returns The outermost wrapper, or `node` itself when there is none.
+ */
+export function outermostWrapper(node: Node): Node {
+  let outer = node;
+  while (isTransparentWrapper(outer.parent)) outer = outer.parent;
+  return outer;
+}
+
+/**
+ * The outermost of the wrappers around a node that compile to their operand: parentheses,
+ * non-null assertions, and the `as`, `satisfies`, and angle-bracket type assertions.
+ *
+ * @param node - The wrapped node.
+ * @returns The outermost wrapper, or `node` itself when there is none.
+ */
+export function outermostErased(node: Node): Node {
+  let outer = node;
+  while (isErasedWrapper(outer.parent)) outer = outer.parent;
   return outer;
 }
 
@@ -144,6 +235,24 @@ function isClassExtends(node: Node): boolean {
     clause.token === SyntaxKind.ExtendsKeyword &&
     isClassLikeDeclaration(clause.parent)
   );
+}
+
+/** The keyword a variable declaration list declares with. */
+export type DeclarationKind = "var" | "let" | "const" | "using" | "await using";
+
+/**
+ * The keyword a variable declaration list declares with, read from its flags. `await using` sets
+ * both the `using` and the `const` flag, so the `using` flag is tested first.
+ *
+ * @param list - The declaration list.
+ * @returns The list's keyword; `var` for a node with none of the flags.
+ */
+export function declarationKind(list: Node): DeclarationKind {
+  if ((list.flags & NodeFlags.Using) !== 0) {
+    return (list.flags & NodeFlags.Const) === 0 ? "using" : "await using";
+  }
+  if ((list.flags & NodeFlags.Const) !== 0) return "const";
+  return (list.flags & NodeFlags.Let) === 0 ? "var" : "let";
 }
 
 /**

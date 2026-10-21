@@ -191,14 +191,19 @@ export function inDeadZone(name: string, call: Node): boolean {
       const declared = declarationOf(statement, name);
       if (declared !== undefined) return declared.blockScoped && statement.end > call.pos;
     }
-    if (
-      isSourceFile(node) ||
-      isFunctionLikeDeclaration(node) ||
-      isClassStaticBlockDeclaration(node)
-    ) {
-      return false;
-    }
+    if (isSourceFile(node) || isCodeBoundary(node)) return false;
   }
+}
+
+/**
+ * Whether a node bounds the code around a call, for both the labels it reaches and the dead zones
+ * of the names it reads: a function or a class static block.
+ *
+ * @param node - The node to test.
+ * @returns Whether `node` is a function or a class static block.
+ */
+export function isCodeBoundary(node: Node): boolean {
+  return isFunctionLikeDeclaration(node) || isClassStaticBlockDeclaration(node);
 }
 
 /**

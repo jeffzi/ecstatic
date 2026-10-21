@@ -15,7 +15,6 @@ import type {
 import {
   type Bail,
   type EachInlining,
-  isReported,
   type Mode,
   plan,
   type PlanResult,
@@ -621,22 +620,5 @@ describe("plan", () => {
         rewrites: [],
       });
     });
-  });
-});
-
-describe("isReported", () => {
-  it.each<{ name: string; reason: Reason; strict: boolean; want: boolean }>([
-    { name: "silent under strict", reason: "NOT_STATEMENT", strict: true, want: false },
-    { name: "silent without strict", reason: "OP_NOT_REWRITTEN", strict: false, want: false },
-    { name: "strict under strict", reason: "SHAPE_UNRESOLVED", strict: true, want: true },
-    { name: "strict without strict", reason: "SHAPE_UNRESOLVED", strict: false, want: false },
-    { name: "warning under strict", reason: "CALLBACK_ASYNC", strict: true, want: true },
-    { name: "warning without strict", reason: "CALLBACK_ASYNC", strict: false, want: true },
-  ])("reports a $name bail: $want", ({ reason, strict, want }) => {
-    const bail = bailAt(0, 0, reason);
-
-    const reported = isReported(bail, strict);
-
-    expect(reported).toBe(want);
   });
 });

@@ -5,7 +5,6 @@ import {
   type ElementAccessExpression,
   type Expression,
   type Node,
-  NodeFlags,
   type PostfixUnaryExpression,
   type PrefixUnaryExpression,
   type PropertyAccessExpression,
@@ -29,9 +28,8 @@ import {
 
 import { type Checker, type CheckerSymbol, isGlobalValue, typeAtLocation } from "../compiler.js";
 import { type ArchShape, type Op, shapeKey } from "../facts.js";
-import { isThisParameter, skipWrappers } from "../syntax.js";
+import { declarationKind, type InlineCallback, isThisParameter, skipWrappers } from "../syntax.js";
 import { forEachEvaluated } from "./evaluated.js";
-import type { InlineCallback } from "./function-local.js";
 import {
   isDestructuringAssignment,
   isViewReference,
@@ -508,7 +506,10 @@ class HazardWalker {
  *   its scope disposes the resource.
  */
 function isSafeNode(node: Node): boolean {
-  if (isVariableDeclarationList(node)) return (node.flags & NodeFlags.Using) === 0;
+  if (isVariableDeclarationList(node)) {
+    const kind = declarationKind(node);
+    return kind !== "using" && kind !== "await using";
+  }
   return SAFE_KINDS.has(node.kind);
 }
 

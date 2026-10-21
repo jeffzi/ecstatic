@@ -46,7 +46,8 @@ import type { Lowering } from "./lowering.js";
  * @param use - The field-assign use.
  * @param visit - Visits the right-hand side.
  * @returns The lowered assignment.
- * @throws Error when the operator is no assignment, or the left-hand side is no field access.
+ * @throws Error when the operator is no assignment, the left-hand side is no field access, or the
+ *   loop's shape has no such field.
  */
 export function lowerAssign(
   lowering: Lowering,

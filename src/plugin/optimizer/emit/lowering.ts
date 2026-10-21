@@ -43,7 +43,7 @@ import { visitNode } from "typescript/ast/visitor";
 import type { ArchShape, Field, NodeID, ViewUse } from "../facts.js";
 import type { NodeTable } from "../nodes.js";
 import type { Mode } from "../plan.js";
-import { skipWrappers } from "../syntax.js";
+import { skipParens, skipWrappers } from "../syntax.js";
 import { lowerAssign, lowerUpdate } from "./assign.js";
 import type { Rule } from "./catalog.js";
 import {
@@ -59,7 +59,6 @@ import {
   numeric,
   orUndefined,
   parenthesized,
-  skipParens,
   slotOf,
   type Visit,
 } from "./expressions.js";
@@ -215,7 +214,9 @@ export class Lowering {
    * @param use - The view use.
    * @param visit - Visits the parts of `node` the body evaluates.
    * @returns What `node` becomes.
-   * @throws Error when the use has no lowering, or `node` is not the node its kind spans.
+   * @throws Error when the use has no lowering, `node` is not the node its kind spans, the loop's
+   *   shape has no field the use reads or writes, a use through an alias has no slot expression,
+   *   or an alias binds no name.
    */
   lower(node: Node, use: ViewUse, visit: Visit): Node {
     switch (use.kind) {
@@ -258,7 +259,8 @@ export class Lowering {
    * @param visit - Visits the parts of the list the body evaluates.
    * @returns The list with each destructuring declaration replaced by the declarations binding its
    *   pattern, or undefined when no declaration of `list` destructures.
-   * @throws Error when a destructuring has no lowering.
+   * @throws Error when a destructuring has no lowering, the loop's shape has no field a pattern
+   *   reads, or an alias in a pattern binds no name.
    */
   declarationList(list: VariableDeclarationList, visit: Visit): Node | undefined {
     const destructures = list.declarations.some((d) => this.#uses.get(d)?.kind === "destructure");
@@ -280,7 +282,8 @@ export class Lowering {
    * @param visit - Visits the defaults the pattern evaluates.
    * @returns The declarations, in pattern order, or undefined when the parameter does not
    *   destructure the view.
-   * @throws Error when the destructuring has no lowering.
+   * @throws Error when the destructuring has no lowering, the loop's shape has no field the pattern
+   *   reads, or an alias in the pattern binds no name.
    */
   parameterBindings(
     parameter: ParameterDeclaration,

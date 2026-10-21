@@ -49,7 +49,6 @@ import {
   isBlock,
   isBreakStatement,
   isCaseClause,
-  isClassStaticBlockDeclaration,
   isContinueStatement,
   isDefaultClause,
   isExpression,
@@ -63,6 +62,7 @@ import {
   isPropertyName,
   isReturnStatement,
   isSourceFile,
+  isStatement,
   isTryStatement,
   isVariableDeclaration,
   isVariableDeclarationList,
@@ -73,9 +73,16 @@ import { visitNode } from "typescript/ast/visitor";
 import type { NodeTable } from "../nodes.js";
 import type { EachInlining } from "../plan.js";
 import { boundNames } from "../syntax.js";
-import { bodyRule, inDeadZone, inOwnCode, outerReferences } from "./body-rules.js";
+import { bodyRule, inDeadZone, inOwnCode, isCodeBoundary, outerReferences } from "./body-rules.js";
 import type { Rule } from "./catalog.js";
-import { binary, declaration, letStatement, parenthesized, type Visit } from "./expressions.js";
+import {
+  assignTo,
+  binary,
+  declaration,
+  letStatement,
+  parenthesized,
+  type Visit,
+} from "./expressions.js";
 import { tableNode } from "./lowering.js";
 import type { NameGenerator } from "./names.js";
 
@@ -182,6 +189,7 @@ export class Transplant {
    * @param node - A node of the body.
    * @param visit - Visits the parts of `node` the rewrite keeps.
    * @returns The rewrite, or undefined when the transplant leaves `node` to the caller.
+   * @throws Error when an object pattern element of a `var` binding name has no key and binds no name.
    */
   visit(node: Node, visit: Visit): Node | undefined {
     const label = this.#relabeled.get(node);
@@ -296,7 +304,7 @@ export class Transplant {
     names: NameGenerator,
     fresh: Map<string, string>,
   ): void {
-    if (isLabelScope(node)) return;
+    if (isCodeBoundary(node)) return;
     const label = statementLabel(node);
     if (label !== undefined && enclosing.includes(label)) {
       const name = fresh.get(label) ?? names.unique(label);
@@ -391,6 +399,7 @@ export class Transplant {
    * @param visit - Visits the parts the rewrite keeps.
    * @returns The statement with the head's assignments, or its assignment target, in place of the
    *   list; undefined for any other node.
+   * @throws Error when an object pattern element of a `var` binding name has no key and binds no name.
    */
   #forHead(node: Node, visit: Visit): Node | undefined {
     if (!isForStatement(node) && !isForInStatement(node) && !isForOfStatement(node)) {
@@ -438,13 +447,14 @@ export class Transplant {
    * @param visit - Visits the initializers and the targets' defaults and computed keys.
    * @returns The comma list assigning each declaration of `list` that has an initializer, in
    *   order; undefined when none has.
+   * @throws Error when an object pattern element of a `var` binding name has no key and binds no name.
    */
   #assignments(list: VariableDeclarationList, visit: Visit): Expression | undefined {
     const assigned: Expression[] = [];
     for (const decl of list.declarations) {
       if (decl.initializer === undefined) continue;
       const value = visitNode(decl.initializer, visit, isExpression);
-      assigned.push(binary(this.#target(decl.name, visit), SyntaxKind.EqualsToken, value));
+      assigned.push(assignTo(this.#target(decl.name, visit), value));
     }
     return assigned.length === 0 ? undefined : commaList(assigned);
   }
@@ -456,6 +466,7 @@ export class Transplant {
    * @param name - The binding name.
    * @param visit - Visits the pattern's defaults and computed keys.
    * @returns The target.
+   * @throws Error when an object pattern element of a `var` binding name has no key and binds no name.
    */
   #target(name: BindingName, visit: Visit): Expression {
     if (isIdentifier(name)) return name;
@@ -478,6 +489,7 @@ export class Transplant {
    * @param element - The element.
    * @param visit - Visits its default and computed key.
    * @returns `...target`, `key: target = fallback`, or `name = fallback`.
+   * @throws Error when `element` has no key and binds no name.
    */
   #objectTarget(element: BindingElement, visit: Visit): ObjectLiteralElementLike {
     const { name, propertyName } = element;
@@ -527,7 +539,7 @@ export class Transplant {
  * @returns The defaulted target, or `target` alone when `fallback` is undefined.
  */
 function withDefault(target: Expression, fallback: Expression | undefined): Expression {
-  return fallback === undefined ? target : binary(target, SyntaxKind.EqualsToken, fallback);
+  return fallback === undefined ? target : assignTo(target, fallback);
 }
 
 /**
@@ -589,20 +601,10 @@ function expressionStatement(expression: Expression): Statement {
  */
 function enclosingLabels(call: Node): string[] {
   const labels: string[] = [];
-  for (let node = call.parent; !isSourceFile(node) && !isLabelScope(node); node = node.parent) {
+  for (let node = call.parent; !isSourceFile(node) && !isCodeBoundary(node); node = node.parent) {
     if (isLabeledStatement(node)) labels.push(node.label.text);
   }
   return labels;
-}
-
-/**
- * Whether a node holds labels of its own, which neither reach nor clash with those around it.
- *
- * @param node - A node.
- * @returns Whether `node` is a function or a class static block.
- */
-function isLabelScope(node: Node): boolean {
-  return isFunctionLikeDeclaration(node) || isClassStaticBlockDeclaration(node);
 }
 
 /**
@@ -616,16 +618,6 @@ function statementLabel(node: Node): string | undefined {
   if (isLabeledStatement(node)) return node.label.text;
   if (isBreakStatement(node) || isContinueStatement(node)) return node.label?.text;
   return undefined;
-}
-
-/**
- * Whether a node of a statement position is a statement.
- *
- * @param node - A node visited in a statement position.
- * @returns Whether `node` is no expression.
- */
-function isStatement(node: Node): node is Statement {
-  return !isExpression(node);
 }
 
 /**
