@@ -7,6 +7,7 @@ import {
 } from "../../../../src/plugin/optimizer/analysis/callback.js";
 import { PackageRoots } from "../../../../src/plugin/optimizer/analysis/roots.js";
 import { resolveShapes } from "../../../../src/plugin/optimizer/analysis/shape.js";
+import { sourceFileName } from "../../../../src/plugin/optimizer/compiler.js";
 import {
   type Callback,
   type NodeID,
@@ -307,7 +308,7 @@ export function caseOccurrence({ file, start }: Located, mark: string, nth = 0):
   ) {
     skipped++;
   }
-  return locate(file.fileName, file.text, mark, skipped + nth);
+  return locate(sourceFileName(file), file.text, mark, skipped + nth);
 }
 
 /** The offset in its file of the `nth` (from 0) occurrence of `mark` in the case source. */

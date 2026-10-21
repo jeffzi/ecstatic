@@ -27,6 +27,8 @@ import {
   TypeFlags,
 } from "typescript/async";
 
+import { compilerFileName, nativeFileName } from "./file-names.js";
+
 export type { API, Checker, CheckerSymbol, Snapshot, Type };
 
 // ---------------------------------------------------------------------------
@@ -280,9 +282,10 @@ export async function closeCompiler(compiler: Compiler, timeoutMs: number): Prom
 export async function loadProject(api: API, tsconfig: string): Promise<Snapshot> {
   // A snapshot asked to open an unreadable tsconfig loads no project and reports nothing;
   // parsing the config is what surfaces the read failure.
+  const config = compilerFileName(tsconfig);
   const [snapshot] = await Promise.all([
-    api.createSnapshot({ openProjects: [tsconfig] }),
-    api.parseConfigFile(tsconfig),
+    api.createSnapshot({ openProjects: [config] }),
+    api.parseConfigFile(config),
   ]);
   const { program } = configuredProject(snapshot, tsconfig);
   const diagnostics = await program.getConfigFileParsingDiagnostics();
@@ -299,7 +302,7 @@ export async function loadProject(api: API, tsconfig: string): Promise<Snapshot>
  * @throws When the snapshot holds no project for `tsconfig`.
  */
 export function configuredProject(snapshot: Snapshot, tsconfig: string): Project {
-  const project = snapshot.getConfiguredProject(tsconfig);
+  const project = snapshot.getConfiguredProject(compilerFileName(tsconfig));
   if (project === undefined) throw new Error(`no project is loaded for ${tsconfig}`);
   return project;
 }
@@ -321,9 +324,15 @@ export async function updateSnapshot(
   changed: readonly string[],
   removed: readonly string[],
 ): Promise<Snapshot> {
+  const served: Record<string, string> = {};
+  for (const [name, text] of Object.entries(files)) served[compilerFileName(name)] = text;
   return await snapshot.update({
-    fileSystem: { kind: "layer", files: { ...files }, removedPaths: [...removed] },
-    fileNotifications: { changed: [...changed] },
+    fileSystem: {
+      kind: "layer",
+      files: served,
+      removedPaths: removed.map((name) => compilerFileName(name)),
+    },
+    fileNotifications: { changed: changed.map((name) => compilerFileName(name)) },
     // Without it the snapshot keeps the program built before the update.
     ensurePrograms: true,
   });
@@ -333,10 +342,11 @@ export async function updateSnapshot(
  * The names of every file the project's program holds, declaration files included.
  *
  * @param project - The project whose program to list.
- * @returns The absolute file names, as the compiler writes them.
+ * @returns The absolute file names, in the platform's spelling.
  */
 export async function programFileNames(project: Project): Promise<readonly string[]> {
-  return await project.program.getSourceFileNames();
+  const names = await project.program.getSourceFileNames();
+  return names.map((name) => nativeFileName(name));
 }
 
 /**
@@ -348,7 +358,7 @@ export async function programFileNames(project: Project): Promise<readonly strin
  * @throws When `file` is not part of the program.
  */
 export async function projectSourceFile(project: Project, file: string): Promise<SourceFile> {
-  const source = await project.program.getSourceFile(file);
+  const source = await project.program.getSourceFile(compilerFileName(file));
   if (source === undefined) throw new Error(`${file} is not part of the project`);
   return source;
 }
@@ -362,7 +372,7 @@ export async function projectSourceFile(project: Project, file: string): Promise
  * @throws When the file is not part of the program or emits no JavaScript.
  */
 export async function emitJavaScript(project: Project, file: string): Promise<string> {
-  const { outputFiles } = await project.program.getJavaScriptEmit([file]);
+  const { outputFiles } = await project.program.getJavaScriptEmit([compilerFileName(file)]);
   const [javascript] = [...outputFiles]
     .filter(([name]) => !name.endsWith(".map"))
     .map(([, output]) => output.text);
@@ -400,8 +410,13 @@ export async function programErrors(project: Project): Promise<string> {
  * @throws When the file cannot be read, naming it.
  */
 export async function parseFile(api: API, file: string): Promise<SourceFile> {
-  const { sourceFile } = await api.createSourceFileFromFile(file);
-  return sourceFile;
+  try {
+    const { sourceFile } = await api.createSourceFileFromFile(compilerFileName(file));
+    return sourceFile;
+  } catch (error) {
+    // The compiler names the file in its own spelling, which differs from `file`'s on Windows.
+    throw new Error(`cannot parse ${file}: ${String(error)}`, { cause: error });
+  }
 }
 
 /**
@@ -414,7 +429,7 @@ export async function parseFile(api: API, file: string): Promise<SourceFile> {
  * @returns The parsed source file.
  */
 export async function parseText(api: API, fileName: string, text: string): Promise<SourceFile> {
-  const retained = await api.createSourceFile(fileName, text);
+  const retained = await api.createSourceFile(compilerFileName(fileName), text);
   await retained.dispose();
   return retained.sourceFile;
 }
@@ -522,20 +537,20 @@ export function symbolName(symbol: CheckerSymbol): string {
 }
 
 /**
- * The file name of `file`, as spelled on disk.
+ * The file name of `file`, in the platform's spelling.
  *
  * @param file - Source file to name.
  * @returns Its absolute file name.
  */
 export function sourceFileName(file: SourceFile): string {
-  return file.fileName;
+  return nativeFileName(file.fileName);
 }
 
 /**
  * The file name of the source file holding `node`.
  *
  * @param node - Node to locate.
- * @returns The absolute name of its file, as spelled on disk.
+ * @returns The absolute name of its file, in the platform's spelling.
  */
 export function nodeFileName(node: Node): string {
   return sourceFileName(node.getSourceFile());

@@ -1,5 +1,6 @@
 import { skipTrivia, type Node, type SourceFile } from "typescript/ast";
 
+import { sourceFileName } from "./compiler.js";
 import type { Position } from "./facts.js";
 
 /**
@@ -17,5 +18,10 @@ export function nodePosition(source: SourceFile, node: Node): Position {
   const shift = source.end - source.text.length;
   const start = skipTrivia(source.text, node.pos - shift);
   const { line, character } = source.getLineAndCharacterOfPosition(start);
-  return { file: source.fileName, offset: start + shift, line: line + 1, column: character + 1 };
+  return {
+    file: sourceFileName(source),
+    offset: start + shift,
+    line: line + 1,
+    column: character + 1,
+  };
 }

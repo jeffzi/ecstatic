@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { analyze } from "../../src/plugin/optimizer/analysis/analyze.js";
+import { sourceFileName } from "../../src/plugin/optimizer/compiler.js";
 import {
   type BailDiagnostic,
   bailDiagnostics,
@@ -334,7 +335,7 @@ async function rewriteAll(session: Session, files: readonly string[]): Promise<C
   const seams: RewriteSeams = {
     analyze: async (checker, source, roots) => {
       const analysis = await analyze(checker, source, roots);
-      planned.set(source.fileName, plan(analysis.sites));
+      planned.set(sourceFileName(source), plan(analysis.sites));
       return analysis;
     },
     inline: (file, inlining, uses) => {

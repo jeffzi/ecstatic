@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "v
 import {
   propertiesOfType,
   resolveSymbol,
+  sourceFileName,
   symbolName,
   typeOfSymbol,
 } from "../../../src/plugin/optimizer/compiler.js";
@@ -282,7 +283,7 @@ describe("Session.parse", () => {
 
     const parsed = await session.parse(debug);
 
-    expect(parsed.fileName).toBe(debug);
+    expect(sourceFileName(parsed)).toBe(debug);
     expect(parsed.text).toBe(DEBUG_SOURCE);
     expect(parsed.statements.length).toBeGreaterThan(0);
     await expect(view.sourceFile(debug)).rejects.toThrow("is not part of the project");

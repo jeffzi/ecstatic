@@ -14,9 +14,13 @@ export function removeTempDirs(): void {
   }
 }
 
-/** Creates an empty temp directory, by its real path, that `removeTempDirs` deletes. */
+/**
+ * Creates an empty temp directory, by its real path, that `removeTempDirs` deletes. The native
+ * real path expands a Windows 8.3 short name such as `RUNNER~1`, as Vite does with its root, so a
+ * module id built from the directory matches the ids Vite gives.
+ */
 function createTempDir(): string {
-  const dir = mkdtempSync(join(realpathSync(tmpdir()), "ecstatic-plugin-"));
+  const dir = mkdtempSync(join(realpathSync.native(tmpdir()), "ecstatic-plugin-"));
   createdDirectories.push(dir);
   return dir;
 }

@@ -68,7 +68,7 @@ async function lint(dir: string): Promise<Diagnostic[]> {
 }
 
 beforeAll(async () => {
-  project = mkdtempSync(join(realpathSync(tmpdir()), "ecstatic-lint-"));
+  project = mkdtempSync(join(realpathSync.native(tmpdir()), "ecstatic-lint-"));
   cpSync(join(ROOT, ".oxlintrc.json"), join(project, ".oxlintrc.json"));
   for (const tree of ["ecstatic", "plugin"]) {
     mkdirSync(join(project, "src", tree), { recursive: true });

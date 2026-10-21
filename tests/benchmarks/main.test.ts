@@ -253,12 +253,15 @@ function children(run: EntryRun): ProcessRecord[] {
     .toSorted((a, b) => (a.argv.at(-1) ?? "").localeCompare(b.argv.at(-1) ?? ""));
 }
 
-/** The benchmark children a run spawned, by engine command and then benchmark name. */
-function childSpawns(run: EntryRun): SpawnRecord[] {
+/** Orders spawns by engine command, then by benchmark name. */
+function bySpawn(a: SpawnRecord, b: SpawnRecord): number {
   const key = ({ command, args }: SpawnRecord): string => `${command} ${args.at(-1) ?? ""}`;
-  return run.spawns
-    .filter(({ args }) => args.includes("--child"))
-    .toSorted((a, b) => key(a).localeCompare(key(b)));
+  return key(a).localeCompare(key(b));
+}
+
+/** The benchmark children a run spawned, in {@link bySpawn} order. */
+function childSpawns(run: EntryRun): SpawnRecord[] {
+  return run.spawns.filter(({ args }) => args.includes("--child")).toSorted(bySpawn);
 }
 
 /** The compiler processes a run spawned: the TypeScript API starts each with `--api` first. */
@@ -420,12 +423,15 @@ describe("benchmarks/main.ts --optimized", () => {
     }).toStrictEqual({
       compiledMainWrites: [COMPILED_MAIN],
       compilers: 1,
-      childSpawns: [process.execPath, "bun"].flatMap((command) =>
-        BENCHES.map((bench) => ({
-          command,
-          args: ["--expose-gc", COMPILED_MAIN, "--child", bench],
-        })),
-      ),
+      // Node's path sorts before `bun` on POSIX, where it starts with `/`, and after it on Windows.
+      childSpawns: [process.execPath, "bun"]
+        .flatMap((command) =>
+          BENCHES.map((bench) => ({
+            command,
+            args: ["--expose-gc", COMPILED_MAIN, "--child", bench],
+          })),
+        )
+        .toSorted(bySpawn),
     });
   });
 

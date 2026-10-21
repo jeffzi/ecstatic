@@ -3,6 +3,7 @@ import { SourceMap } from "node:module";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { analyze } from "../../../src/plugin/optimizer/analysis/analyze.js";
+import { sourceFileName } from "../../../src/plugin/optimizer/compiler.js";
 import { bailDiagnostics } from "../../../src/plugin/optimizer/diagnostics.js";
 import type { EmitFile } from "../../../src/plugin/optimizer/emit/emit.js";
 import type { Position, ViewUse } from "../../../src/plugin/optimizer/facts.js";
@@ -568,7 +569,7 @@ describe("createRewriter", () => {
     describe("when analyzing the file throws", () => {
       const seams: RewriteSeams = {
         analyze: async (checker, source, roots) => {
-          if (source.fileName === path(MAIN_FILE)) throw new Error(THROWN);
+          if (sourceFileName(source) === path(MAIN_FILE)) throw new Error(THROWN);
           return analyze(checker, source, roots);
         },
       };

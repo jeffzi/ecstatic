@@ -58,7 +58,7 @@ export interface ProjectView {
   /**
    * The names of every file the program holds, declaration files included.
    *
-   * @returns The absolute file names, as the compiler writes them.
+   * @returns The absolute file names, in the platform's spelling.
    * @throws When the session is closed or its compiler process exited.
    */
   sourceFileNames(): Promise<readonly string[]>;

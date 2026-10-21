@@ -73,10 +73,11 @@ export function appTsconfig(extraOptions: Readonly<Record<string, unknown>> = {}
  * Writes `files`, keyed by slash-separated path, under a new temp directory.
  *
  * @param files - File contents keyed by their path relative to the project directory.
- * @returns The project directory's real path, so it matches the file names the compiler reports.
+ * @returns The project directory's native real path, with any Windows 8.3 short name expanded,
+ *   so it matches the file names the compiler reports and the ids Vite gives.
  */
 export function writeProject(files: Readonly<Record<string, string>>): string {
-  const dir = mkdtempSync(join(realpathSync(tmpdir()), "ecstatic-project-"));
+  const dir = mkdtempSync(join(realpathSync.native(tmpdir()), "ecstatic-project-"));
   written.push(dir);
   for (const [rel, content] of Object.entries(files)) {
     const path = join(dir, ...rel.split("/"));
