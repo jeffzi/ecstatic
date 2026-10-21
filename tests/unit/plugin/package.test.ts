@@ -8,6 +8,7 @@ import { normalizePath } from "vite";
 import { afterAll, assert, beforeAll, describe, expect, it, onTestFinished } from "vitest";
 
 import type createPlugin from "../../../src/plugin/vite.js";
+import { buildProjects } from "../../build-projects.js";
 import { packageBin } from "../../package-bin.js";
 import { SPAWN_TIMEOUT_MS } from "../optimizer/project.js";
 import { createProject, REPO_ROOT, removeTempDirs, writeFixture } from "./tsconfig-fixtures.js";
@@ -15,16 +16,8 @@ import { startPlugin } from "./vite-host.js";
 
 const BUILD_TIMEOUT_MS = 120_000;
 const TSC = packageBin("typescript", "tsc");
-const BUILD_PROJECTS = ["tsconfig.build.json", "tsconfig.build-plugin.json"];
-/** What the build and `npm pack` read, copied so neither touches the repository's own tree. */
-const COPIED_SOURCES = [
-  "package.json",
-  ".gitignore",
-  "tsconfig.json",
-  "tsconfig.build.json",
-  "tsconfig.build-plugin.json",
-  "src",
-];
+/** What the build and `npm pack` read beside the build's projects, copied so neither touches the repository's own tree. */
+const COPIED_SOURCES = ["package.json", ".gitignore", "tsconfig.json", "src"];
 /** A file under a top-level optimizer/ tree, planted in the copied tree to prove `files` leaves it out. */
 const DECOY_OPTIMIZER_FILE = "optimizer/banana.ts";
 /** The packed tarball declares these as optional peers and does not bundle them, so the consumer project links them from the repository's node_modules. */
@@ -73,6 +66,13 @@ function manifestEntry(field: string, name: string): unknown {
   const entries = readManifest()[field];
   assert(isRecord(entries));
   return entries[name];
+}
+
+/** Every file under `dir`, as a slash-separated path relative to `root`. */
+function filesUnder(root: string, dir: string): string[] {
+  return readdirSync(join(root, dir), { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(root, join(entry.parentPath, entry.name)).split(sep).join("/"));
 }
 
 /** Narrows a parsed `npm pack --json` result to its first tarball's file paths. */
@@ -134,18 +134,22 @@ describe("package manifest", () => {
 });
 
 describe("built package", () => {
+  let buildDir = "";
   let distDir = "";
   let packed: string[] = [];
+  let runtimeSources: string[] = [];
   let consumer = "";
 
   beforeAll(() => {
-    const buildDir = createProject({});
+    buildDir = createProject({});
     distDir = join(buildDir, "dist");
-    for (const source of COPIED_SOURCES) {
+    const projects = buildProjects();
+    for (const source of [...COPIED_SOURCES, ...projects]) {
       cpSync(join(REPO_ROOT, source), join(buildDir, source), { recursive: true });
     }
     symlinkSync(join(REPO_ROOT, "node_modules"), join(buildDir, "node_modules"), "junction");
-    for (const project of BUILD_PROJECTS) {
+    runtimeSources = filesUnder(buildDir, join("src", "ecstatic"));
+    for (const project of projects) {
       execFileSync(process.execPath, [TSC, "-p", project], { cwd: buildDir, stdio: "pipe" });
     }
     writeFixture(join(buildDir, DECOY_OPTIMIZER_FILE), "export const banana = 1;\n");
@@ -215,13 +219,7 @@ describe("built package", () => {
   });
 
   it("packs every file the build wrote to dist", () => {
-    const built = readdirSync(distDir, { recursive: true, withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map(
-        (entry) =>
-          `dist/${relative(distDir, join(entry.parentPath, entry.name)).split(sep).join("/")}`,
-      )
-      .toSorted();
+    const built = filesUnder(buildDir, "dist").toSorted();
 
     const packedDist = packed.filter((path) => path.startsWith("dist/")).toSorted();
 
@@ -230,6 +228,12 @@ describe("built package", () => {
 
   it.each(["src/ecstatic/index.ts", "src/ecstatic/debug.ts"])("packs %s", (file) => {
     expect(packed).toContain(file);
+  });
+
+  it("packs every runtime source file", () => {
+    const packedSources = packed.filter((path) => path.startsWith("src/ecstatic/")).toSorted();
+
+    expect(packedSources).toStrictEqual(runtimeSources.toSorted());
   });
 
   it.each(["src/plugin/", "optimizer/"])("packs nothing under %s", (prefix) => {

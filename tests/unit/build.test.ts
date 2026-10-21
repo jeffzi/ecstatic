@@ -15,6 +15,7 @@ import { promisify } from "node:util";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { buildProjects } from "../build-projects.js";
 import { packageBin } from "../package-bin.js";
 
 const execFileAsync = promisify(execFile);
@@ -29,14 +30,8 @@ const PLUGIN_DIR = join(SRC_DIR, "plugin");
 
 const NODE_TYPES_DIR = join("node_modules", "@types", "node");
 
-/** The files a build reads, relative to the repository root; `node_modules` is linked, not copied. */
-const BUILD_INPUTS = [
-  "package.json",
-  "tsconfig.json",
-  "tsconfig.build.json",
-  "tsconfig.build-plugin.json",
-  "src",
-];
+/** The files a build reads beside its projects, relative to the repository root; `node_modules` is linked, not copied. */
+const BUILD_INPUTS = ["package.json", "tsconfig.json", "src"];
 
 /** How long building a copy of the package may take on a slow CI runner. */
 const BUILD_TIMEOUT_MS = 60_000;
@@ -187,12 +182,14 @@ describe("build", () => {
 
     beforeAll(async () => {
       copy = mkdtempSync(join(realpathSync.native(tmpdir()), "ecstatic-build-"));
-      for (const input of BUILD_INPUTS) {
+      const projects = buildProjects();
+      for (const input of [...BUILD_INPUTS, ...projects]) {
         cpSync(join(ROOT, input), join(copy, input), { recursive: true });
       }
       symlinkSync(join(ROOT, "node_modules"), join(copy, "node_modules"), "dir");
-      await tsc(["-p", "tsconfig.build.json"], copy);
-      await tsc(["-p", "tsconfig.build-plugin.json"], copy);
+      for (const project of projects) {
+        await tsc(["-p", project], copy);
+      }
     }, BUILD_TIMEOUT_MS);
 
     afterAll(() => {
@@ -251,12 +248,14 @@ describe("build", () => {
         commands: [
           "tsc -p tsconfig.build.json --noEmit",
           "tsc -p tsconfig.build-plugin.json --noEmit",
+          "tsc -p examples/tsconfig.json --noEmit",
+          "tsc -p benchmarks/tsconfig.json --noEmit",
         ],
       },
-    ])("$script runs the runtime project, then the plugin project", ({ script, commands }) => {
+    ])("$script runs exactly its commands, the runtime project first", ({ script, commands }) => {
       const actual = packageScript(script);
 
-      expect(actual.filter((command) => commands.includes(command))).toStrictEqual(commands);
+      expect(actual).toStrictEqual(commands);
     });
   });
 });
