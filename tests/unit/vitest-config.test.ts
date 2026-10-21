@@ -45,6 +45,10 @@ const CORPUS_TEST = normalizePath(join(ROOT, "tests", "optimizer", "corpus.test.
 
 const VITE_SMOKE_TEST = normalizePath(join(ROOT, "tests", "optimizer", "vite-smoke.test.ts"));
 
+const GOLDEN_LOADER_TEST = normalizePath(join(ROOT, "tests", "optimizer", "golden-loader.test.ts"));
+
+const UNSTRIPPED_TEST = normalizePath(join(ROOT, "tests", "optimizer", "unstripped.test.ts"));
+
 const INLINE_EACH_MODULE = join(ROOT, "tests", "unit", "inline-each.ts");
 
 // The optimizer's and the plugin's own tests drive the optimizer directly; an optimized project
@@ -196,6 +200,8 @@ describe("vitest config", () => {
   it.each([
     { name: "corpus test", file: CORPUS_TEST },
     { name: "Vite smoke test", file: VITE_SMOKE_TEST },
+    { name: "golden loader test", file: GOLDEN_LOADER_TEST },
+    { name: "unstripped-guard test", file: UNSTRIPPED_TEST },
   ])("runs the $name in the fixtures project only", async ({ file }) => {
     const holders = await Promise.all(
       vitest.projects.map(async (project) => {
