@@ -32,6 +32,34 @@ Bare `"ecstatic"` imports resolve through the package's own `exports` map to `di
 suite and the allocation gate measure the last compiled output; build before running the suite by
 hand.
 
+### Optimized run
+
+`--optimized` measures the suite as the build-time optimizer compiles it:
+
+```bash
+npm run -s build
+npx tsx --expose-gc benchmarks/main.ts --optimized '^iteration/'
+npx tsx --expose-gc benchmarks/main.ts --optimized --engine node,bun
+```
+
+Before measuring anything, the runner opens the benchmark project (`benchmarks/tsconfig.json`) in
+the TypeScript compiler, rewrites every benchmark source through the optimizer in strict mode, and
+emits the JavaScript into `.bench-optimized/` (gitignored), each file at its path from the
+repository root. It compiles once per run, then spawns every child from the compiled
+`benchmarks/main.js` under each requested engine, with no TypeScript loader. The aliases carry an
+`optimized/` segment after the engine (`node/optimized/iteration/throughput`), so a plain report and
+an optimized report merge without colliding. The filter still matches the plain benchmark name.
+
+The output directory sits inside the package and outside `node_modules`, so the compiled
+`import "ecstatic"` and `import "ecstatic/internal"` resolve to `dist/` through the package's
+`exports`, as the plain suite's imports do; build first. The compile also writes the `src/` and
+`scripts/` modules the benchmarks import there; only the `scripts/` copies are loaded.
+
+Strict mode means a benchmark site the optimizer cannot rewrite fails the compile, rather than
+quietly timing the runtime call. A TypeScript error, an optimizer diagnostic, or an output file that
+cannot be written fails the compile; the run then exits 1 before measuring anything, with the cause
+on stderr and nothing on stdout.
+
 Set `BENCH_GENERATION=<n>` to measure worlds whose tracked entity ids sit at generation `n`: the
 world builder recycles the tracked slots until every tracked id is at that generation and leaves
 `DEFAULT_N` free slots on the freelist, so benchmarks that spawn draw recycled slots too. Background

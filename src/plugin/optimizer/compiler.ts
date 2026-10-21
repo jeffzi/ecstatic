@@ -11,6 +11,7 @@ import { isIdentifier, isShorthandPropertyAssignment } from "typescript/ast/is";
 import {
   API,
   type Checker,
+  DiagnosticCategory,
   ElementFlags,
   formatDiagnostics,
   isIntersectionType,
@@ -367,6 +368,27 @@ export async function emitJavaScript(project: Project, file: string): Promise<st
     .map(([, output]) => output.text);
   if (javascript === undefined) throw new Error(`no JavaScript was emitted for ${file}`);
   return javascript;
+}
+
+/** A diagnostic's `category` is a plain number; this is the one that marks an error. */
+const ERROR_CATEGORY: number = DiagnosticCategory.Error;
+
+/**
+ * The type-check errors of the project's program: its option, global, syntax, and semantic errors.
+ *
+ * @param project - Project whose program to check.
+ * @returns The errors as the compiler formats them; empty when the program has none.
+ */
+export async function programErrors(project: Project): Promise<string> {
+  const { program } = project;
+  const found = await Promise.all([
+    program.getProgramDiagnostics(),
+    program.getGlobalDiagnostics(),
+    program.getSyntacticDiagnostics(),
+    program.getSemanticDiagnostics(),
+  ]);
+  const errors = found.flat().filter(({ category }) => category === ERROR_CATEGORY);
+  return errors.length === 0 ? "" : formatDiagnostics(errors, program);
 }
 
 /**

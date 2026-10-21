@@ -10,9 +10,15 @@
  * benchmark is therefore the first thing its process does.
  *
  * ```
- * main.ts [<filter>] [--engine node|bun]   # parent mode (default)
- * main.ts --child <benchmark-name>         # child mode (internal)
+ * main.ts [<filter>] [--engine node|bun] [--optimized]   # parent mode (default)
+ * main.ts --child <benchmark-name>                       # child mode (internal)
  * ```
+ *
+ * `--optimized` first compiles the benchmark sources through the optimizer, in
+ * strict mode, into `OPTIMIZED_OUT_DIR`, then spawns each child from that
+ * compiled output. The directory sits inside the package and outside
+ * `node_modules`, so the compiled `import "ecstatic"` still resolves to `dist/`
+ * through the package's own `exports`.
  *
  * Exit codes: 0 success, 1 runtime failure, 2 malformed command line. Only a
  * successful parent run writes to stdout, so a partial report never reaches a
@@ -25,10 +31,12 @@
  */
 
 import { spawn } from "node:child_process";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { do_not_optimize, run } from "mitata";
 
+import { errorMessage, isEnoent } from "../scripts/caught.js";
 import { sinkValue as accessSink } from "./access-bench.js";
 import { sinkValue as entitySink } from "./entity-bench.js";
 import { sinkValue as iterationSink } from "./iteration-bench.js";
@@ -41,6 +49,7 @@ import {
   benchNames,
   type ChildSpawnSpec,
   childSpawnSpec,
+  compileOptimized,
   describeAbnormalExit,
   type Engine,
   mergeReports,
@@ -53,6 +62,11 @@ import {
 
 const FAILURE_EXIT = 1;
 const USAGE_EXIT = 2;
+
+/** Gitignored directory the optimized compile writes to; keep it inside the package and outside `node_modules`. */
+const OPTIMIZED_OUT_DIR = fileURLToPath(new URL("../.bench-optimized/", import.meta.url));
+
+const BENCHMARK_PROJECT = fileURLToPath(new URL("tsconfig.json", import.meta.url));
 
 // ---------------------------------------------------------------------------
 // Child mode
@@ -98,10 +112,6 @@ async function runChild(benchName: string): Promise<void> {
 
 /** The child currently measuring, so an interrupt can take it down with us. */
 let activeChild: ReturnType<typeof spawn> | undefined;
-
-function isEnoent(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
 
 /**
  * Run one child to completion.
@@ -150,6 +160,28 @@ function collectChildReport(spec: ChildSpawnSpec, engine: Engine): Promise<strin
 }
 
 /**
+ * Resolve the entry every child runs, compiling the sources first for an optimized run.
+ *
+ * @param optimized - Whether children run from the optimizer's compiled output.
+ * @returns This module's own path, or the compiled `benchmarks/main.js` under the output directory.
+ * @throws `CompileError` when the optimized compile fails; Error when the compiler process cannot
+ * start or exits mid-compile.
+ */
+async function childEntry(optimized: boolean): Promise<string> {
+  if (!optimized) return fileURLToPath(import.meta.url);
+  // Loaded here so a benchmark child, which runs this module too, keeps the compiler out of the
+  // heap it measures.
+  const { openSession } = await import("../src/plugin/optimizer/session.js");
+  const session = await openSession(BENCHMARK_PROJECT);
+  try {
+    await compileOptimized(session, OPTIMIZED_OUT_DIR);
+  } finally {
+    await session.close();
+  }
+  return join(OPTIMIZED_OUT_DIR, "benchmarks", "main.js");
+}
+
+/**
  * Spawn one child per selected benchmark and print the merged report.
  *
  * Children run one at a time: concurrent children would contend for cores and
@@ -159,26 +191,38 @@ function collectChildReport(spec: ChildSpawnSpec, engine: Engine): Promise<strin
  *
  * @param engines - Engines to run every selected benchmark under; the outer loop, so one engine's
  * children all finish before the next engine's start.
+ * @param optimized - Whether to compile the sources through the optimizer first and run every
+ * child from the compiled output, under aliases marked `optimized/`.
  * @param filter - Unanchored regex source selecting benchmarks by name; `undefined` runs every
  * registered benchmark.
  * @throws Error when the filter matches no benchmark; `UsageError` on an invalid filter regex;
- * `ChildReportError` on an unusable child report; and the spawn or exit error of the first child
- * that fails.
+ * `CompileError` when the optimized compile fails, and Error when its compiler process cannot
+ * start or exits mid-compile, both before any child is spawned; `ChildReportError` on an unusable
+ * child report; and the spawn or exit error of the first child that fails.
  */
-async function runParent(engines: readonly Engine[], filter?: string): Promise<void> {
+async function runParent(
+  engines: readonly Engine[],
+  optimized: boolean,
+  filter?: string,
+): Promise<void> {
   const selected = selectBenchmarks(benchNames(), filter);
   if (selected.length === 0) {
     throw new Error(`filter '${String(filter)}' matched no benchmark`);
   }
 
-  const mainPath = fileURLToPath(import.meta.url);
+  const mainPath = await childEntry(optimized);
   const reports: BenchReport[] = [];
 
   for (const engine of engines) {
     for (const benchName of selected) {
-      const spec = childSpawnSpec(engine, { execPath: process.execPath, mainPath, benchName });
+      const spec = childSpawnSpec(engine, {
+        execPath: process.execPath,
+        mainPath,
+        benchName,
+        compiled: optimized,
+      });
       const report = parseChildReport(await collectChildReport(spec, engine));
-      reports.push(namespaceReport(report, engine));
+      reports.push(namespaceReport(report, engine, { optimized }));
     }
   }
 
@@ -201,9 +245,9 @@ try {
   if (args.mode === "child") {
     await runChild(args.benchName);
   } else {
-    await runParent(args.engines, args.filter);
+    await runParent(args.engines, args.optimized, args.filter);
   }
 } catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(errorMessage(error));
   process.exitCode = error instanceof UsageError ? USAGE_EXIT : FAILURE_EXIT;
 }
