@@ -8,14 +8,15 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { buildProjects } from "../build-projects.js";
+import { buildProjects, projectsOf } from "../build-projects.js";
 import { packageBin } from "../package-bin.js";
 
 const execFileAsync = promisify(execFile);
@@ -234,6 +235,55 @@ describe("build", () => {
       const missing = exportTargets().filter((target) => !existsSync(join(copy, target)));
 
       expect(missing).toStrictEqual([]);
+    });
+  });
+
+  describe("build projects", () => {
+    it("are the tsconfig each command of the build script compiles, in script order", () => {
+      const projects = projectsOf("tsc -p tsconfig.build.json && tsc -p sub/tsconfig.json ");
+
+      expect(projects).toStrictEqual(["tsconfig.build.json", "sub/tsconfig.json"]);
+    });
+
+    it.each(["tsc -p tsconfig.build.json --noEmit", "node build.js", "tsc --build"])(
+      "reject a build script that runs %s, naming the command",
+      (command) => {
+        expect(() => projectsOf(`tsc -p tsconfig.build.json && ${command}`)).toThrow(
+          `the build script runs ${command}, not a tsc project`,
+        );
+      },
+    );
+
+    describe("of a package", () => {
+      let dir = "";
+
+      afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+      });
+
+      it("are read from its build script", () => {
+        dir = mkdtempSync(join(realpathSync.native(tmpdir()), "ecstatic-projects-"));
+        const manifest = { scripts: { build: "tsc -p a.json && tsc -p b.json" } };
+        writeFileSync(join(dir, "package.json"), JSON.stringify(manifest));
+
+        const projects = buildProjects(dir);
+
+        expect(projects).toStrictEqual(["a.json", "b.json"]);
+      });
+
+      it.each([
+        { manifest: { scripts: { test: "vitest" } }, error: "package.json has no build script" },
+        { manifest: null, error: "package.json has no build script" },
+        {
+          manifest: { scripts: { build: "tsc -p a.json && node build.js" } },
+          error: "the build script runs node build.js, not a tsc project",
+        },
+      ])("reject the manifest $manifest", ({ manifest, error }) => {
+        dir = mkdtempSync(join(realpathSync.native(tmpdir()), "ecstatic-projects-"));
+        writeFileSync(join(dir, "package.json"), JSON.stringify(manifest));
+
+        expect(() => buildProjects(dir)).toThrow(error);
+      });
     });
   });
 
