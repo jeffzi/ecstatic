@@ -54,8 +54,13 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -fsSLO https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint_1.7.12_linux_amd64.tar.gz" | sha256sum -c -
+          mkdir -p actionlint-bin
+          tar -xzf actionlint_1.7.12_linux_amd64.tar.gz -C actionlint-bin actionlint
+          echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
           pipx install zizmor==1.29.0
           echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
 
