@@ -3,7 +3,16 @@ import { globSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { afterAll, beforeAll, describe, expect, it, type TestContext } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  type TestContext,
+  vi,
+} from "vitest";
 import { createVitest, type TestProject, type Vitest } from "vitest/node";
 
 import { packageBin } from "../package-bin.js";
@@ -133,6 +142,26 @@ describe("vitest config", () => {
     const rewritten = countHits.toString().includes(REWRITE_MARKER);
 
     expect(rewritten).toBe(OPTIMIZED_PROJECTS.has(task.file.projectName ?? ""));
+  });
+
+  it("starts one optimizer per optimized project, each on the tests tsconfig", async () => {
+    const options: unknown[] = [];
+    vi.doMock("../../src/plugin/vite.js", () => ({
+      default: (given: unknown) => {
+        options.push(given);
+        return { name: "ecstatic" };
+      },
+    }));
+    onTestFinished(() => {
+      vi.doUnmock("../../src/plugin/vite.js");
+    });
+    vi.resetModules();
+
+    await import("../../vitest.config.js");
+
+    expect(options).toStrictEqual(
+      [...OPTIMIZED_PROJECTS].map(() => ({ project: "tests/tsconfig.json" })),
+    );
   });
 
   it.each([...OPTIMIZED_PROJECTS])(

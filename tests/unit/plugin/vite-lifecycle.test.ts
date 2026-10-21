@@ -507,6 +507,28 @@ describe("ecstatic() for Vite", () => {
     SPAWN_TIMEOUT_MS,
   );
 
+  it(
+    "fails the transform of a file it could not analyze under strict, naming the file's start",
+    async () => {
+      vi.doMock(ANALYZE_MODULE, async (importOriginal) => {
+        const original =
+          await importOriginal<
+            typeof import("../../../src/plugin/optimizer/analysis/analyze.js")
+          >();
+        return { ...original, analyze: () => Promise.reject(new Error("banana split")) };
+      });
+      const plugin = await freshEcstatic();
+      const host = await startPlugin(root, plugin({ strict: true }));
+      onTestFinished(() => host.close());
+
+      const transforming = host.transform(MAIN_SOURCE, viteId(root, MAIN_FILE));
+
+      await expect(transforming).rejects.toThrow(`${viteId(root, MAIN_FILE)}:1:1: ecstatic: `);
+      await expect(transforming).rejects.toThrow(/could not be analyzed .*\(strict mode\)/u);
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
   describe("when the build starts", () => {
     it(
       "fails naming the tsconfig and the cause when the tsconfig cannot be loaded",
