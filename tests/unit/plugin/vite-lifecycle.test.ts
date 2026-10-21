@@ -87,6 +87,8 @@ interface Probe {
   readonly outputs: Map<string, string>;
   /** How many bundles the build generated. */
   bundles: number;
+  /** The message of each build error a watch build's watcher reported. */
+  readonly errors: string[];
 }
 
 /**
@@ -102,6 +104,7 @@ function processProbe(before: ReadonlySet<number>): Probe {
     processes: new Set(),
     outputs: new Map(),
     bundles: 0,
+    errors: [],
     plugin: {
       name: "process-probe",
       enforce: "pre",
@@ -126,6 +129,46 @@ function processProbe(before: ReadonlySet<number>): Probe {
   return probe;
 }
 
+/** A plugin that holds the first load of one module, and the moment it read the module. */
+interface StaleLoad {
+  /** The plugin over the project at `root`. */
+  plugin(root: string): Plugin;
+  /** Settles once the held load has read the module. */
+  readonly read: Promise<void>;
+}
+
+/**
+ * A plugin whose first load of the module `rel` reads it, then hands Vite that text only once the
+ * watcher reports the module changed, as a load racing a change on disk does. Later loads read the
+ * disk as Vite does.
+ */
+function staleFirstLoad(rel: string): StaleLoad {
+  const read = Promise.withResolvers<void>();
+  const reported = Promise.withResolvers<void>();
+  let held = false;
+  return {
+    read: read.promise,
+    plugin: (root) => {
+      const file = projectPath(root, rel);
+      return {
+        name: "stale-first-load",
+        enforce: "pre",
+        async load(id) {
+          if (held || normalizePath(id) !== normalizePath(file)) return null;
+          held = true;
+          const text = readFileSync(file, "utf8");
+          read.resolve();
+          await reported.promise;
+          return text;
+        },
+        watchChange(id) {
+          if (normalizePath(id) === normalizePath(file)) reported.resolve();
+        },
+      };
+    },
+  };
+}
+
 /** A Vite build of the main project at `root`, from `app/main.ts`, through `plugins`. */
 function buildConfig(root: string, plugins: PluginOption[]): InlineConfig {
   return {
@@ -142,12 +185,28 @@ function buildConfig(root: string, plugins: PluginOption[]): InlineConfig {
   };
 }
 
-async function waitForBundles(probe: Probe, count: number): Promise<void> {
+/**
+ * Starts a watch build of the main project at `root` through the optimizer and `probe`, recording
+ * in `probe` each build error its watcher reports.
+ */
+async function startWatchBuild(root: string, probe: Probe): Promise<{ close(): Promise<void> }> {
+  const config = buildConfig(root, [ecstatic(), probe.plugin]);
+  const output = await build({ ...config, build: { ...config.build, watch: {} } });
+  if (!("close" in output)) throw new Error("the watch build returned no watcher");
+  output.on("event", (event) => {
+    if (event.code === "ERROR") probe.errors.push(event.error.message);
+  });
+  return output;
+}
+
+/** Waits until the build behind `probe` generated `count` bundles, naming any build error it hit. */
+async function waitForBundles(probe: Probe, count: number, timeout: number): Promise<void> {
   await vi.waitFor(
     () => {
+      expect(probe.errors).toStrictEqual([]);
       expect(probe.bundles).toBeGreaterThanOrEqual(count);
     },
-    { timeout: REBUILD_TIMEOUT_MS },
+    { timeout },
   );
 }
 
@@ -244,14 +303,12 @@ describe("ecstatic() for Vite", () => {
     beforeAll(async () => {
       watchRoot = createProject(mainProject());
       probe = processProbe(await runningProcesses());
-      const config = buildConfig(watchRoot, [ecstatic(), probe.plugin]);
-      const output = await build({ ...config, build: { ...config.build, watch: {} } });
-      if (!("close" in output)) throw new Error("the watch build returned no watcher");
-      watcher = output;
-      await waitForBundles(probe, 1);
+      watcher = await startWatchBuild(watchRoot, probe);
+      // The first bundle waits on the compiler process starting, as every first build does.
+      await waitForBundles(probe, 1, SPAWN_TIMEOUT_MS);
       writeFixture(projectPath(watchRoot, COMPONENTS_FILE), EDITED_COMPONENTS);
-      await waitForBundles(probe, 2);
-    }, SPAWN_TIMEOUT_MS);
+      await waitForBundles(probe, 2, REBUILD_TIMEOUT_MS);
+    }, SPAWN_TIMEOUT_MS + REBUILD_TIMEOUT_MS);
 
     afterAll(async () => {
       await watcher?.close();
@@ -286,14 +343,12 @@ describe("ecstatic() for Vite", () => {
         mainProject({ [MAIN_FILE]: TYPED_SOURCE, [SCHEMA_FILE]: schemaSource("x: 0") }),
       );
       probe = processProbe(await runningProcesses());
-      const config = buildConfig(watchRoot, [ecstatic(), probe.plugin]);
-      const output = await build({ ...config, build: { ...config.build, watch: {} } });
-      if (!("close" in output)) throw new Error("the watch build returned no watcher");
-      watcher = output;
-      await waitForBundles(probe, 1);
+      watcher = await startWatchBuild(watchRoot, probe);
+      // The first bundle waits on the compiler process starting, as every first build does.
+      await waitForBundles(probe, 1, SPAWN_TIMEOUT_MS);
       writeFixture(projectPath(watchRoot, SCHEMA_FILE), schemaSource(`x: 0, ${ADDED_FIELD}: 0`));
-      await waitForBundles(probe, 2);
-    }, SPAWN_TIMEOUT_MS);
+      await waitForBundles(probe, 2, REBUILD_TIMEOUT_MS);
+    }, SPAWN_TIMEOUT_MS + REBUILD_TIMEOUT_MS);
 
     afterAll(async () => {
       await watcher?.close();
@@ -321,8 +376,13 @@ describe("ecstatic() for Vite", () => {
       return result?.code;
     }
 
-    /** Starts a dev server over a new project and serves its main module once. */
-    async function startDevServer(): Promise<DevServer> {
+    /**
+     * Starts a dev server over a new project, its plugins ahead of the optimizer, and serves its
+     * main module once.
+     */
+    async function startDevServer(
+      plugins: (root: string) => PluginOption[] = () => [],
+    ): Promise<DevServer> {
       const devRoot = createProject(mainProject());
       const before = await runningProcesses();
       const server = await createServer({
@@ -334,7 +394,7 @@ describe("ecstatic() for Vite", () => {
           alias: { "ecstatic/internal": projectPath(devRoot, "src/ecstatic/internal.ts") },
         },
         server: { middlewareMode: true, ws: false },
-        plugins: [ecstatic()],
+        plugins: [...plugins(devRoot), ecstatic()],
       });
       await servedMain(server);
       const processes = await processesStartedSince(before);
@@ -359,6 +419,28 @@ describe("ecstatic() for Vite", () => {
         ).resolves.toBeUndefined();
         const seen = new Set([...processes, ...(await processesStartedSince(before))]);
         expect(seen.size).toBe(1);
+      },
+      SPAWN_TIMEOUT_MS,
+    );
+
+    it(
+      "serves a module rewritten again after a module its rewrite consulted is transformed from newer text",
+      async () => {
+        const stale = staleFirstLoad(COMPONENTS_FILE);
+        const { root: devRoot, server } = await startDevServer((dir) => [stale.plugin(dir)]);
+        onTestFinished(() => server.close());
+        await stale.read;
+
+        writeFixture(projectPath(devRoot, COMPONENTS_FILE), EDITED_COMPONENTS);
+
+        await expect(
+          vi.waitFor(
+            async () => {
+              expect(await servedMain(server)).toContain(ADDED_FIELD);
+            },
+            { timeout: REBUILD_TIMEOUT_MS },
+          ),
+        ).resolves.toBeUndefined();
       },
       SPAWN_TIMEOUT_MS,
     );

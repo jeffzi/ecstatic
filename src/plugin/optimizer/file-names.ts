@@ -19,9 +19,8 @@ export function nativeFileName(name: string, separator: string = sep): string {
 }
 
 /**
- * The compiler's spelling of a file name. The compiler looks a file up by its `/`-separated name, so
- * a Windows name written with `\` names no file of the program. A POSIX name keeps any `\` it
- * holds, as part of a segment.
+ * The compiler's spelling of a file name, so every name the compiler is handed is spelled as it
+ * writes names itself. A POSIX name keeps any `\` it holds, as part of a segment.
  *
  * @param name - A file name in the platform's spelling.
  * @param separator - The platform's path separator; `path.sep` when absent.

@@ -14,6 +14,16 @@ const DECLARATION_FILE = /\.d(?:\.[^./\\]+)?\.[cm]?ts$/u;
 /** How a file on disk changed, as Vite's `watchChange` hook reports it. */
 export type ChangeEvent = "create" | "update" | "delete";
 
+/** A module's rewrite, and whether the text it was handed replaced other text served for the file. */
+export interface ServedRewrite extends RewrittenModule {
+  /**
+   * Whether the text handed to the rewrite differs from the text the session served for the file
+   * until then. A module whose rewrite consulted the file read the replaced text, so its rewrite is
+   * stale.
+   */
+  readonly replaced: boolean;
+}
+
 /** The project a plugin instance serves module text to and rewrites modules of. */
 export class ServedProject {
   readonly #session: Session;
@@ -22,8 +32,11 @@ export class ServedProject {
   readonly #rewritable: ReadonlyMap<string, string>;
   /** Every file name the session gave, keyed by {@link fileKey}. */
   readonly #names = new Map<string, string>();
-  /** The {@link fileKey} of every file whose text the session serves. */
-  readonly #served = new Set<string>();
+  /**
+   * The text the session serves for each file it serves, keyed by {@link fileKey}; undefined once
+   * the file is deleted from disk.
+   */
+  readonly #served = new Map<string, string | undefined>();
   /** Disk text of served files changed on disk, served with the next rewrite. */
   #pending: Record<string, string> = {};
   /** Served files deleted from disk, treated as missing from the next rewrite on. */
@@ -65,20 +78,22 @@ export class ServedProject {
    *
    * @param file - The program file's name, as {@link programFile} gives it.
    * @param code - The text Vite hands the plugin.
-   * @returns The rewritten module.
+   * @returns The rewritten module, and whether `code` replaced other text served for the file.
    * @throws When the session is closed, its compiler process exited, or the rewrite fails.
    */
-  async rewrite(file: string, code: string): Promise<RewrittenModule> {
+  async rewrite(file: string, code: string): Promise<ServedRewrite> {
+    const before = this.#pending[file] ?? this.#served.get(fileKey(file));
     const files = { ...this.#pending, [file]: code };
     this.#removed.delete(file);
     const removed = [...this.#removed];
     this.#removed.clear();
     this.#pending = {};
-    this.#served.add(fileKey(file));
+    for (const [name, text] of Object.entries(files)) this.#served.set(fileKey(name), text);
+    for (const name of removed) this.#served.set(fileKey(name), undefined);
     const view = await this.#session.update(files, removed);
     const rewritten = await this.#rewriter.rewrite(view, file);
     for (const name of rewritten.consulted) this.#names.set(fileKey(name), name);
-    return rewritten;
+    return { ...rewritten, replaced: before !== undefined && before !== code };
   }
 
   /**
