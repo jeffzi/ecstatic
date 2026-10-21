@@ -7,7 +7,7 @@ import { resolve } from "node:path";
 import type { Environment, EnvironmentModuleNode, Plugin, Rolldown } from "vite";
 
 import { fileKey } from "./file-key.js";
-import { bailDiagnostics } from "./optimizer/diagnostics.js";
+import { bailDiagnostics, locatedMessage } from "./optimizer/diagnostics.js";
 import type { RewrittenModule } from "./optimizer/rewrite.js";
 import type { ServedProject } from "./served-project.js";
 
@@ -31,8 +31,8 @@ const DEFAULT_PROJECT = "tsconfig.json";
  *
  * @param options - Which project to rewrite and how to report calls that cannot be optimized.
  * @returns The plugin.
- * @throws TypeError when `options` holds a key other than `project` and `strict`, or a `strict` that
- *   is not a boolean.
+ * @throws TypeError when `options` holds a key other than `project` and `strict`, a `project` that
+ *   is not a string, or a `strict` that is not a boolean.
  */
 export default function ecstatic(options: EcstaticOptions = {}): Plugin {
   checkOptions(options);
@@ -173,8 +173,8 @@ function reportBails(
   );
   if (strict) {
     if (diagnostics.length === 0) return;
-    const listed = diagnostics.map(
-      ({ message, line, column }) => `${id}:${line}:${column}: ${message}`,
+    const listed = diagnostics.map(({ message, line, column }) =>
+      locatedMessage(id, line, column, message),
     );
     context.error(listed.join("\n"));
   }
@@ -194,6 +194,9 @@ function checkOptions(options: object): void {
   const valid = `the valid options are ${[...OPTION_KEYS].join(", ")}`;
   for (const key of Object.keys(options)) {
     if (!OPTION_KEYS.has(key)) throw new TypeError(`ecstatic: unknown option "${key}"; ${valid}`);
+  }
+  if ("project" in options && typeof options.project !== "string") {
+    throw new TypeError(`ecstatic: the option "project" must be a string; ${valid}`);
   }
   if ("strict" in options && typeof options.strict !== "boolean") {
     throw new TypeError(`ecstatic: the option "strict" must be a boolean; ${valid}`);

@@ -183,6 +183,7 @@ describe("ecstatic() for Vite", () => {
     it.each([
       { name: "an unknown key", options: { banana: true }, key: "banana" },
       { name: "a strict that is not a boolean", options: { strict: "yes" }, key: "strict" },
+      { name: "a project that is not a string", options: { project: 42 }, key: "project" },
     ])("throws naming $key and listing the valid keys when given $name", ({ options, key }) => {
       const create = () => {
         createUnchecked(options);
