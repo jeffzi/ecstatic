@@ -139,7 +139,9 @@ export async function openProject(tsconfig: string): Promise<ServedProject> {
     const view = await session.update();
     return new ServedProject(session, await view.sourceFileNames());
   } catch (error) {
-    await session.close();
+    // A failed update or listing most often means the compiler process died, so the close fails as
+    // a symptom; the original error names the cause.
+    await session.close().catch(() => {});
     throw error;
   }
 }

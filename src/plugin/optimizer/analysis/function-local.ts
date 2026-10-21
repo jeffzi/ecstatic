@@ -1,10 +1,8 @@
 import {
-  type ArrowFunction,
   type CallExpression,
   type FunctionDeclaration,
   type FunctionExpression,
   type Node,
-  NodeFlags,
   type ReturnStatement,
   SyntaxKind,
   type VariableDeclaration,
@@ -24,7 +22,13 @@ import {
 } from "typescript/ast/is";
 
 import { type Checker, type CheckerSymbol, refersToArguments, resolveSymbol } from "../compiler.js";
-import { isThisParameter, isTypeOnly, skipErased } from "../syntax.js";
+import {
+  declarationKind,
+  type InlineCallback,
+  isThisParameter,
+  isTypeOnly,
+  skipErased,
+} from "../syntax.js";
 import {
   type FunctionMember,
   forEachEvaluated,
@@ -32,12 +36,6 @@ import {
   runsWithClass,
   visitMemberHead,
 } from "./evaluated.js";
-
-/**
- * An arrow function or function expression written in place as an argument; a function declaration
- * or a reference to one is not inline.
- */
-export type InlineCallback = ArrowFunction | FunctionExpression;
 
 /** A `return` statement of a callback's own body. */
 export interface OwnReturn {
@@ -88,7 +86,7 @@ export function ownVarDeclarations(fn: InlineCallback): VariableDeclaration[] {
   const declarations: VariableDeclaration[] = [];
   const walk = (node: Node): void => {
     if (isClassStaticBlockDeclaration(node)) return;
-    if (isVariableDeclarationList(node) && (node.flags & NodeFlags.BlockScoped) === 0) {
+    if (isVariableDeclarationList(node) && declarationKind(node) === "var") {
       declarations.push(...node.declarations);
     }
     forEachEvaluated(node, walk);
@@ -157,7 +155,10 @@ export async function functionLocalUses(checker: Checker, fn: InlineCallback): P
     if (!isThisParameter(param)) collector.walk(param, true);
   }
   collector.walk(fn.body, true);
-  const self = fn.name === undefined ? undefined : resolveSymbol(checker, fn.name);
+  // Only a candidate reading the name awaits its symbol, so the query starts only when one does: a
+  // query nothing awaits would reject unhandled when the compiler process exits.
+  const readsSelf = collector.candidates.some(({ reads }) => reads === "self");
+  const self = fn.name !== undefined && readsSelf ? resolveSymbol(checker, fn.name) : undefined;
   const kept = await Promise.all(
     collector.candidates.map((candidate) => confirms(checker, candidate, self)),
   );

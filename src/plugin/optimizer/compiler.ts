@@ -277,7 +277,8 @@ export async function closeCompiler(compiler: Compiler, timeoutMs: number): Prom
  * @param api - Client of the compiler process.
  * @param tsconfig - Absolute path of the project's tsconfig.
  * @returns A snapshot holding the project, its program built.
- * @throws When the tsconfig cannot be read or has parse errors, with the compiler's diagnostic text.
+ * @throws When the tsconfig cannot be read or has parse errors, with the compiler's diagnostic text;
+ *   or when the compiler process has exited.
  */
 export async function loadProject(api: API, tsconfig: string): Promise<Snapshot> {
   // A snapshot asked to open an unreadable tsconfig loads no project and reports nothing;
@@ -317,6 +318,7 @@ export function configuredProject(snapshot: Snapshot, tsconfig: string): Project
  * @param changed - Absolute names of files changed on disk since `snapshot`.
  * @param removed - Absolute names of files to treat as missing, whatever the disk holds.
  * @returns The new snapshot, its programs rebuilt.
+ * @throws When the compiler process has exited.
  */
 export async function updateSnapshot(
   snapshot: Snapshot,
@@ -343,6 +345,7 @@ export async function updateSnapshot(
  *
  * @param project - The project whose program to list.
  * @returns The absolute file names, in the platform's spelling.
+ * @throws When the compiler process has exited.
  */
 export async function programFileNames(project: Project): Promise<readonly string[]> {
   const names = await project.program.getSourceFileNames();
@@ -355,7 +358,7 @@ export async function programFileNames(project: Project): Promise<readonly strin
  * @param project - Project whose program holds the file.
  * @param file - Absolute file name.
  * @returns The source file.
- * @throws When `file` is not part of the program.
+ * @throws When `file` is not part of the program, or the compiler process has exited.
  */
 export async function projectSourceFile(project: Project, file: string): Promise<SourceFile> {
   const source = await project.program.getSourceFile(compilerFileName(file));
@@ -369,7 +372,8 @@ export async function projectSourceFile(project: Project, file: string): Promise
  * @param project - Project whose program holds the file.
  * @param file - Absolute file name.
  * @returns The emitted JavaScript text.
- * @throws When the file is not part of the program or emits no JavaScript.
+ * @throws When the file is not part of the program or emits no JavaScript, or the compiler process
+ *   has exited.
  */
 export async function emitJavaScript(project: Project, file: string): Promise<string> {
   const { outputFiles } = await project.program.getJavaScriptEmit([compilerFileName(file)]);
@@ -388,6 +392,7 @@ const ERROR_CATEGORY: number = DiagnosticCategory.Error;
  *
  * @param project - Project whose program to check.
  * @returns The errors as the compiler formats them; empty when the program has none.
+ * @throws When the compiler process has exited.
  */
 export async function programErrors(project: Project): Promise<string> {
   const { program } = project;
@@ -427,6 +432,7 @@ export async function parseFile(api: API, file: string): Promise<SourceFile> {
  * @param fileName - The name to parse `text` under, whose extension sets the script kind.
  * @param text - The text to parse.
  * @returns The parsed source file.
+ * @throws When the compiler process has exited.
  */
 export async function parseText(api: API, fileName: string, text: string): Promise<SourceFile> {
   const retained = await api.createSourceFile(compilerFileName(fileName), text);
@@ -441,6 +447,7 @@ export async function parseText(api: API, fileName: string, text: string): Promi
  * @param api - Client of the compiler process.
  * @param node - Root of the tree to print.
  * @returns The printed text, its lines ending with `\n`.
+ * @throws When the compiler process has exited.
  */
 export async function printTree(api: API, node: Node): Promise<string> {
   return await api.printer.printNode(node);
@@ -473,6 +480,7 @@ async function valueSymbolAt(checker: Checker, name: Node): Promise<CheckerSymbo
  * @param checker - Checker of the program holding `name`.
  * @param name - Identifier to resolve.
  * @returns The declaring symbol, or undefined when `name` refers to nothing.
+ * @throws When the compiler process has exited.
  */
 export async function resolveSymbol(
   checker: Checker,
@@ -490,6 +498,7 @@ export async function resolveSymbol(
  * @param expr - Identifier to resolve.
  * @returns The declaring file's name, or undefined when `expr` names no value or one declared in its
  *   own file.
+ * @throws When the compiler process has exited.
  */
 export async function foreignValueFileName(
   checker: Checker,
@@ -508,6 +517,7 @@ export async function foreignValueFileName(
  * @param checker - Checker of the program holding `name`.
  * @param name - Identifier to test.
  * @returns Whether `name` refers to the `arguments` object.
+ * @throws When the compiler process has exited.
  */
 export async function refersToArguments(checker: Checker, name: Node): Promise<boolean> {
   const symbol = await valueSymbolAt(checker, name);
@@ -519,6 +529,7 @@ export async function refersToArguments(checker: Checker, name: Node): Promise<b
  *
  * @param symbol - Symbol to inspect; undefined gives undefined.
  * @returns The value declaration, or undefined when `symbol` declares no value.
+ * @throws When the compiler process has exited.
  */
 export async function valueDeclaration(
   symbol: CheckerSymbol | undefined,
@@ -561,7 +572,8 @@ export function nodeFileName(node: Node): string {
  *
  * @param symbol - Symbol to inspect; undefined declares nothing.
  * @returns The file names, in declaration order.
- * @throws When a declaration's source file is no longer available.
+ * @throws When a declaration's source file is no longer available, or the compiler process has
+ *   exited.
  */
 export async function declarationFileNames(symbol: CheckerSymbol | undefined): Promise<string[]> {
   return await Promise.all(
@@ -584,6 +596,7 @@ export async function declarationFileNames(symbol: CheckerSymbol | undefined): P
  * @param type - Type to inspect.
  * @param name - Property name.
  * @returns The property, or undefined when `type` has none by that name.
+ * @throws When the compiler process has exited.
  */
 export async function propertyOfType(
   checker: Checker,
@@ -599,6 +612,7 @@ export async function propertyOfType(
  * @param checker - Checker that produced `type`.
  * @param type - Type to inspect.
  * @returns The property symbols.
+ * @throws When the compiler process has exited.
  */
 export async function propertiesOfType(
   checker: Checker,
@@ -613,6 +627,7 @@ export async function propertiesOfType(
  * @param checker - Checker that produced `symbol`.
  * @param symbol - Symbol to inspect.
  * @returns The type; the checker's error type when it cannot be determined.
+ * @throws When the compiler process has exited.
  */
 export async function typeOfSymbol(checker: Checker, symbol: CheckerSymbol): Promise<Type> {
   return await checker.getTypeOfSymbol(symbol);
@@ -623,6 +638,7 @@ export async function typeOfSymbol(checker: Checker, symbol: CheckerSymbol): Pro
  *
  * @param type - Type to inspect.
  * @returns The symbol, or undefined for a type no declaration names, such as a primitive.
+ * @throws When the compiler process has exited.
  */
 export async function typeSymbol(type: Type): Promise<CheckerSymbol | undefined> {
   return await type.getSymbol();
@@ -635,6 +651,7 @@ export async function typeSymbol(type: Type): Promise<CheckerSymbol | undefined>
  * @param type - Type to inspect.
  * @param name - Property name.
  * @returns Whether the property exists and is an accessor.
+ * @throws When the compiler process has exited.
  */
 export async function isAccessorProperty(
   checker: Checker,
@@ -676,6 +693,7 @@ export function isAnonymousObjectSymbol(symbol: CheckerSymbol | undefined): bool
  * @param expr - Expression to test.
  * @param name - Name of the global value.
  * @returns Whether `expr` reads that global.
+ * @throws When the compiler process has exited.
  */
 export async function isGlobalValue(checker: Checker, expr: Node, name: string): Promise<boolean> {
   if (!isIdentifier(expr) || expr.text !== name) return false;
@@ -693,6 +711,7 @@ export async function isGlobalValue(checker: Checker, expr: Node, name: string):
  * @param checker - Checker of the program holding `node`.
  * @param node - Expression to type.
  * @returns The type; the checker's error type when it cannot be determined.
+ * @throws When the compiler process has exited.
  */
 export async function typeAtLocation(checker: Checker, node: Node): Promise<Type> {
   return await checker.getTypeAtLocation(node);
@@ -704,6 +723,7 @@ export async function typeAtLocation(checker: Checker, node: Node): Promise<Type
  * @param checker - Checker that produced `type`.
  * @param type - Type to resolve.
  * @returns The apparent type.
+ * @throws When the compiler process has exited.
  */
 export async function apparentType(checker: Checker, type: Type): Promise<Type> {
   return await checker.getApparentType(type);
@@ -715,6 +735,7 @@ export async function apparentType(checker: Checker, type: Type): Promise<Type> 
  * @param checker - Checker that produced `type`.
  * @param type - Type to narrow.
  * @returns The narrowed type.
+ * @throws When the compiler process has exited.
  */
 export async function nonNullableType(checker: Checker, type: Type): Promise<Type> {
   return await checker.getNonNullableType(type);
@@ -726,6 +747,7 @@ export async function nonNullableType(checker: Checker, type: Type): Promise<Typ
  * @param checker - Checker that produced `type`.
  * @param type - Type to widen; a non-literal type comes back unchanged.
  * @returns The widened type.
+ * @throws When the compiler process has exited.
  */
 export async function baseTypeOfLiteral(checker: Checker, type: Type): Promise<Type> {
   return await checker.getBaseTypeOfLiteralType(type);
@@ -737,6 +759,7 @@ export async function baseTypeOfLiteral(checker: Checker, type: Type): Promise<T
  * @param checker - Checker that produced `type`.
  * @param type - Type to test.
  * @returns Whether `type` is array-like.
+ * @throws When the compiler process has exited.
  */
 export async function isArrayLike(checker: Checker, type: Type): Promise<boolean> {
   return await checker.isArrayLikeType(type);
@@ -787,6 +810,7 @@ export function stringLiteralValue(type: Type | undefined): string | undefined {
  *
  * @param type - Type to split.
  * @returns The members, or undefined when `type` is not a union.
+ * @throws When the compiler process has exited.
  */
 export async function unionMembers(type: Type): Promise<readonly Type[] | undefined> {
   return isUnionType(type) ? await type.getTypes() : undefined;
@@ -797,6 +821,7 @@ export async function unionMembers(type: Type): Promise<readonly Type[] | undefi
  *
  * @param type - Type to split.
  * @returns The members, or undefined when `type` is not an intersection.
+ * @throws When the compiler process has exited.
  */
 export async function intersectionMembers(type: Type): Promise<readonly Type[] | undefined> {
   return isIntersectionType(type) ? await type.getTypes() : undefined;
@@ -838,6 +863,7 @@ export function isNullishOrVoid(type: Type): boolean {
  * @param checker - Checker that produced `type`.
  * @param type - Type to test.
  * @returns Whether `type` has a call signature.
+ * @throws When the compiler process has exited.
  */
 export async function hasCallSignatures(checker: Checker, type: Type): Promise<boolean> {
   return (await checker.getSignaturesOfType(type, SignatureKind.Call)).length > 0;
@@ -849,6 +875,7 @@ export async function hasCallSignatures(checker: Checker, type: Type): Promise<b
  * @param checker - Checker that produced `type`.
  * @param type - Type to test.
  * @returns Whether `type` is an array or tuple type.
+ * @throws When the compiler process has exited.
  */
 export async function isArrayOrTuple(checker: Checker, type: Type): Promise<boolean> {
   return isTupleType(type) || (await checker.isArrayType(type));
@@ -862,6 +889,7 @@ export async function isArrayOrTuple(checker: Checker, type: Type): Promise<bool
  * @param type - Type to read.
  * @returns The element types in order, or undefined when `type` is not a tuple or has an element
  *   that is not required.
+ * @throws When the compiler process has exited.
  */
 export async function requiredTupleElements(
   checker: Checker,

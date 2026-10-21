@@ -12,7 +12,6 @@ import {
   isBlock,
   isBindingElement,
   isCallExpression,
-  isFunctionExpression,
   isFunctionLikeDeclaration,
   isIdentifier,
   isObjectBindingPattern,
@@ -32,12 +31,17 @@ import {
 } from "../facts.js";
 import type { NodeTable } from "../nodes.js";
 import { nodePosition } from "../position.js";
-import { boundNames, isThisParameter, isTypeOnly } from "../syntax.js";
+import {
+  boundNames,
+  type InlineCallback,
+  isInlineCallback,
+  isThisParameter,
+  isTypeOnly,
+} from "../syntax.js";
 import { forEachDeferred, forEachEvaluated, isNestedFunction } from "./evaluated.js";
 import {
   directEvalCalls,
   functionLocalUses,
-  type InlineCallback,
   ownReturns,
   ownVarDeclarations,
 } from "./function-local.js";
@@ -66,7 +70,7 @@ export interface CallbackScope {
 export function inlineCallback(call: CallExpression, op: Op): InlineCallback | undefined {
   const last = call.arguments.at(-1);
   if (!iterates(op) || last === undefined) return undefined;
-  return isArrowFunction(last) || isFunctionExpression(last) ? last : undefined;
+  return isInlineCallback(last) ? last : undefined;
 }
 
 /**
@@ -323,7 +327,10 @@ class ReferenceScan {
       return;
     }
     if (isNestedFunction(node)) {
-      this.#scanNested(node, this.#nestedLoop(node));
+      this.#scanNested(
+        node,
+        once(async () => await this.#nestedLoop(node)),
+      );
     } else {
       forEachDeferred(node, (part) => {
         this.#scanNested(part, undefined);
@@ -368,20 +375,23 @@ class ReferenceScan {
    * Collects every identifier in a node's subtree as a deferred reference. Inside an iteration
    * call's inline callback, a further function is what its own position makes it.
    *
+   * A function's loop is looked up only once a reference inside it is collected: `deferred` holds
+   * every lookup started, so each one is awaited, and none rejects unhandled.
+   *
    * @param node - The node to scan.
-   * @param loop - The innermost iteration call whose inline callback holds `node`, resolving;
+   * @param loop - Looks up the innermost iteration call whose inline callback holds `node`;
    *   undefined when a function that is no such callback holds it.
    */
-  #scanNested(node: Node, loop: Promise<CallExpression | undefined> | undefined): void {
+  #scanNested(node: Node, loop: LoopLookup | undefined): void {
     if (isTypeOnly(node)) return;
     if (isIdentifier(node)) {
-      if (!isNamePosition(node)) this.deferred.push({ id: node, loop });
+      if (!isNamePosition(node)) this.deferred.push({ id: node, loop: loop?.() });
       return;
     }
     node.forEachChild((child) => {
       const inner =
         loop !== undefined && isFunctionLikeDeclaration(child)
-          ? innerLoop(loop, this.#nestedLoop(child))
+          ? once(async () => await innerLoop(loop(), this.#nestedLoop(child)))
           : loop;
       this.#scanNested(child, inner);
     });
@@ -402,6 +412,20 @@ class ReferenceScan {
       ? call
       : undefined;
   }
+}
+
+/** Looks up the innermost iteration call whose inline callback holds a node, once. */
+type LoopLookup = () => Promise<CallExpression | undefined>;
+
+/**
+ * A lookup that starts on its first call and hands every later call the same promise.
+ *
+ * @param start - Starts the lookup.
+ * @returns The memoized lookup.
+ */
+function once(start: LoopLookup): LoopLookup {
+  let started: Promise<CallExpression | undefined> | undefined;
+  return async () => await (started ??= start());
 }
 
 async function innerLoop(

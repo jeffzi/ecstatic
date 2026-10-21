@@ -154,7 +154,8 @@ export async function openSession(
         closeTimeoutMs,
       );
     } catch (error) {
-      await closeCompiler(compiler, closeTimeoutMs);
+      // A close failing after the load failed is a symptom; the load error names the cause.
+      await closeCompiler(compiler, closeTimeoutMs).catch(() => {});
       throw error;
     }
   } catch (error) {
