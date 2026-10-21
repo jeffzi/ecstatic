@@ -1,4 +1,4 @@
-import { join, relative, sep } from "node:path";
+import { join } from "node:path";
 
 import type { Expression, SourceFile } from "typescript/ast";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import {
   closeProject,
   openProject,
   projectPath,
+  relativePath,
   runtimeProject,
   SPAWN_TIMEOUT_MS,
 } from "../unit/optimizer/project.js";
@@ -118,7 +119,7 @@ export function run(storage: unknown): void {
 
 /** The slash-separated path of `file` from the repository root. */
 function repoName(file: string): string {
-  return relative(REPO_ROOT, file).split(sep).join("/");
+  return relativePath(REPO_ROOT, file);
 }
 
 /** Parses each output of `outputs`, keyed by slash-separated path from the repository root. */

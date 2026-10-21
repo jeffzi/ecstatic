@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect } from "vitest";
@@ -100,6 +100,11 @@ export function removeProjects(): void {
 /** The absolute path of the slash-separated `rel` under `dir`. */
 export function projectPath(dir: string, rel: string): string {
   return join(dir, ...rel.split("/"));
+}
+
+/** The slash-separated path of `file` relative to `dir`, the inverse of {@link projectPath}. */
+export function relativePath(dir: string, file: string): string {
+  return relative(dir, file).split(sep).join("/");
 }
 
 /**

@@ -33,6 +33,11 @@ const LIFECYCLE_PROJECT = "unit";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
+/** The path of a file in `tests/optimizer`, named the way Vitest names modules. */
+function optimizerTestFile(name: string): string {
+  return normalizePath(join(ROOT, "tests", "optimizer", name));
+}
+
 const VITEST_CONFIG = join(ROOT, "vitest.config.ts");
 
 // What the optimizer's rewrite of an inline `each` adds to a module: the shape guard's call.
@@ -41,13 +46,13 @@ const REWRITE_MARKER = "assertShape";
 // Vitest names test and setup files the way Vite names modules: absolute, with `/` separators.
 const SKIP_CHECKED = normalizePath(join(ROOT, "tests", "skip-checked.ts"));
 
-const CORPUS_TEST = normalizePath(join(ROOT, "tests", "optimizer", "corpus.test.ts"));
+const CORPUS_TEST = optimizerTestFile("corpus.test.ts");
 
-const VITE_SMOKE_TEST = normalizePath(join(ROOT, "tests", "optimizer", "vite-smoke.test.ts"));
+const VITE_SMOKE_TEST = optimizerTestFile("vite-smoke.test.ts");
 
-const GOLDEN_LOADER_TEST = normalizePath(join(ROOT, "tests", "optimizer", "golden-loader.test.ts"));
+const GOLDEN_LOADER_TEST = optimizerTestFile("golden-loader.test.ts");
 
-const UNSTRIPPED_TEST = normalizePath(join(ROOT, "tests", "optimizer", "unstripped.test.ts"));
+const UNSTRIPPED_TEST = optimizerTestFile("unstripped.test.ts");
 
 const INLINE_EACH_MODULE = join(ROOT, "tests", "unit", "inline-each.ts");
 

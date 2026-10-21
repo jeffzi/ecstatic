@@ -112,10 +112,9 @@ export const BENCHMARK_CONFIG = join(REPO_ROOT, "benchmarks", "tsconfig.json");
 export const COMPILE_TIMEOUT_MS = 180_000;
 
 /**
- * The index of the helper_call benchmark's `= advance(` call in `text`, the benchmark's source or
- * its compiled output.
+ * Finds the helper_call benchmark's `= advance(` call.
  *
- * @param text - The text of the iteration benchmarks.
+ * @param text - The iteration benchmarks' source or their compiled output.
  * @returns The index at which the call's `=` starts.
  * @throws Error when `text` holds no such call.
  */

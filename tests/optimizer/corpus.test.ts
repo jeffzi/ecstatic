@@ -25,7 +25,7 @@ import {
   type RewrittenModule,
 } from "../../src/plugin/optimizer/rewrite.js";
 import { openSession, type Session } from "../../src/plugin/optimizer/session.js";
-import { advanceCall, BENCHMARK_CONFIG } from "../benchmarks/fixtures.js";
+import { advanceCall } from "../benchmarks/fixtures.js";
 import { createProject, removeTempDirs } from "../unit/plugin/tsconfig-fixtures.js";
 import {
   CORPUS_FILES,
@@ -571,7 +571,7 @@ describe("benchmarks", () => {
   let run: CorpusRun;
 
   beforeAll(async () => {
-    session = await openSession(BENCHMARK_CONFIG);
+    session = await openSession(join(BENCHMARK_ROOT, "tsconfig.json"));
     run = await rewriteAll(session, [systemsFile, iterationFile]);
   }, CORPUS_TIMEOUT_MS);
 

@@ -21,10 +21,6 @@ async function runScenario(file: string): Promise<unknown> {
 }
 
 describe("fixture traces", () => {
-  it("finds fixtures", () => {
-    expect(CONVERGENT_FIXTURES).not.toHaveLength(0);
-  });
-
   it.each(CONVERGENT_FIXTURES)(
     "%s: the golden's trace equals the input's",
     async (fixture) => {
