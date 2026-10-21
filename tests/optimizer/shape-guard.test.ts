@@ -1,11 +1,7 @@
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-import { assert, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { DEBUG } from "../../src/ecstatic/index.js";
-
-const FIXTURE_DIR = fileURLToPath(new URL("fixtures/divergent/lying-cast", import.meta.url));
+import { fixturePath, GOLDEN_FILE, loadFixtureExport } from "./fixture-corpus.js";
 
 /** The shape the fixture's cast claims, as the guard keys it. */
 const CLAIMED_KEY = "c16:DivergentClaimed{1:b=n}|";
@@ -15,13 +11,9 @@ const ACTUAL_KEY = "c13:DivergentReal{1:a=n}|";
 
 type Visit = (rows: number, visited: number[]) => void;
 
-/** Imports the fixture's `file` against a fresh module registry and returns the `visit` function it exports. */
-async function loadVisit(file: string): Promise<Visit> {
-  vi.resetModules();
-  const module: unknown = await import(join(FIXTURE_DIR, file));
-  assert(typeof module === "object" && module !== null && "visit" in module);
-  const { visit } = module;
-  assert(typeof visit === "function", `${file} does not export a visit function`);
+/** Imports the fixture's golden against a fresh module registry and returns its `visit` function. */
+async function loadCompiledVisit(): Promise<Visit> {
+  const visit = await loadFixtureExport(fixturePath("divergent/lying-cast", GOLDEN_FILE), "visit");
   return (rows, visited) => {
     visit(rows, visited);
   };
@@ -30,7 +22,7 @@ async function loadVisit(file: string): Promise<Visit> {
 describe("an each call compiled against a shape a cast lies about", () => {
   describe.runIf(DEBUG)("with DEBUG on", () => {
     it.each([0, 2])("throws the shape guard's error before any of %i rows runs", async (rows) => {
-      const visit = await loadVisit("expected.ts.golden");
+      const visit = await loadCompiledVisit();
       const visited: number[] = [];
 
       expect(() => {
@@ -41,16 +33,13 @@ describe("an each call compiled against a shape a cast lies about", () => {
   });
 
   describe.runIf(!DEBUG)("with NDEBUG set", () => {
-    it("returns on an empty storage as the runtime's call does", async () => {
-      const runtime = await loadVisit("input.ts");
-      const runtimeVisited: number[] = [];
-      runtime(0, runtimeVisited);
-      const compiled = await loadVisit("expected.ts.golden");
-      const compiledVisited: number[] = [];
+    it("returns on an empty storage, the shape guard stripped", async () => {
+      const visit = await loadCompiledVisit();
+      const visited: number[] = [];
 
-      compiled(0, compiledVisited);
+      visit(0, visited);
 
-      expect(compiledVisited).toStrictEqual(runtimeVisited);
+      expect(visited).toStrictEqual([]);
     });
   });
 });

@@ -1,34 +1,12 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import { afterEach, assert, describe, expect, it } from "vitest";
 
+import { createProject, REPO_ROOT, removeTempDirs } from "../unit/plugin/tsconfig-fixtures.js";
+import { GOLDEN_FILE } from "./fixture-corpus.js";
 import { goldenLoader } from "./golden-loader.js";
 
-const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
-
-const tempDirs: string[] = [];
-
-afterEach(() => {
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-/** Creates an empty temp directory the `afterEach` hook deletes and returns its real path. */
-function createTempDir(): string {
-  const dir = mkdtempSync(join(realpathSync.native(tmpdir()), "ecstatic-golden-"));
-  tempDirs.push(dir);
-  return dir;
-}
-
-/** Writes `content` to `file`, creating parent directories first. */
-function writeFixture(file: string, content: string): void {
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, content);
-}
+afterEach(removeTempDirs);
 
 /** Builds the loader plugin and returns its named hook bound to the plugin. */
 function hook(name: "resolveId" | "load"): (...args: unknown[]) => unknown {
@@ -64,7 +42,7 @@ describe("goldenLoader", () => {
       { source: "ecstatic", expected: join(REPO_ROOT, "src", "ecstatic", "index.ts") },
       { source: "ecstatic/internal", expected: join(REPO_ROOT, "src", "ecstatic", "internal.ts") },
     ])("resolves $source to its source file", ({ source, expected }) => {
-      const importer = join(createTempDir(), "expected.ts.golden");
+      const importer = join(createProject({}), GOLDEN_FILE);
 
       const resolved = resolveFrom(source, importer);
 
@@ -81,7 +59,7 @@ describe("goldenLoader", () => {
           return "resolved";
         },
       };
-      const importer = join(createTempDir(), "expected.ts.golden");
+      const importer = join(createProject({}), GOLDEN_FILE);
 
       const resolved = resolveWithContext(context, "../../schema.js", importer);
 
@@ -94,8 +72,13 @@ describe("goldenLoader", () => {
 
   describe("when a golden fails to transpile", () => {
     it("rejects naming the golden's path and the transpiler's reason", async () => {
-      const golden = join(createTempDir(), "broken", "expected.ts.golden");
-      writeFixture(golden, "export function scenario(): unknown {\n  return {;\n}\n");
+      const golden = join(
+        createProject({
+          [`broken/${GOLDEN_FILE}`]: "export function scenario(): unknown {\n  return {;\n}\n",
+        }),
+        "broken",
+        GOLDEN_FILE,
+      );
 
       const loading = loadModule(golden);
 

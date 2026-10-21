@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { moverSource } from "../benchmarks/fixtures.js";
 import { createProject, REPO_ROOT, removeTempDirs } from "../unit/plugin/tsconfig-fixtures.js";
 
 const VITE_PLUGIN = pathToFileURL(join(REPO_ROOT, "src", "plugin", "vite.ts")).href;
@@ -40,22 +41,10 @@ await build({
 `;
 
 /** A module whose `run()` calls `each()` over one mover with an async callback. */
-const ASYNC_CALLBACK_SOURCE = `
-import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
-
-const Position = component("Position", { x: 0, y: 0 });
-const Mover = archetype([Position]);
-
-export function run(): void {
-  const movers = register(createWorld(), Mover);
-  spawn(movers, { Position: { x: 1, y: 0 } });
-
-  each(movers, async (e) => {
+const ASYNC_CALLBACK_SOURCE = moverSource(`async (e) => {
     e.Position.x += 1;
     await Promise.resolve();
-  });
-}
-`;
+  }`);
 
 /** Starts the build of a copied plugin, so it loads the optimizer beside the copy's `node_modules`. */
 const BUILD_START_SCRIPT = `

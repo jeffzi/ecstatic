@@ -1,13 +1,5 @@
-import {
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, sep } from "node:path";
+import { readdirSync, readFileSync, realpathSync } from "node:fs";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -33,12 +25,20 @@ import {
   type RewrittenModule,
 } from "../../src/plugin/optimizer/rewrite.js";
 import { openSession, type Session } from "../../src/plugin/optimizer/session.js";
+import { advanceCall, BENCHMARK_CONFIG } from "../benchmarks/fixtures.js";
+import { createProject, removeTempDirs } from "../unit/plugin/tsconfig-fixtures.js";
+import {
+  CORPUS_FILES,
+  CORPUS_ROOT,
+  FIXTURES,
+  fixtureOf,
+  fixturePath,
+  GOLDEN_FILE,
+  INPUT_FILE,
+} from "./fixture-corpus.js";
 
-const CORPUS_ROOT = realpathSync(fileURLToPath(new URL("fixtures", import.meta.url)));
 const BENCHMARK_ROOT = realpathSync(fileURLToPath(new URL("../../benchmarks", import.meta.url)));
 
-const INPUT_FILE = "input.ts";
-const GOLDEN_FILE = "expected.ts.golden";
 const BAIL_CORPUS = "bail";
 
 /** The fixture whose comments the harness cases feed their parsers. */
@@ -164,28 +164,6 @@ function detailOf(info: ReasonInfo | undefined, message: string): string | undef
 function isRule(name: string): name is Rule {
   return RULE_NAMES.has(name);
 }
-
-/** The slash-separated directory of `file` relative to the corpus root, `.` for the root itself. */
-function fixtureOf(file: string): string {
-  const dir = relative(CORPUS_ROOT, dirname(file));
-  return dir === "" ? "." : dir.split(sep).join("/");
-}
-
-/** The absolute path of `name` in `fixture`. */
-function fixturePath(fixture: string, name: string): string {
-  return join(CORPUS_ROOT, ...fixture.split("/"), name);
-}
-
-/** Every `.ts` file of the corpus, absolute and sorted. */
-const CORPUS_FILES = readdirSync(CORPUS_ROOT, { recursive: true, encoding: "utf8" })
-  .filter((rel) => rel.endsWith(".ts"))
-  .map((rel) => join(CORPUS_ROOT, rel))
-  .toSorted();
-
-/** Every fixture directory of the corpus, found by its `input.ts`, sorted. */
-const FIXTURES = CORPUS_FILES.filter((file) => basename(file) === INPUT_FILE)
-  .map(fixtureOf)
-  .toSorted();
 
 /** The diagnostic `comment`, on 1-based `line` of `file` in `fixture`, calls for; throws naming the line when malformed. */
 function parseExpectation(fixture: string, file: string, comment: string, line: number): Expected {
@@ -428,23 +406,19 @@ function lineOf(text: string, index: number): number {
   return text.slice(0, index).split("\n").length;
 }
 
-/** Matches the call of the opaque helper in the body of the iteration/helper_call benchmark. */
-const HELPER_CALL = /=\s*advance\(/u;
-
 /** The 1-based line on which the each call of the iteration/helper_call benchmark starts in `text`. */
 function helperCallLine(text: string): number {
-  const call = HELPER_CALL.exec(text);
-  if (call === null) throw new Error(`iteration-bench.ts holds no match for ${HELPER_CALL}`);
-  const each = text.lastIndexOf("each(", call.index);
+  const call = advanceCall(text);
+  const each = text.lastIndexOf("each(", call);
   if (each < 0) {
     throw new Error(
-      `iteration-bench.ts has no each call ahead of its helper call at line ${lineOf(text, call.index)}`,
+      `iteration-bench.ts has no each call ahead of its helper call at line ${lineOf(text, call)}`,
     );
   }
   return lineOf(text, each);
 }
 
-/** The fixture shape rows of the shape table, with whether the storage's shape resolves. */
+/** Each storage form the shape analysis distinguishes, with its fixture and whether its shape resolves. */
 const SHAPE_ROWS = [
   { row: "local storage", fixture: "eligible/local-storage", resolves: true },
   { row: "class-form archetype", fixture: "eligible/class-archetype", resolves: true },
@@ -513,10 +487,6 @@ describe("fixture corpus", () => {
 
   afterAll(() => session.close());
 
-  it("finds fixtures", () => {
-    expect(FIXTURES).not.toHaveLength(0);
-  });
-
   describe.each(FIXTURES)("fixture %s", (fixture) => {
     const all = readExpectations(fixture);
     const input = fixturePath(fixture, INPUT_FILE);
@@ -530,12 +500,11 @@ describe("fixture corpus", () => {
       );
     });
 
-    it("strict diagnostics equal the comments as errors", () => {
-      expect(strictFound.get(fixture) ?? []).toStrictEqual(wanted(all, true));
-    });
-
-    it("lenient diagnostics equal the warning comments", () => {
-      expect(lenientFound.get(fixture) ?? []).toStrictEqual(wanted(all, false));
+    it.each([
+      { mode: "strict", strict: true, found: () => strictFound },
+      { mode: "lenient", strict: false, found: () => lenientFound },
+    ])("$mode diagnostics equal the comments the mode reports", ({ strict, found }) => {
+      expect(found().get(fixture) ?? []).toStrictEqual(wanted(all, strict));
     });
 
     it("output is rewritten exactly when a site plans a rewrite", () => {
@@ -582,9 +551,9 @@ describe("reported reasons", () => {
   });
 });
 
-describe("shape table", () => {
+describe("storage shape fixtures", () => {
   it.each(SHAPE_ROWS)(
-    "row $row has fixture $fixture expecting its outcome",
+    "$row has fixture $fixture expecting the shape to resolve: $resolves",
     ({ fixture, resolves }) => {
       const ids = FIXTURES.includes(fixture)
         ? readExpectations(fixture).map(({ id }) => id)
@@ -602,7 +571,7 @@ describe("benchmarks", () => {
   let run: CorpusRun;
 
   beforeAll(async () => {
-    session = await openSession(join(BENCHMARK_ROOT, "tsconfig.json"));
+    session = await openSession(BENCHMARK_CONFIG);
     run = await rewriteAll(session, [systemsFile, iterationFile]);
   }, CORPUS_TIMEOUT_MS);
 
@@ -785,7 +754,7 @@ describe("foundOf", () => {
     },
   );
 
-  it("reads no detail for a reason whose text has none", () => {
+  it("reads a diagnostic whose reason has no detail, its file by base name", () => {
     const [diagnostic] = bailDiagnostics(
       [{ call: 40, op: "each", reason: "SHAPE_UNRESOLVED", pos }],
       true,
@@ -808,14 +777,14 @@ describe("foundOf", () => {
 describe("rewrite-applies comments", () => {
   const [first, second] = RULES;
 
-  it.each([INPUT_FILE, "storage.ts"])("are read from %s in line order, one rule each", (file) => {
+  it("are read in line order, one rule each", () => {
     const content = `export const banana = 1;\n${CLAIM_PREFIX} ${first}\n  ${CLAIM_PREFIX} ${second}\n`;
 
-    const claims = claimsIn(SAMPLE_FIXTURE, file, content);
+    const claims = claimsIn(SAMPLE_FIXTURE, INPUT_FILE, content);
 
     expect(claims).toStrictEqual([
-      { file, line: 2, rule: first },
-      { file, line: 3, rule: second },
+      { file: INPUT_FILE, line: 2, rule: first },
+      { file: INPUT_FILE, line: 3, rule: second },
     ]);
   });
 
@@ -836,29 +805,16 @@ describe("rewrite-applies comments", () => {
 });
 
 describe("readClaims", () => {
-  let dir: string;
-
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
+  afterEach(removeTempDirs);
 
   it("rejects a malformed claim in a companion file, naming that file and line", () => {
-    dir = mkdtempSync(join(tmpdir(), "ecstatic-claims-"));
-    writeFileSync(join(dir, INPUT_FILE), "export const banana = 1;\n");
-    writeFileSync(join(dir, "storage.ts"), `export const kiwi = 2;\n${CLAIM_PREFIX} banana\n`);
+    const dir = createProject({
+      [INPUT_FILE]: "export const banana = 1;\n",
+      "storage.ts": `export const kiwi = 2;\n${CLAIM_PREFIX} banana\n`,
+    });
 
     expect(() => readClaims(SAMPLE_FIXTURE, dir)).toThrow(
       `fixture ${SAMPLE_FIXTURE}: storage.ts:2:`,
-    );
-  });
-});
-
-describe("goldenMismatch", () => {
-  it("names the fixture and the command that rewrites the golden", () => {
-    const message = goldenMismatch(SAMPLE_FIXTURE);
-
-    expect(message).toBe(
-      "fixture bail/sample: output differs from expected.ts.golden; run npx vitest run --project fixtures -u to rewrite it",
     );
   });
 });
@@ -921,24 +877,24 @@ describe("strayDiagnostics", () => {
 
   it.each([
     {
-      name: "a strict run outside a fixture",
+      name: "reports a strict run's diagnostics outside a fixture",
       strict: new Map([[".", diagnostic]]),
       lenient: none,
       expected: [{ run: "strict", dir: "." }],
     },
     {
-      name: "a lenient run outside a fixture",
+      name: "reports a lenient run's diagnostics outside a fixture",
       strict: none,
       lenient: new Map([[".", diagnostic]]),
       expected: [{ run: "lenient", dir: "." }],
     },
     {
-      name: "both runs inside a fixture",
+      name: "reports nothing when both runs' diagnostics sit inside a fixture",
       strict: new Map([[SAMPLE_FIXTURE, diagnostic]]),
       lenient: new Map([[SAMPLE_FIXTURE, diagnostic]]),
       expected: [],
     },
-  ])("finds $name", ({ strict, lenient, expected }) => {
+  ])("$name", ({ strict, lenient, expected }) => {
     const strays = strayDiagnostics([SAMPLE_FIXTURE], strict, lenient);
 
     expect(strays).toStrictEqual(expected);

@@ -11,6 +11,7 @@ import { packageBin } from "../package-bin.js";
 import { ROW_LOOP } from "../unit/optimizer/printed.js";
 import { createProject, REPO_ROOT, removeTempDirs } from "../unit/plugin/tsconfig-fixtures.js";
 import {
+  advanceCall,
   benchmarkTreeWith,
   COMPILE_FAILURES,
   COMPILE_TIMEOUT_MS,
@@ -287,13 +288,6 @@ function closingBracket(text: string, open: number, pair: "()" | "{}"): number {
     if (depth === 0) return index;
   }
   return -1;
-}
-
-/** The index of the helper_call benchmark's `= advance(` call in `text`. */
-function advanceCall(text: string): number {
-  const call = /=\s*advance\(/u.exec(text);
-  if (call === null) throw new Error("the compiled iteration benchmarks hold no advance call");
-  return call.index;
 }
 
 /** Whether `index` in `text` sits inside the arguments of the nearest `each(` call before it. */

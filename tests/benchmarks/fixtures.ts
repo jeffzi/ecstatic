@@ -111,8 +111,22 @@ export const BENCHMARK_CONFIG = join(REPO_ROOT, "benchmarks", "tsconfig.json");
 /** Opening a session and compiling every benchmark source, on a slow CI runner. */
 export const COMPILE_TIMEOUT_MS = 180_000;
 
+/**
+ * The index of the helper_call benchmark's `= advance(` call in `text`, the benchmark's source or
+ * its compiled output.
+ *
+ * @param text - The text of the iteration benchmarks.
+ * @returns The index at which the call's `=` starts.
+ * @throws Error when `text` holds no such call.
+ */
+export function advanceCall(text: string): number {
+  const call = /=\s*advance\(/u.exec(text);
+  if (call === null) throw new Error("the iteration benchmarks hold no advance call");
+  return call.index;
+}
+
 /** A module whose `run()` calls `each()` over one mover with the `callback` expression. */
-function moverSource(callback: string): string {
+export function moverSource(callback: string): string {
   return `
 import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
 

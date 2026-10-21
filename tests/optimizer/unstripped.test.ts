@@ -1,4 +1,4 @@
-import { join, relative, resolve, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 
 import type { Expression, SourceFile } from "typescript/ast";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -12,12 +12,11 @@ import {
   runtimeProject,
   SPAWN_TIMEOUT_MS,
 } from "../unit/optimizer/project.js";
+import { REPO_ROOT } from "../unit/plugin/tsconfig-fixtures.js";
 import { NO_GUARDS, runtimeDebug, unstrippedProblems } from "./unstripped.js";
 
-const ROOT = resolve(import.meta.dirname, "../..");
-
 /** The project the optimized unit projects hand `ecstatic/vite`. */
-const TESTS_TSCONFIG = join(ROOT, "tests", "tsconfig.json");
+const TESTS_TSCONFIG = join(REPO_ROOT, "tests", "tsconfig.json");
 
 /** How long rewriting every module the optimized unit projects run may take on a slow CI runner. */
 const REWRITE_TIMEOUT_MS = 60_000;
@@ -93,9 +92,12 @@ let checkerRuntime: Expression;
 beforeAll(async () => {
   session = await openSession(TESTS_TSCONFIG);
   rewriter = createRewriter(session);
-  runtime = runtimeDebug(await session.parse(join(ROOT, "src", "ecstatic", "debug.ts")));
+  runtime = runtimeDebug(await session.parse(join(REPO_ROOT, "src", "ecstatic", "debug.ts")));
   checkerRuntime = runtimeDebug(
-    await session.parseText(join(ROOT, "tests", "optimizer", "checker-debug.ts"), CHECKER_RUNTIME),
+    await session.parseText(
+      join(REPO_ROOT, "tests", "optimizer", "checker-debug.ts"),
+      CHECKER_RUNTIME,
+    ),
   );
 }, SPAWN_TIMEOUT_MS);
 
@@ -116,19 +118,15 @@ export function run(storage: unknown): void {
 
 /** The slash-separated path of `file` from the repository root. */
 function repoName(file: string): string {
-  return relative(ROOT, file).split(sep).join("/");
-}
-
-/** The absolute path of `name`, a slash-separated path from the repository root. */
-function repoFile(name: string): string {
-  return join(ROOT, ...name.split("/"));
+  return relative(REPO_ROOT, file).split(sep).join("/");
 }
 
 /** Parses each output of `outputs`, keyed by slash-separated path from the repository root. */
 async function parsed(outputs: Readonly<Record<string, string>>): Promise<Map<string, SourceFile>> {
   const entries = await Promise.all(
     Object.entries(outputs).map(
-      async ([name, text]) => [name, await session.parseText(repoFile(name), text)] as const,
+      async ([name, text]) =>
+        [name, await session.parseText(projectPath(REPO_ROOT, name), text)] as const,
     ),
   );
   return new Map(entries);
@@ -381,7 +379,7 @@ describe("unstrippedProblems", () => {
     it("names a copy whose call passes fewer arguments than the runtime's", async () => {
       const callRuntime = runtimeDebug(
         await session.parseText(
-          repoFile("tests/optimizer/call-debug.ts"),
+          projectPath(REPO_ROOT, "tests/optimizer/call-debug.ts"),
           "export const DEBUG = enabled(NDEBUG, true);\n",
         ),
       );
@@ -457,7 +455,7 @@ describe("runtimeDebug", () => {
     { name: "a let DEBUG", text: "export let DEBUG = true;\n" },
     { name: "a DEBUG with no initializer", text: "export declare const DEBUG: boolean;\n" },
   ])("rejects a debug module declaring $name, naming the file", async ({ text }) => {
-    const file = repoFile("tests/optimizer/bad-debug.ts");
+    const file = projectPath(REPO_ROOT, "tests/optimizer/bad-debug.ts");
     const debug = await session.parseText(file, text);
 
     const read = (): Expression => runtimeDebug(debug);
