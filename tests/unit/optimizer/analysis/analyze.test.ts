@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { analyze } from "../../../../src/plugin/optimizer/analysis/analyze.js";
 import { PackageRoots } from "../../../../src/plugin/optimizer/analysis/roots.js";
-import type { Checker } from "../../../../src/plugin/optimizer/compiler.js";
+import { type Checker, sourceFileName } from "../../../../src/plugin/optimizer/compiler.js";
 import type { Op, Reason, Site } from "../../../../src/plugin/optimizer/facts.js";
 import type { NodeTable } from "../../../../src/plugin/optimizer/nodes.js";
 import type { ProjectView, Session } from "../../../../src/plugin/optimizer/session.js";
@@ -339,7 +339,7 @@ query(s, [], (e) => has(e, s));
       expect(calls).toStrictEqual(
         starts.map(([text, nth]) => ({
           call: true,
-          start: locate(file.fileName, source, text, nth).offset,
+          start: locate(sourceFileName(file), source, text, nth).offset,
         })),
       );
     });
@@ -353,7 +353,9 @@ const label = "é🚀"; has(s, s);
 
     const { sites, file } = await analyzeServed(INSTALLED_MAIN, { [INSTALLED_MAIN]: source });
 
-    expect(sites.map(({ pos }) => pos)).toStrictEqual([locate(file.fileName, source, "has(s, s)")]);
+    expect(sites.map(({ pos }) => pos)).toStrictEqual([
+      locate(sourceFileName(file), source, "has(s, s)"),
+    ]);
   });
 
   it("returns equal sites when run twice with one root cache, whatever order its queries settle in", async () => {

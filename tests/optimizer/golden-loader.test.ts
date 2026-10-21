@@ -19,7 +19,7 @@ afterEach(() => {
 
 /** Creates an empty temp directory the `afterEach` hook deletes and returns its real path. */
 function createTempDir(): string {
-  const dir = mkdtempSync(join(realpathSync(tmpdir()), "ecstatic-golden-"));
+  const dir = mkdtempSync(join(realpathSync.native(tmpdir()), "ecstatic-golden-"));
   tempDirs.push(dir);
   return dir;
 }

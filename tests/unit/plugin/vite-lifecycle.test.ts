@@ -40,8 +40,17 @@ const ANALYZE_MODULE = "../../../src/plugin/optimizer/analysis/analyze.js";
 /** The session module, as this file names it to mock it. */
 const SESSION_MODULE = "../../../src/plugin/optimizer/session.js";
 
-/** How long a watch build or a dev server may take to see a change on disk and act on it. */
+/** How long a dev server may take to see a change on disk and act on it. */
 const REBUILD_TIMEOUT_MS = 15_000;
+
+/**
+ * How long one build of a watch build may take. A rebuild scans and transforms every module again,
+ * so it gets the budget of the first build, which also starts the compiler process.
+ */
+const WATCH_BUILD_TIMEOUT_MS = SPAWN_TIMEOUT_MS;
+
+/** How long a watch build case may take to set up: two builds and the project around them. */
+const WATCH_SETUP_TIMEOUT_MS = 3 * WATCH_BUILD_TIMEOUT_MS;
 
 /** The main project's components with a field added to `Position`, which every shape key of it names. */
 const EDITED_COMPONENTS = `import { component } from "../src/ecstatic/index.js";
@@ -87,6 +96,10 @@ interface Probe {
   readonly outputs: Map<string, string>;
   /** How many bundles the build generated. */
   bundles: number;
+  /** The message of each build error a watch build's watcher reported. */
+  readonly errors: string[];
+  /** Each event a watch build's watcher reported, with the milliseconds since it started. */
+  readonly events: string[];
 }
 
 /**
@@ -102,6 +115,8 @@ function processProbe(before: ReadonlySet<number>): Probe {
     processes: new Set(),
     outputs: new Map(),
     bundles: 0,
+    errors: [],
+    events: [],
     plugin: {
       name: "process-probe",
       enforce: "pre",
@@ -126,6 +141,46 @@ function processProbe(before: ReadonlySet<number>): Probe {
   return probe;
 }
 
+/** A plugin that holds the first load of one module, and the moment it read the module. */
+interface StaleLoad {
+  /** The plugin over the project at `root`. */
+  plugin(root: string): Plugin;
+  /** Settles once the held load has read the module. */
+  readonly read: Promise<void>;
+}
+
+/**
+ * A plugin whose first load of the module `rel` reads it, then hands Vite that text only once the
+ * watcher reports the module changed, as a load racing a change on disk does. Later loads read the
+ * disk as Vite does.
+ */
+function staleFirstLoad(rel: string): StaleLoad {
+  const read = Promise.withResolvers<void>();
+  const reported = Promise.withResolvers<void>();
+  let held = false;
+  return {
+    read: read.promise,
+    plugin: (root) => {
+      const file = projectPath(root, rel);
+      return {
+        name: "stale-first-load",
+        enforce: "pre",
+        async load(id) {
+          if (held || normalizePath(id) !== normalizePath(file)) return null;
+          held = true;
+          const text = readFileSync(file, "utf8");
+          read.resolve();
+          await reported.promise;
+          return text;
+        },
+        watchChange(id) {
+          if (normalizePath(id) === normalizePath(file)) reported.resolve();
+        },
+      };
+    },
+  };
+}
+
 /** A Vite build of the main project at `root`, from `app/main.ts`, through `plugins`. */
 function buildConfig(root: string, plugins: PluginOption[]): InlineConfig {
   return {
@@ -142,13 +197,44 @@ function buildConfig(root: string, plugins: PluginOption[]): InlineConfig {
   };
 }
 
+/**
+ * Starts a watch build of the main project at `root` through the optimizer and `probe`, recording
+ * in `probe` each build error its watcher reports.
+ */
+async function startWatchBuild(root: string, probe: Probe): Promise<{ close(): Promise<void> }> {
+  const config = buildConfig(root, [ecstatic(), probe.plugin]);
+  const output = await build({ ...config, build: { ...config.build, watch: {} } });
+  if (!("close" in output)) throw new Error("the watch build returned no watcher");
+  const started = Date.now();
+  output.on("event", (event) => {
+    probe.events.push(`${event.code} at ${Date.now() - started} ms`);
+    if (event.code === "ERROR") probe.errors.push(event.error.message);
+  });
+  output.on("change", (id) => {
+    probe.events.push(`change of ${id} at ${Date.now() - started} ms`);
+  });
+  return output;
+}
+
+/** Waits until the watch build behind `probe` generated `count` bundles, naming every watcher event seen when it did not. */
 async function waitForBundles(probe: Probe, count: number): Promise<void> {
-  await vi.waitFor(
-    () => {
-      expect(probe.bundles).toBeGreaterThanOrEqual(count);
-    },
-    { timeout: REBUILD_TIMEOUT_MS },
-  );
+  try {
+    await vi.waitFor(
+      () => {
+        expect(probe.errors).toStrictEqual([]);
+        expect(probe.bundles).toBeGreaterThanOrEqual(count);
+      },
+      { timeout: WATCH_BUILD_TIMEOUT_MS },
+    );
+  } catch (error) {
+    const seen = probe.events.join("; ");
+    throw new Error(
+      `the watch build generated ${probe.bundles} of ${count} bundles; events: ${seen}`,
+      {
+        cause: error,
+      },
+    );
+  }
 }
 
 async function waitUntilAllDead(processes: Iterable<number>): Promise<void> {
@@ -244,14 +330,11 @@ describe("ecstatic() for Vite", () => {
     beforeAll(async () => {
       watchRoot = createProject(mainProject());
       probe = processProbe(await runningProcesses());
-      const config = buildConfig(watchRoot, [ecstatic(), probe.plugin]);
-      const output = await build({ ...config, build: { ...config.build, watch: {} } });
-      if (!("close" in output)) throw new Error("the watch build returned no watcher");
-      watcher = output;
+      watcher = await startWatchBuild(watchRoot, probe);
       await waitForBundles(probe, 1);
       writeFixture(projectPath(watchRoot, COMPONENTS_FILE), EDITED_COMPONENTS);
       await waitForBundles(probe, 2);
-    }, SPAWN_TIMEOUT_MS);
+    }, WATCH_SETUP_TIMEOUT_MS);
 
     afterAll(async () => {
       await watcher?.close();
@@ -286,14 +369,11 @@ describe("ecstatic() for Vite", () => {
         mainProject({ [MAIN_FILE]: TYPED_SOURCE, [SCHEMA_FILE]: schemaSource("x: 0") }),
       );
       probe = processProbe(await runningProcesses());
-      const config = buildConfig(watchRoot, [ecstatic(), probe.plugin]);
-      const output = await build({ ...config, build: { ...config.build, watch: {} } });
-      if (!("close" in output)) throw new Error("the watch build returned no watcher");
-      watcher = output;
+      watcher = await startWatchBuild(watchRoot, probe);
       await waitForBundles(probe, 1);
       writeFixture(projectPath(watchRoot, SCHEMA_FILE), schemaSource(`x: 0, ${ADDED_FIELD}: 0`));
       await waitForBundles(probe, 2);
-    }, SPAWN_TIMEOUT_MS);
+    }, WATCH_SETUP_TIMEOUT_MS);
 
     afterAll(async () => {
       await watcher?.close();
@@ -321,8 +401,13 @@ describe("ecstatic() for Vite", () => {
       return result?.code;
     }
 
-    /** Starts a dev server over a new project and serves its main module once. */
-    async function startDevServer(): Promise<DevServer> {
+    /**
+     * Starts a dev server over a new project, its plugins ahead of the optimizer, and serves its
+     * main module once.
+     */
+    async function startDevServer(
+      plugins: (root: string) => PluginOption[] = () => [],
+    ): Promise<DevServer> {
       const devRoot = createProject(mainProject());
       const before = await runningProcesses();
       const server = await createServer({
@@ -334,7 +419,7 @@ describe("ecstatic() for Vite", () => {
           alias: { "ecstatic/internal": projectPath(devRoot, "src/ecstatic/internal.ts") },
         },
         server: { middlewareMode: true, ws: false },
-        plugins: [ecstatic()],
+        plugins: [...plugins(devRoot), ecstatic()],
       });
       await servedMain(server);
       const processes = await processesStartedSince(before);
@@ -359,6 +444,28 @@ describe("ecstatic() for Vite", () => {
         ).resolves.toBeUndefined();
         const seen = new Set([...processes, ...(await processesStartedSince(before))]);
         expect(seen.size).toBe(1);
+      },
+      SPAWN_TIMEOUT_MS,
+    );
+
+    it(
+      "serves a module rewritten again after a module its rewrite consulted is transformed from newer text",
+      async () => {
+        const stale = staleFirstLoad(COMPONENTS_FILE);
+        const { root: devRoot, server } = await startDevServer((dir) => [stale.plugin(dir)]);
+        onTestFinished(() => server.close());
+        await stale.read;
+
+        writeFixture(projectPath(devRoot, COMPONENTS_FILE), EDITED_COMPONENTS);
+
+        await expect(
+          vi.waitFor(
+            async () => {
+              expect(await servedMain(server)).toContain(ADDED_FIELD);
+            },
+            { timeout: REBUILD_TIMEOUT_MS },
+          ),
+        ).resolves.toBeUndefined();
       },
       SPAWN_TIMEOUT_MS,
     );

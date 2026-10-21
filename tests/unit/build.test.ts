@@ -186,7 +186,7 @@ describe("build", () => {
     let copy = "";
 
     beforeAll(async () => {
-      copy = mkdtempSync(join(realpathSync(tmpdir()), "ecstatic-build-"));
+      copy = mkdtempSync(join(realpathSync.native(tmpdir()), "ecstatic-build-"));
       for (const input of BUILD_INPUTS) {
         cpSync(join(ROOT, input), join(copy, input), { recursive: true });
       }

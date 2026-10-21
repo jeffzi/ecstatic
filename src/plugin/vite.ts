@@ -4,7 +4,7 @@
  */
 import { resolve } from "node:path";
 
-import type { EnvironmentModuleNode, Plugin, Rolldown } from "vite";
+import type { Environment, EnvironmentModuleNode, Plugin, Rolldown } from "vite";
 
 import { fileKey } from "./file-key.js";
 import { bailDiagnostics } from "./optimizer/diagnostics.js";
@@ -75,6 +75,7 @@ export default function ecstatic(options: EcstaticOptions = {}): Plugin {
       consultedBy.set(id, new Set(rewritten.consulted.map(fileKey)));
       for (const consulted of rewritten.consulted) this.addWatchFile(consulted);
       reportBails(this, id, rewritten, strict);
+      if (rewritten.replaced) await reloadDependents(this.environment, consultedBy, id);
       const { output } = rewritten;
       return output === undefined ? undefined : { code: output.text, map: output.map };
     },
@@ -120,6 +121,33 @@ function dependentModules(
     if (node !== undefined) dependents.push(node);
   }
   return dependents;
+}
+
+/**
+ * Reloads the dev server's modules whose latest rewrite consulted `file`, as their rewrites read
+ * text of it that a transform has since replaced. Vite can read a module, see it change on disk,
+ * and only then transform the text it read: that older text overrides the change, so the modules
+ * rewritten before a later transform serves the newer text again read the older one. Outside a dev
+ * server, nothing is reloaded.
+ *
+ * @param environment - The environment of the transform that replaced the text.
+ * @param consultedBy - The files each module's latest rewrite consulted, by {@link fileKey}, keyed
+ *   by module id.
+ * @param file - The module id of the file whose served text was replaced.
+ */
+async function reloadDependents(
+  environment: Environment,
+  consultedBy: ReadonlyMap<string, ReadonlySet<string>>,
+  file: string,
+): Promise<void> {
+  if (environment.mode !== "dev") return;
+  const { moduleGraph } = environment;
+  for (const node of dependentModules(consultedBy, file, (id) => moduleGraph.getModuleById(id))) {
+    // Invalidating makes the next request transform the module again even with HMR off, and the
+    // reload pushes the module to every client.
+    moduleGraph.invalidateModule(node);
+    await environment.reloadModule(node);
+  }
 }
 
 /**

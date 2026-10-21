@@ -3,6 +3,7 @@ import { globSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
+import { normalizePath } from "vite";
 import {
   afterAll,
   beforeAll,
@@ -37,11 +38,12 @@ const VITEST_CONFIG = join(ROOT, "vitest.config.ts");
 // What the optimizer's rewrite of an inline `each` adds to a module: the shape guard's call.
 const REWRITE_MARKER = "assertShape";
 
-const SKIP_CHECKED = join(ROOT, "tests", "skip-checked.ts");
+// Vitest names test and setup files the way Vite names modules: absolute, with `/` separators.
+const SKIP_CHECKED = normalizePath(join(ROOT, "tests", "skip-checked.ts"));
 
-const CORPUS_TEST = join(ROOT, "tests", "optimizer", "corpus.test.ts");
+const CORPUS_TEST = normalizePath(join(ROOT, "tests", "optimizer", "corpus.test.ts"));
 
-const VITE_SMOKE_TEST = join(ROOT, "tests", "optimizer", "vite-smoke.test.ts");
+const VITE_SMOKE_TEST = normalizePath(join(ROOT, "tests", "optimizer", "vite-smoke.test.ts"));
 
 const INLINE_EACH_MODULE = join(ROOT, "tests", "unit", "inline-each.ts");
 
@@ -49,7 +51,7 @@ const INLINE_EACH_MODULE = join(ROOT, "tests", "unit", "inline-each.ts");
 // runs only the tests of the runtime it rewrites.
 const RUNTIME_UNIT_TESTS = globSync("tests/unit/**/*.test.ts", { cwd: ROOT })
   .filter((file) => !/^tests[\\/]unit[\\/](optimizer|plugin)[\\/]/u.test(file))
-  .map((file) => join(ROOT, file))
+  .map((file) => normalizePath(join(ROOT, file)))
   .toSorted();
 
 const SHARED_OPTIONS = {

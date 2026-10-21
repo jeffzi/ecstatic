@@ -57,6 +57,8 @@ export async function startPlugin(root: string, plugin: Plugin): Promise<Host> {
   const logs: unknown[] = [];
   const context = {
     meta: { watchMode: false },
+    // A build's environment, which every hook of a Vite plugin sees as `this.environment`.
+    environment: { mode: "build" },
     warn: (warning: unknown): void => {
       warnings.push(warningText(warning));
       logs.push(warning);

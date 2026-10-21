@@ -5,7 +5,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createRewriter, type Rewriter } from "../../src/plugin/optimizer/rewrite.js";
 import { openSession, type ProjectView, type Session } from "../../src/plugin/optimizer/session.js";
-import { SPAWN_TIMEOUT_MS } from "../unit/optimizer/project.js";
+import {
+  closeProject,
+  openProject,
+  projectPath,
+  runtimeProject,
+  SPAWN_TIMEOUT_MS,
+} from "../unit/optimizer/project.js";
 import { NO_GUARDS, runtimeDebug, unstrippedProblems } from "./unstripped.js";
 
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -34,13 +40,13 @@ const TRANSFORMED_HELPERS = [
   "tests/unit/optimizer/project.ts",
 ];
 
-/** A served module whose `each` calls compile to inlined loops. */
-const MAIN_MODULE = "tests/optimizer/unstripped-main.ts";
+/** A module whose `each` calls compile to inlined loops, in a project holding a runtime copy. */
+const MAIN_MODULE = "app/main.ts";
 
-/** A served module that binds `DEBUG` itself, so the emitter names its `DEBUG` copy apart. */
-const FLAGS_MODULE = "tests/optimizer/unstripped-flags.ts";
+/** A module that binds `DEBUG` itself, so the emitter names its `DEBUG` copy apart. */
+const FLAGS_MODULE = "app/flags.ts";
 
-const INLINED_SOURCE = `import { archetype, component, each, type Storage } from "../../src/ecstatic/index.js";
+const INLINED_SOURCE = `import { archetype, component, each, type Storage } from "../src/ecstatic/index.js";
 
 const Position = component("Position", { x: 0, y: 0 });
 const Mover = archetype([Position]);
@@ -133,9 +139,9 @@ async function checkerProblems(outputs: Readonly<Record<string, string>>): Promi
   return unstrippedProblems(await parsed(outputs), checkerRuntime);
 }
 
-/** The text the optimizer rewrites `file` to in `view`, failing when it leaves the module unchanged. */
-async function rewrittenText(view: ProjectView, file: string): Promise<string> {
-  const { output } = await rewriter.rewrite(view, file);
+/** The text `by` rewrites `file` to in `view`, failing when it leaves the module unchanged. */
+async function rewrittenText(by: Rewriter, view: ProjectView, file: string): Promise<string> {
+  const { output } = await by.rewrite(view, file);
   if (output === undefined) throw new Error(`${file} was left unchanged by the optimizer`);
   return output.text;
 }
@@ -176,15 +182,23 @@ describe("unstrippedProblems", () => {
     let emitted: { main: string; flags: string };
 
     beforeAll(async () => {
-      const view = await session.update({
-        [repoFile(MAIN_MODULE)]: INLINED_SOURCE,
-        [repoFile(FLAGS_MODULE)]: `${INLINED_SOURCE}export const DEBUG = false;\n`,
-      });
-      const [main, flags] = await Promise.all([
-        rewrittenText(view, repoFile(MAIN_MODULE)),
-        rewrittenText(view, repoFile(FLAGS_MODULE)),
-      ]);
-      emitted = { main, flags };
+      // The modules sit on disk: a session serves text in place of a file's, and a file the disk
+      // lacks joins the program on some platforms only.
+      const project = await openProject(
+        runtimeProject({
+          [MAIN_MODULE]: INLINED_SOURCE,
+          [FLAGS_MODULE]: `${INLINED_SOURCE}export const DEBUG = false;\n`,
+        }),
+      );
+      try {
+        const projectRewriter = createRewriter(project.session);
+        const rewritten = async (rel: string): Promise<string> =>
+          await rewrittenText(projectRewriter, project.view, projectPath(project.root, rel));
+        const [main, flags] = await Promise.all([rewritten(MAIN_MODULE), rewritten(FLAGS_MODULE)]);
+        emitted = { main, flags };
+      } finally {
+        await closeProject(project.session);
+      }
     }, SPAWN_TIMEOUT_MS);
 
     it.each([
