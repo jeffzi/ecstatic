@@ -33,3 +33,16 @@ describe("pillar 10", () => {
     expect(pillar).toContain("build-time optimizer");
   });
 });
+
+describe("optimizer wording", () => {
+  it.each([
+    { doc: "docs/design/archetype.md", phrase: "build-time optimizer" },
+    { doc: "docs/design/archetype.md", phrase: "unoptimized" },
+    { doc: "docs/benchmarks/rationale.md", phrase: "build-time optimizer" },
+    { doc: "docs/benchmarks/specifications/reference.md", phrase: "build-time optimizer" },
+  ])("$doc says $phrase", ({ doc, phrase }) => {
+    const text = readFileSync(new URL(`../../${doc}`, import.meta.url), "utf8");
+
+    expect(text).toContain(phrase);
+  });
+});
