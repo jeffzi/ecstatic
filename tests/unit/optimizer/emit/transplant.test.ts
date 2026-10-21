@@ -421,6 +421,24 @@ describe("EmitFile", () => {
         ],
       },
       {
+        name: "an unlabeled break inside a switch ends the switch, not the row",
+        source: `${THREE_MOVERS}    const seen: string[] = [];
+    each(movers, (e) => {
+        switch (e.Position.x) {
+            case 2:
+                seen.push("two");
+                break;
+            default:
+                seen.push("other");
+        }
+        seen.push(e.Position.x + ":after");
+    });
+    return seen;
+}
+`,
+        expected: ["other", "3:after", "two", "2:after", "other", "1:after"],
+      },
+      {
         name: "reading an outer let in its temporal dead zone throws at the same point",
         source: `${THREE_MOVERS}    const seen: unknown[] = [];
     try {
