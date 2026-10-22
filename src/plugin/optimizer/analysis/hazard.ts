@@ -64,10 +64,23 @@ export interface HazardScope {
   readonly view: CheckerSymbol | undefined;
 }
 
+/** A `spawn` or `spawnMany` call accepted as hazard-free because it adds to another shape. */
+export interface AcceptedSpawn {
+  /** The call's storage argument. */
+  readonly target: Expression;
+  /** The shape-guard key of the shape the target's static type claims. */
+  readonly key: string;
+}
+
 /** The hazard points of a callback. */
 export interface Hazards {
   /** In source order, every node the callback evaluates that can run user code. */
   readonly points: readonly Node[];
+  /**
+   * In source order of their targets, the spawns accepted as hazard-free whose target holds no
+   * hazard point. The target's static type is all the acceptance rests on, so a cast can forge it.
+   */
+  readonly spawns: readonly AcceptedSpawn[];
   /** The declaration files spawn targets' shapes consulted, sorted and without duplicates. */
   readonly declarationFiles: readonly string[];
 }
@@ -83,14 +96,19 @@ export interface Hazards {
  *
  * @param scope - The call the callback belongs to.
  * @param fn - The callback.
- * @returns The hazard points and the declaration files resolving spawn targets consulted.
+ * @returns The hazard points, the accepted spawns, and the declaration files resolving spawn targets
+ *   consulted.
  * @throws When a consulted declaration's source file is no longer available.
  */
 export async function hazardPoints(scope: HazardScope, fn: InlineCallback): Promise<Hazards> {
   const walker = new HazardWalker(scope);
   const walked = [...fn.parameters.filter((param) => !isThisParameter(param)), fn.body];
-  const points = await Promise.all(walked.map(async (node) => await walker.walk(node)));
-  return { points: points.flat(), declarationFiles: [...walker.files].toSorted() };
+  const found = await Promise.all(walked.map(async (node) => await walker.walk(node)));
+  const points = found.flatMap((part) => part.points);
+  const spawns = found
+    .flatMap((part) => part.spawns)
+    .filter(({ target }) => !points.some((point) => contains(target, point)));
+  return { points, spawns, declarationFiles: [...walker.files].toSorted() };
 }
 
 /**
@@ -228,8 +246,19 @@ const SPAWNS: ReadonlySet<Op> = new Set<Op>(["spawn", "spawnMany"]);
 /** A node read as a view use, whose operands are not classified. */
 const VIEW_PART = "view-part";
 
+/** What a walk found under a node, each list in source order. */
+interface Found {
+  readonly points: readonly Node[];
+  readonly spawns: readonly AcceptedSpawn[];
+}
+
+/** A walk that found nothing. */
+const NOTHING: Found = { points: [], spawns: [] };
+
 class HazardWalker {
   readonly files = new Set<string>();
+  /** The spawns accepted as hazard-free, keyed by their call. */
+  readonly #spawns = new Map<Node, AcceptedSpawn>();
   readonly #scope: HazardScope;
   readonly #checker: Checker;
 
@@ -239,22 +268,28 @@ class HazardWalker {
   }
 
   /**
-   * The hazard points of a node and of the nodes it evaluates. A token (a literal, an identifier,
-   * a keyword, or punctuation) runs nothing. The children are walked alongside the node's own
-   * classification, so a file's queries are in flight together; a view part drops their result.
+   * The hazard points and accepted spawns of a node and of the nodes it evaluates. A token (a
+   * literal, an identifier, a keyword, or punctuation) runs nothing. The children are walked
+   * alongside the node's own classification, so a file's queries are in flight together and finish
+   * in no fixed order; a view part drops their result.
    *
    * @param node - The node to walk.
-   * @returns The hazard points in source order.
+   * @returns The hazard points and the accepted spawns, each in source order.
    * @throws When a consulted declaration's source file is no longer available.
    */
-  async walk(node: Node): Promise<Node[]> {
-    if (isTokenKind(node.kind)) return [];
-    const children: Promise<Node[]>[] = [];
+  async walk(node: Node): Promise<Found> {
+    if (isTokenKind(node.kind)) return NOTHING;
+    const children: Promise<Found>[] = [];
     forEachEvaluated(node, (child) => {
       children.push(this.walk(child));
     });
     const [own, nested] = await Promise.all([this.#classify(node), Promise.all(children)]);
-    return own === VIEW_PART ? [] : [...own, ...nested.flat()];
+    if (own === VIEW_PART) return NOTHING;
+    const spawn = this.#spawns.get(node);
+    return {
+      points: [...own, ...nested.flatMap((part) => part.points)],
+      spawns: [...(spawn === undefined ? [] : [spawn]), ...nested.flatMap((part) => part.spawns)],
+    };
   }
 
   /**
@@ -432,7 +467,8 @@ class HazardWalker {
    * Whether a call is on the allowlist: a method of the global `Math` whose arguments are all
    * primitive, or an ecstatic op that never replaces the iterated storage's arrays and whose object
    * arguments cannot run a getter at the depth it reads them. `spawn` and `spawnMany` qualify only
-   * into a storage whose shape key differs from every iterated one.
+   * into a storage whose shape key differs from every iterated one; such a spawn is recorded for
+   * {@link HazardWalker.walk} to report.
    *
    * @param call - The call to test.
    * @returns Whether the call runs no user code.
@@ -447,12 +483,31 @@ class HazardWalker {
     if (math) return await this.#primitiveArguments(call);
     const reads = recognized === undefined ? undefined : ARGUMENT_READS.get(recognized.op);
     if (recognized === undefined || reads === undefined) return false;
+    return await this.#safeOp(call, reads, SPAWNS.has(recognized.op));
+  }
+
+  /**
+   * Whether a call to an allowlisted ecstatic op runs no user code: no object argument can run a
+   * getter at the depth the op reads it, and a spawn adds to another shape. An accepted spawn is
+   * recorded for {@link HazardWalker.walk} to report.
+   *
+   * @param call - The op's call.
+   * @param reads - How the op reads its object arguments.
+   * @param isSpawn - Whether the op is `spawn` or `spawnMany`.
+   * @returns Whether the call runs no user code.
+   * @throws When a consulted declaration's source file is no longer available.
+   */
+  async #safeOp(call: CallExpression, reads: Reads, isSpawn: boolean): Promise<boolean> {
     const args = call.arguments;
-    const [elsewhere, safe] = await Promise.all([
-      SPAWNS.has(recognized.op) ? this.#spawnsElsewhere(args[0]) : true,
+    const [spawn, safe] = await Promise.all([
+      isSpawn ? this.#elsewhereSpawn(args[0]) : undefined,
       Promise.all(args.slice(reads.from).map(async (arg) => await this.#argumentSafe(reads, arg))),
     ]);
-    return elsewhere && safe.every(Boolean);
+    if (!safe.every(Boolean)) return false;
+    if (!isSpawn) return true;
+    if (spawn === undefined) return false;
+    this.#spawns.set(call, spawn);
+    return true;
   }
 
   /**
@@ -477,21 +532,25 @@ class HazardWalker {
   }
 
   /**
-   * Whether a spawn target resolves to a shape whose key differs from that of every storage the
+   * A spawn into a target that resolves to a shape whose key differs from that of every storage the
    * callback iterates. The declaration files its resolution consulted are recorded.
    *
    * @param storage - The spawn's storage argument.
-   * @returns Whether the spawn cannot grow an iterated storage.
+   * @returns The target with its shape key, or undefined when the spawn can grow an iterated
+   *   storage: the target is missing, its shape does not resolve, the call iterates no resolved
+   *   shape, or the key matches an iterated one.
    * @throws When a consulted declaration's source file is no longer available.
    */
-  async #spawnsElsewhere(storage: Expression | undefined): Promise<boolean> {
-    if (storage === undefined) return false;
+  async #elsewhereSpawn(storage: Expression | undefined): Promise<AcceptedSpawn | undefined> {
+    if (storage === undefined) return undefined;
     const { shape, declarationFiles } = await resolveStorageShape(this.#checker, storage);
     for (const file of declarationFiles) this.files.add(file);
     const { shapes } = this.#scope;
-    if (shape === undefined || shapes.length === 0) return false;
+    if (shape === undefined || shapes.length === 0) return undefined;
     const key = shapeKey(shape);
-    return shapes.every((iterated) => shapeKey(iterated) !== key);
+    return shapes.every((iterated) => shapeKey(iterated) !== key)
+      ? { target: storage, key }
+      : undefined;
   }
 
   async #readRuns(receiver: Expression, name: string): Promise<boolean> {
@@ -540,6 +599,17 @@ function isSafeNode(node: Node): boolean {
     return kind !== "using" && kind !== "await using";
   }
   return SAFE_KINDS.has(node.kind);
+}
+
+/**
+ * Whether `inner` lies within `outer`'s text.
+ *
+ * @param outer - The enclosing node.
+ * @param inner - The node to test.
+ * @returns Whether `inner`'s range is inside `outer`'s.
+ */
+function contains(outer: Node, inner: Node): boolean {
+  return inner.pos >= outer.pos && inner.end <= outer.end;
 }
 
 /**

@@ -106,6 +106,39 @@ function writeCycle(root: string, dir: string, entry: string): string {
   return `../${dir}/entry.ts`;
 }
 
+/**
+ * The entry module of a cycle whose `total` runs `call`, a spawn into a Statue storage, in an inlined
+ * loop over a Mover storage of two rows, and sums their Position.x with the Statue rows.
+ */
+function cycleSpawnSource(call: string): string {
+  return `import { createWorld, each, register, spawn, spawnMany } from "../src/ecstatic/index.js";
+import { Mover, Statue } from "../app/schema.js";
+import { early } from "./partner.js";
+
+export function total(): number {
+    const movers = register(createWorld(), Mover);
+    const statues = register(createWorld(), Statue);
+    spawn(movers, { Position: { x: 2, y: 0 }, Velocity: { dx: 0, dy: 0 } });
+    spawn(movers, { Position: { x: 3, y: 0 }, Velocity: { dx: 0, dy: 0 } });
+    let sum = 0;
+    each(movers, (e) => {
+        ${call};
+        sum += e.Position.x;
+    });
+    return sum + statues.n;
+}
+
+export function scenario(): unknown {
+    return early;
+}
+`;
+}
+
+/** The module path, relative to `app/`, of `planned`'s case file as written, which runs on the runtime. */
+function runtimeModule(planned: { readonly rel: string }): string {
+  return `./${planned.rel.slice("app/".length, -".ts".length)}.js`;
+}
+
 /** Two `each` calls over Mover storages and one over a Statue storage, in a strict-mode file. */
 const PREAMBLE_SOURCE = `"use strict";
 import { createWorld, each, register } from "../src/ecstatic/index.js";
@@ -450,6 +483,104 @@ describe("EmitFile", () => {
           expect({ checked, stripped }).toStrictEqual({
             checked: { runtime: 5, rewritten: 5 },
             stripped: { runtime: 5, rewritten: 5 },
+          });
+        },
+        RUN_TIMEOUT_MS,
+      );
+
+      it.each([
+        { op: "spawn", call: "spawn(statues)", expected: 7 },
+        { op: "spawnMany", call: "spawnMany(statues, 2)", expected: 9 },
+      ])(
+        "runs a loop whose $op into another storage is guarded as the runtime call does, with checks on and stripped",
+        async ({ op, call, expected }) => {
+          const source = cycleSpawnSource(call);
+          const planned = await project.planned(source);
+          const { text } = await project.emit(planned);
+          const modules = {
+            runtime: writeCycle(project.root, `cycle-${op}-runtime`, source),
+            rewritten: writeCycle(project.root, `cycle-${op}-rewritten`, text),
+          };
+
+          const checked = await project.run(modules);
+          const stripped = await project.run(modules, true);
+
+          expect({
+            mode: rewriteAt(planned, 0).mode,
+            spawnGuarded: /assertShape\(target(?:_\d+)?, /u.test(text),
+            checked,
+            stripped,
+          }).toStrictEqual({
+            mode: "hoisted",
+            spawnGuarded: true,
+            checked: { runtime: expected, rewritten: expected },
+            stripped: { runtime: expected, rewritten: expected },
+          });
+        },
+        RUN_TIMEOUT_MS,
+      );
+    });
+
+    describe("when a loop compiled realloc-safe spawns through a cast that lies about the iterated storage", () => {
+      /** A scenario whose loop over two Mover rows runs `body`, beside `helper`, then writes each row. */
+      const lyingSource = (
+        helper: string,
+        body: string,
+      ): string => `export function scenario(): unknown {
+    const movers = register(createWorld(), Mover);
+    const lie = movers as unknown as Storage<typeof Statue>;
+    ${helper}
+    const ids = [
+        spawn(movers, { Position: { x: 1, y: 0 }, Velocity: { dx: 0, dy: 0 } }),
+        spawn(movers, { Position: { x: 2, y: 0 }, Velocity: { dx: 0, dy: 0 } }),
+    ];
+    each(movers, (e) => {
+        ${body}
+        e.Position.x += 100;
+    });
+    return { xs: ids.map((id) => get(movers, id, Position.x)), rows: movers.n };
+}
+`;
+      const TICK = "let ticks = 0;\n    const tick = (): void => { ticks += 1; };";
+      const PICK = "const pick = (): typeof lie => lie;";
+
+      it.each([
+        {
+          name: "a spawn beside another hazard point",
+          helper: TICK,
+          body: "tick(); spawn(lie);",
+          rows: 4,
+        },
+        {
+          name: "a spawnMany beside another hazard point",
+          helper: TICK,
+          body: "tick(); spawnMany(lie, 2);",
+          rows: 6,
+        },
+        { name: "a spawn whose target is a call", helper: PICK, body: "spawn(pick());", rows: 4 },
+        {
+          name: "a spawnMany whose target is a call",
+          helper: PICK,
+          body: "spawnMany(pick(), 2);",
+          rows: 6,
+        },
+      ])(
+        "compiles $name realloc-safe, unguarded, and returns what the runtime returns",
+        async ({ helper, body, rows }) => {
+          const planned = await project.planned(CASE_PRELUDE + lyingSource(helper, body));
+          const modules = {
+            runtime: runtimeModule(planned),
+            rewritten: await project.emitModule(planned, "planned"),
+          };
+          const expected = { xs: [101, 102], rows };
+
+          const checked = await project.run(modules);
+          const stripped = await project.run(modules, true);
+
+          expect({ mode: rewriteAt(planned, 0).mode, checked, stripped }).toStrictEqual({
+            mode: "realloc-safe",
+            checked: { runtime: expected, rewritten: expected },
+            stripped: { runtime: expected, rewritten: expected },
           });
         },
         RUN_TIMEOUT_MS,

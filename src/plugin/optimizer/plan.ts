@@ -14,6 +14,7 @@ import {
   type Reason,
   type Return,
   type Site,
+  type SpawnTarget,
   type ViewEscape,
 } from "./facts.js";
 
@@ -60,6 +61,13 @@ export interface EachInlining {
    * binds afresh, as each call of the callback does.
    */
   readonly varToLet: readonly NodeID[];
+  /**
+   * The spawn targets in the body that claim a shape other than the iterated one, each guarded
+   * against its claimed shape where the spawn runs: a target that is the iterated storage under a
+   * lying cast would grow it, replacing the columns a `hoisted` loop holds. Empty in
+   * `realloc-safe` mode, whose loop reads every array afresh after a spawn.
+   */
+  readonly spawnTargets: readonly SpawnTarget[];
   readonly pos: Position;
   readonly call: NodeID;
   readonly mode: Mode;
@@ -146,13 +154,15 @@ function eachInlining(site: Site, callback: Callback): EachInlining {
   if (shape === undefined) {
     throw new Error(`eligible each site has ${site.shapes.length} shapes, want 1`);
   }
+  const hoisted = callback.hazards.length === 0;
   return {
     call: site.call,
     pos: site.pos,
     shape,
-    mode: callback.hazards.length > 0 ? "realloc-safe" : "hoisted",
+    mode: hoisted ? "hoisted" : "realloc-safe",
     continues: callback.returns,
     varToLet: callback.varDecls,
+    spawnTargets: hoisted ? callback.spawnTargets : [],
   };
 }
 

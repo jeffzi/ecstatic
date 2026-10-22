@@ -221,6 +221,12 @@ export interface Callback {
    * unable to run user code that grows a storage.
    */
   readonly hazards: readonly NodeID[];
+  /**
+   * In source order, the `spawn` and `spawnMany` calls the callback evaluates that the hazard
+   * analysis accepted as hazard-free because their target's static type claims a shape other than
+   * every iterated one. Only that type backs the acceptance, so a cast can forge it.
+   */
+  readonly spawnTargets: readonly SpawnTarget[];
   /** Declared parameters; a TypeScript `this` parameter is a type annotation and is not counted. */
   readonly params: number;
   readonly firstParam: ParamForm;
@@ -350,6 +356,14 @@ interface DirectEscape extends EscapeBase {
 
 /** One reference to the view, or to an alias of one of its slots, that does not lower. */
 export type ViewEscape = NestedLoopEscape | DirectEscape;
+
+/** A spawn accepted as adding to another shape than every iterated one. */
+export interface SpawnTarget {
+  /** The spawn's storage argument. */
+  readonly node: NodeID;
+  /** The {@link shapeKey} of the shape the target's static type claims. */
+  readonly key: string;
+}
 
 export interface Return {
   readonly node: NodeID;

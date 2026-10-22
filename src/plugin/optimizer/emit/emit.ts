@@ -55,7 +55,9 @@ import { type InlineCallback, isInlineCallback } from "../syntax.js";
 import { inCatalogOrder, type Rule } from "./catalog.js";
 import { loadDebug } from "./debug.js";
 import {
+  assignTo,
   binary,
+  commaList,
   constStatement,
   declaration,
   letStatement,
@@ -224,6 +226,14 @@ interface LoopParts {
   readonly guard: GuardParts;
 }
 
+/** What rewrites the nodes of a loop's row body. */
+interface RowRewrites {
+  readonly lowering: Lowering;
+  readonly transplant: Transplant;
+  /** The shape key each spawn target the loop guards claims, by the target's node. */
+  readonly spawnTargets: ReadonlyMap<Node, string>;
+}
+
 /** Builds the block that replaces one `each` call. */
 class Loop {
   readonly #table: NodeTable;
@@ -248,8 +258,8 @@ class Loop {
    * @param call - The inlined call.
    * @param uses - The view uses of its callback.
    * @returns The block.
-   * @throws Error when the call has no storage or no inline callback, or a use or return is
-   *   not in the node table or has no lowering.
+   * @throws Error when the call has no storage or no inline callback, or a use, return, or spawn
+   *   target is not in the node table or has no lowering.
    */
   build(call: CallExpression, uses: readonly ViewUse[]): Block {
     const [storageArgument] = call.arguments;
@@ -280,7 +290,11 @@ class Loop {
       applied: this.#applied,
     });
     this.#noteCallback(callback);
-    const body = this.#rowBody(callback, lowering, transplant);
+    const body = this.#rowBody(callback, {
+      lowering,
+      transplant,
+      spawnTargets: this.#spawnTargets(),
+    });
     const rowLoop = createForStatement(
       createVariableDeclarationList(
         [declaration(i, binary(createIdentifier(n), SyntaxKind.MinusToken, numeric("1")))],
@@ -297,7 +311,7 @@ class Loop {
     return createBlock(
       [
         constStatement([declaration(storage, storageArgument)]),
-        this.#shapeGuard(storage),
+        createExpressionStatement(this.#shapeGuard(createIdentifier(storage), this.#guard.key)),
         constStatement([declaration(n, member(createIdentifier(storage), "n"))]),
         createIfStatement(
           binary(createIdentifier(n), SyntaxKind.GreaterThanToken, numeric("0")),
@@ -309,25 +323,61 @@ class Loop {
   }
 
   /**
-   * The shape guard, run once per call, before any row. Its gate is a parenthesized copy of the
-   * runtime's `DEBUG` initializer, which reads no binding of the file, so the guard runs even
-   * before the module's body has.
+   * A shape guard: the loop's runs once per call, before any row, and a spawn target's each time
+   * the spawn is reached. Its gate is a parenthesized copy of the runtime's `DEBUG` initializer,
+   * which reads no binding of the file, so the guard runs even before the module's body has.
    *
-   * @param storage - The name of the local holding the storage.
-   * @returns `(<DEBUG initializer>) && <namespace>.assertShape(storage, "<shape key>")`, through
-   *   the file's namespace import.
+   * @param storage - The storage checked, an expression without side effects.
+   * @param key - The shape key the storage must match.
+   * @returns `(<DEBUG initializer>) && <namespace>.assertShape(storage, "<key>")`, through the
+   *   file's namespace import.
    */
-  #shapeGuard(storage: string): Statement {
-    const { namespace, debug, key } = this.#guard;
+  #shapeGuard(storage: Expression, key: string): Expression {
+    const { namespace, debug } = this.#guard;
     const assertion = createCallExpression(
       member(createIdentifier(namespace), "assertShape"),
       undefined,
       undefined,
-      [createIdentifier(storage), string(key)],
+      [storage, string(key)],
       NodeFlags.None,
     );
     const gate = parenthesized(getSynthesizedDeepClone(debug));
-    return createExpressionStatement(binary(gate, SyntaxKind.AmpersandAmpersandToken, assertion));
+    return binary(gate, SyntaxKind.AmpersandAmpersandToken, assertion);
+  }
+
+  /**
+   * A spawn target checked against the shape its type claims before the spawn runs. A hoisted loop
+   * holds the iterated storage's arrays across rows, so a target that is that storage under a cast
+   * would grow it and leave the loop writing to replaced arrays. The target is evaluated once, in
+   * place, into a temp, so stripping the guard under `NDEBUG` leaves its evaluation as written.
+   *
+   * @param target - The lowered target.
+   * @param key - The shape key the target's type claims.
+   * @param lowering - The loop's lowering, which declares the temp.
+   * @returns `(<temp> = target, <guard of temp>, <temp>)`.
+   */
+  #guardedSpawnTarget(target: Expression, key: string, lowering: Lowering): Expression {
+    const held = lowering.temp("target");
+    return commaList(
+      assignTo(createIdentifier(held), target),
+      this.#shapeGuard(createIdentifier(held), key),
+      createIdentifier(held),
+    );
+  }
+
+  /**
+   * The spawn targets the loop guards, by node.
+   *
+   * @returns The shape key each target's type claims, keyed by the target's node.
+   * @throws Error when a target is not in the node table or is no expression.
+   */
+  #spawnTargets(): ReadonlyMap<Node, string> {
+    return new Map(
+      this.#inlining.spawnTargets.map(({ node, key }) => [
+        tableNode(this.#table, node, "spawn target", isExpression),
+        key,
+      ]),
+    );
   }
 
   /**
@@ -348,18 +398,20 @@ class Loop {
    * The body of `callback`, run once per row.
    *
    * @param callback - The inlined call's callback.
-   * @param lowering - The loop's lowerings of the callback's view uses.
-   * @param transplant - The loop's rewrite of the callback's returns, `var` declarations, and
-   *   clashing labels.
-   * @returns The body's statements, with every view use lowered and its own returns, `var`
-   *   declarations, and clashing labels transplanted, after the `let` that binds its `var` names
+   * @param rewrites - The loop's lowerings of the callback's view uses; its rewrite of the
+   *   callback's returns, `var` declarations, and clashing labels; and the shape key each spawn
+   *   target to guard claims, by node.
+   * @returns The body's statements, with every view use lowered, every spawn target guarded, and
+   *   its own returns, `var` declarations, and clashing labels transplanted, after the `let` that
+   *   binds its `var` names
    *   afresh. A parameter pattern binds with `let` ahead of the body, which then runs in a block of
    *   its own, so the bindings stay assignable as parameters are, and their defaults see the
    *   enclosing scope but not the names the body declares.
    * @throws Error when a use has no lowering.
    */
-  #rowBody(callback: InlineCallback, lowering: Lowering, transplant: Transplant): Statement[] {
-    const visit: Visit = (node) => {
+  #rowBody(callback: InlineCallback, rewrites: RowRewrites): Statement[] {
+    const { lowering, transplant, spawnTargets } = rewrites;
+    const rewrite = (node: Node): Node => {
       transplant.noteBodyRule(node, callback);
       const use = lowering.useOf(node);
       if (use !== undefined) return lowering.lower(node, use, visit);
@@ -367,6 +419,11 @@ class Loop {
         ? lowering.declarationList(node, visit)
         : undefined;
       return list ?? transplant.visit(node, visit) ?? visitChildren(node, visit);
+    };
+    const visit: Visit = (node) => {
+      const key = spawnTargets.get(node);
+      if (key === undefined) return rewrite(node);
+      return this.#guardedSpawnTarget(visitNode(node, rewrite, isExpression), key, lowering);
     };
     const [parameter] = callback.parameters;
     const parameters =

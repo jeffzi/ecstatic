@@ -31,8 +31,8 @@ Package manager is **npm** (`package-lock.json`).
 - `npm run build` — compile the runtime (`src/ecstatic/`) to `dist/` with `tsconfig.build.json`,
   then the plugin (`src/plugin/`) to `dist/plugin/` with `tsconfig.build-plugin.json`
 - `npm test` — `vitest run --coverage` over the `types`, `unit`, `unit-optimized`, `unit-ndebug`,
-  `integration`, and `integration-ndebug` projects; coverage thresholds fail the run, and untested `src/`
-  files count against them
+  `integration`, and `integration-ndebug` projects; coverage thresholds fail the run, and untested
+  `src/` files count against them
 - `npx vitest run --project integration -u` — regenerate the fixture golden files after an intended
   change to the optimizer's output
 - `npm run test:types` — type-only tests (`tests/types/*.test-d.ts`)
@@ -53,6 +53,12 @@ Package manager is **npm** (`package-lock.json`).
 - `npm run check:security` — surface security candidates (`fallow security`). Candidates need
   verification; they are not confirmed vulnerabilities. Not part of `check`.
 - `npm run check:package` — publish hygiene alone (`publint` + `@arethetypeswrong/cli`).
+- `npm run check:mutation` — mutation-test the optimizer's hazard analysis
+  (`src/plugin/optimizer/analysis/hazard.ts`, the only file it mutates) with StrykerJS against every
+  test, in any project, whose imports reach that file; prints the score and every surviving mutant,
+  and exits non-zero when the score falls below the `break` threshold in `stryker.config.ts`. Slow:
+  each mutant reruns tests that start the TypeScript compiler. Not part of `check`, `npm test`, the
+  hooks, or CI.
 
 ## Git hygiene
 

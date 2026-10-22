@@ -117,6 +117,43 @@ const SPAWN_ELSEWHERE: HazardFreeCase = {
 });`,
 };
 
+/** A module whose first `each` callback spawns into other shapes, the target of each accepted spawn at the first occurrence of its mark. */
+interface AcceptedSpawnCase extends HazardFreeCase {
+  readonly targets: readonly string[];
+}
+
+const ACCEPTED_SPAWN_CASES: readonly AcceptedSpawnCase[] = [
+  {
+    name: "a spawn after a hazard point outside its target",
+    source: `each(enemies, () => {
+	make();
+	spawn(ships);
+});`,
+    targets: ["ships);"],
+  },
+  {
+    name: "a spawn before a hazard point outside its target",
+    source: `each(enemies, () => {
+	spawn(ships);
+	make();
+});`,
+    targets: ["ships);"],
+  },
+  {
+    name: "two spawns into storages of two other shapes",
+    source: `import { Archetype } from "../../src/ecstatic/index.js";
+class Frigate extends Archetype([Stunned], [Shield]) {}
+const Beacon = archetype([Shield]);
+const frigates = register(createWorld(), Frigate);
+const beacons = register(createWorld(), Beacon);
+each(enemies, () => {
+	spawn(frigates);
+	spawn(beacons);
+});`,
+    targets: ["frigates);", "beacons);"],
+  },
+];
+
 const HAZARD_FREE_CASES: readonly HazardFreeCase[] = [
   {
     name: "operators on primitive view fields and locals",
@@ -394,6 +431,14 @@ each(enemies, () => {
     ],
   },
   {
+    name: "array patterns with a rest element and a default",
+    source: `each(enemies, () => {
+	const [head, ...rest] = visited;
+	const [last = 0] = visited;
+});`,
+    marks: ["[head, ...rest]", "[last = 0]"],
+  },
+  {
     name: "accessors and object operands",
     source: `each(enemies, () => {
 	total = box.size;
@@ -463,6 +508,13 @@ each(enemies, () => {
 	using held = null;
 });`,
     marks: ["@dec", "using held"],
+  },
+  {
+    name: "an await using declaration",
+    source: `each(enemies, async () => {
+	await using held = null;
+});`,
+    marks: ["await using held"],
   },
   {
     name: "class evaluation code",
@@ -564,7 +616,11 @@ each(enemies, (e) => {
   },
 ];
 
-const CASES: readonly HazardFreeCase[] = [...HAZARD_FREE_CASES, ...HAZARD_CASES];
+const CASES: readonly HazardFreeCase[] = [
+  ...HAZARD_FREE_CASES,
+  ...HAZARD_CASES,
+  ...ACCEPTED_SPAWN_CASES,
+];
 
 const CASE_STEM = "app/case/case";
 
@@ -650,6 +706,19 @@ describe("hazardPoints", () => {
       const { points } = await hazardPoints(scope, callback);
 
       expect(points.map((node) => node.getStart())).toStrictEqual(markOffsets(source, marks));
+    },
+  );
+
+  it.each(ACCEPTED_SPAWN_CASES)(
+    "accepts each spawn into another shape by its target, in source order, for $name",
+    async ({ source, targets }) => {
+      const { scope, callback } = await callbackIn(source);
+
+      const { spawns } = await hazardPoints(scope, callback);
+
+      expect(spawns.map(({ target }) => target.getStart())).toStrictEqual(
+        markOffsets(source, targets),
+      );
     },
   );
 

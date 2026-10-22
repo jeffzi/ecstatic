@@ -10,6 +10,7 @@ import type {
   Reason,
   Return,
   Site,
+  SpawnTarget,
   ViewEscape,
 } from "../../../src/plugin/optimizer/facts.js";
 import {
@@ -35,6 +36,7 @@ function callback(overrides: Partial<Callback> = {}): Callback {
     varDecls: [],
     paramRedeclarations: [],
     hazards: [],
+    spawnTargets: [],
     params: 0,
     firstParam: "none",
     async: false,
@@ -110,6 +112,7 @@ function inlinedAt(call: NodeID, offset: number): EachInlining {
     mode: "hoisted",
     continues: [],
     varToLet: [],
+    spawnTargets: [],
   };
 }
 
@@ -320,6 +323,10 @@ describe("plan", () => {
       { node: 12, nested: true },
     ];
     const vars: NodeID[] = [21, 22];
+    const spawns: SpawnTarget[] = [
+      { node: 31, key: "c5:Other{1:y=n}|" },
+      { node: 32, key: "c8:Position{1:z=n}|" },
+    ];
 
     it.each<{
       name: string;
@@ -327,6 +334,7 @@ describe("plan", () => {
       mode: Mode;
       continues: readonly Return[];
       varToLet: readonly NodeID[];
+      spawnTargets: readonly SpawnTarget[];
     }>([
       {
         name: "expression statement with a hazard-free body carrying returns and var declarations",
@@ -334,6 +342,7 @@ describe("plan", () => {
         mode: "hoisted",
         continues: returns,
         varToLet: vars,
+        spawnTargets: [],
       },
       {
         name: "arrow body",
@@ -341,6 +350,7 @@ describe("plan", () => {
         mode: "hoisted",
         continues: [],
         varToLet: [],
+        spawnTargets: [],
       },
       {
         name: "body with a hazard point",
@@ -348,6 +358,7 @@ describe("plan", () => {
         mode: "realloc-safe",
         continues: [],
         varToLet: [],
+        spawnTargets: [],
       },
       {
         name: "object-pattern parameter",
@@ -355,6 +366,7 @@ describe("plan", () => {
         mode: "hoisted",
         continues: [],
         varToLet: [],
+        spawnTargets: [],
       },
       {
         name: "no parameter",
@@ -362,17 +374,39 @@ describe("plan", () => {
         mode: "hoisted",
         continues: [],
         varToLet: [],
+        spawnTargets: [],
       },
-    ])("plans an inlining instead of a bail for $name", ({ site, mode, continues, varToLet }) => {
-      const sites = [{ ...placed(site, 3, 40), shapes: [MOVER_SHAPE] }];
+      {
+        name: "hazard-free body spawning into storages of other shapes, which keeps their targets",
+        site: statement("each", viewCallback({ spawnTargets: spawns })),
+        mode: "hoisted",
+        continues: [],
+        varToLet: [],
+        spawnTargets: spawns,
+      },
+      {
+        name: "body spawning into another shape beside a hazard point, which drops its targets",
+        site: statement("each", viewCallback({ spawnTargets: spawns, hazards: [7] })),
+        mode: "realloc-safe",
+        continues: [],
+        varToLet: [],
+        spawnTargets: [],
+      },
+    ])(
+      "plans an inlining instead of a bail for $name",
+      ({ site, mode, continues, varToLet, spawnTargets }) => {
+        const sites = [{ ...placed(site, 3, 40), shapes: [MOVER_SHAPE] }];
 
-      const result = plan(sites);
+        const result = plan(sites);
 
-      expect(result).toStrictEqual({
-        bails: [],
-        rewrites: [{ call: 3, pos: at(40), shape: MOVER_SHAPE, mode, continues, varToLet }],
-      });
-    });
+        expect(result).toStrictEqual({
+          bails: [],
+          rewrites: [
+            { call: 3, pos: at(40), shape: MOVER_SHAPE, mode, continues, varToLet, spawnTargets },
+          ],
+        });
+      },
+    );
   });
 
   describe("when NDEBUG is declared in scope at an eligible each call", () => {

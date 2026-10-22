@@ -125,6 +125,7 @@ export async function prepareCallback(
       .filter((decl) => boundNames(decl.name).some((name) => paramNames.has(name)))
       .map((decl) => table.register(decl)),
     hazards: hazards.points.map((node) => table.register(node)),
+    spawnTargets: hazards.spawns.map(({ target, key }) => ({ node: table.register(target), key })),
     params: binding.params,
     firstParam: binding.firstParam,
     async: (fn.modifierFlags & ModifierFlags.Async) !== 0,

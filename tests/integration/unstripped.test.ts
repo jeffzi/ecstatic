@@ -46,13 +46,23 @@ const MAIN_MODULE = "app/main.ts";
 /** A module that binds `DEBUG` itself, beside the guards the emitter writes. */
 const FLAGS_MODULE = "app/flags.ts";
 
-const INLINED_SOURCE = `import { archetype, component, each, type Storage } from "../src/ecstatic/index.js";
+/** A module whose inlined loops guard the iterated storage and, in `trail`, a spawn into another storage. */
+const INLINED_SOURCE = `import { archetype, component, each, spawn, type Storage } from "../src/ecstatic/index.js";
 
 const Position = component("Position", { x: 0, y: 0 });
+const Mark = component("Mark", { at: 0 });
 const Mover = archetype([Position]);
+const Trail = archetype([Mark]);
 
 export function advance(movers: Storage<typeof Mover>): void {
   each(movers, (e) => {
+    e.Position.x += 1;
+  });
+}
+
+export function trail(movers: Storage<typeof Mover>, marks: Storage<typeof Trail>): void {
+  each(movers, (e) => {
+    spawn(marks);
     e.Position.x += 1;
   });
 }
@@ -220,6 +230,10 @@ describe("unstrippedProblems", () => {
       const problems = unstrippedProblems(files, runtime);
 
       expect(problems).toStrictEqual([]);
+    });
+
+    it("emits a spawn-target guard for the scan to check", () => {
+      expect(emitted.main).toMatch(/assertShape\(target(?:_\d+)?, /u);
     });
 
     it.each([
