@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c10:LampSwitch{2:on=b}|c9:LampShade{4:open=b,4:tint=n}";
 // rewrite-applies: read-boolean-field
 // rewrite-applies: write-boolean-field
 // rewrite-applies: boolean-assignment-value
@@ -24,7 +22,7 @@ export function scenario(): unknown {
   // fallow-ignore-next-line complexity -- the callback packs the forms under test into one body
   {
       const storage_1 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:LampSwitch{2:on=b}|c9:LampShade{4:open=b,4:tint=n}");
       const n = storage_1.n;
       if (n > 0) {
           const LampSwitchRecord = storage_1.LampSwitch, LampShadeRecord = storage_1.LampShade;

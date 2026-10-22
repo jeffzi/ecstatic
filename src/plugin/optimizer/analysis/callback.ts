@@ -3,14 +3,13 @@ import {
   type Identifier,
   ModifierFlags,
   type Node,
+  NodeFlags,
   type ObjectBindingPattern,
   type ParameterDeclaration,
   type SourceFile,
   type VariableDeclaration,
 } from "typescript/ast";
 import {
-  isArrowFunction,
-  isBlock,
   isBindingElement,
   isCallExpression,
   isFunctionLikeDeclaration,
@@ -19,7 +18,15 @@ import {
   isVariableDeclaration,
 } from "typescript/ast/is";
 
-import { type Checker, type CheckerSymbol, isGlobalValue, resolveSymbol } from "../compiler.js";
+import {
+  type Checker,
+  type CheckerSymbol,
+  declarationsOf,
+  isGlobalValue,
+  nodeFileName,
+  resolveSymbol,
+  resolveValueAt,
+} from "../compiler.js";
 import {
   addDeclarationFile,
   type ArchShape,
@@ -75,27 +82,6 @@ export function inlineCallback(call: CallExpression, op: Op): InlineCallback | u
 }
 
 /**
- * Summarizes the inline callback of an iteration call, registering the nodes it reports in the
- * scope's table. View references are classified against the site's shapes, so those must be
- * resolved first. The declaration files that resolving spawn targets consults are added to the
- * site.
- *
- * @param scope - The callback's file, with the checker, root cache, and node table.
- * @param site - The site of the call passing `fn`.
- * @param fn - The callback.
- * @returns The callback's summary.
- * @throws When a consulted declaration's source file is no longer available.
- */
-export async function summarizeCallback(
-  scope: CallbackScope,
-  site: Site,
-  fn: InlineCallback,
-): Promise<Callback> {
-  const register = await prepareCallback(scope, site, fn);
-  return register();
-}
-
-/**
  * Runs every query a callback summary needs, leaving its nodes unregistered until the returned
  * function is called. Callbacks prepared concurrently resolve in no fixed order; registering them
  * afterwards in source order keeps a file's node IDs the same from one run to the next. The
@@ -107,6 +93,7 @@ export async function summarizeCallback(
  * @returns A function that registers the summary's nodes in the scope's table and gives the
  *   summary.
  * @throws When a consulted declaration's source file is no longer available.
+ * @throws When the compiler process has exited.
  */
 export async function prepareCallback(
   scope: CallbackScope,
@@ -115,13 +102,13 @@ export async function prepareCallback(
 ): Promise<() => Callback> {
   const { table } = scope;
   const binding = bindingOf(fn, scope.checker);
-  const [references, hazards, functionLocal] = await Promise.all([
+  const [references, hazards, functionLocal, ndebugBound] = await Promise.all([
     classifyReferences(scope, site.shapes, fn, binding),
     hazardsOf(scope, site.shapes, fn, binding.view),
     functionLocalUses(scope.checker, fn),
+    bindsNdebug(scope.checker, fn.parent),
   ]);
-  const evalCalls = directEvalCalls(fn);
-  for (const call of evalCalls) references.escape(call, "eval");
+  for (const call of directEvalCalls(fn)) references.escape(call, "eval");
   for (const declarationFile of hazards.declarationFiles) addDeclarationFile(site, declarationFile);
   const { pattern } = binding;
   const paramNames = new Set(pattern === undefined ? [] : boundNames(pattern));
@@ -137,15 +124,34 @@ export async function prepareCallback(
     paramRedeclarations: varDecls
       .filter((decl) => boundNames(decl.name).some((name) => paramNames.has(name)))
       .map((decl) => table.register(decl)),
-    directEval: evalCalls.map((call) => table.register(call)),
     hazards: hazards.points.map((node) => table.register(node)),
     params: binding.params,
     firstParam: binding.firstParam,
-    arrow: isArrowFunction(fn),
     async: (fn.modifierFlags & ModifierFlags.Async) !== 0,
     generator: fn.asteriskToken !== undefined,
-    exprBody: !isBlock(fn.body),
+    ndebugBound,
   });
+}
+
+/**
+ * Whether `NDEBUG` read at `call` resolves to a binding of the file rather than the global. Any
+ * non-ambient declaration of the file counts, whatever the symbol merges it with: an ambient one
+ * emits no binding, and one in another file is outside the module at run time, even when a script
+ * file's top-level declaration makes the compiler treat it as a global.
+ *
+ * @param checker - Checker of the program holding `call`.
+ * @param call - The iteration call, where the inlined loop's shape guard would read `NDEBUG`.
+ * @returns Whether a binding of the file captures `NDEBUG` at `call`.
+ * @throws When a declaration's source file is no longer available, or the compiler process has
+ *   exited.
+ */
+async function bindsNdebug(checker: Checker, call: Node): Promise<boolean> {
+  const file = nodeFileName(call);
+  const declarations = await declarationsOf(await resolveValueAt(checker, call, "NDEBUG"));
+  return declarations.some(
+    (declaration) =>
+      (declaration.flags & NodeFlags.Ambient) === 0 && nodeFileName(declaration) === file,
+  );
 }
 
 /** What a callback's parameters bind. */

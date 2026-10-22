@@ -2,6 +2,12 @@
  * The rewrite of one file: the inlined loop that replaces each rewritten `each` call, and the
  * preamble those loops share, printed as the source text with them spliced in.
  *
+ * The preamble holds nothing but the namespace import of the internal entry. A loop can run while
+ * its module is still loading, when a circular import calls it before the module's body has run;
+ * an import binding is live by then, a top-level `const` is not. So each shape guard carries its
+ * own copy of the runtime's `DEBUG` initializer and its shape key as a literal, and a bundler's
+ * `NDEBUG` define folds the copy in place.
+ *
  * It builds through the factory from the file's nodes, the node table, and the plan, and never
  * queries the checker.
  */
@@ -9,6 +15,7 @@
 import {
   type Block,
   type CallExpression,
+  type Expression,
   getSynthesizedDeepClone,
   type Node,
   type NodeArray,
@@ -46,7 +53,7 @@ import type { EachInlining } from "../plan.js";
 import type { Session } from "../session.js";
 import { type InlineCallback, isInlineCallback } from "../syntax.js";
 import { inCatalogOrder, type Rule } from "./catalog.js";
-import { type Debug, loadDebug } from "./debug.js";
+import { loadDebug } from "./debug.js";
 import {
   binary,
   constStatement,
@@ -54,6 +61,7 @@ import {
   letStatement,
   member,
   numeric,
+  parenthesized,
   string,
   type Visit,
 } from "./expressions.js";
@@ -68,17 +76,9 @@ const INTERNAL_MODULE = "ecstatic/internal";
 /** The base name of each local every loop adds: the storage, its row count, and the row index. */
 const LOOP_LOCALS = { storage: "storage", count: "n", row: "i" } as const;
 
-/** What a file with at least one rewrite declares once, ahead of its own statements. */
-interface Preamble {
-  readonly namespace: string;
-  readonly debug: string;
-  /** The name of the constant holding each shape key, in the order the loops first use them. */
-  readonly keys: ReadonlyMap<string, string>;
-}
-
 /** How a file is rewritten. */
 export interface EmitFileOptions {
-  /** The ecstatic package root whose `DEBUG` initializer the preamble copies. */
+  /** The ecstatic package root whose `DEBUG` initializer every shape guard copies. */
   readonly root: string;
   /**
    * Called with each inlining once its loop is built, before the file records the loop: the last
@@ -115,10 +115,11 @@ export interface EmitFile {
 /**
  * Starts the rewrite of `source`.
  *
- * @param session - The session that prints the file and parses the runtime's `DEBUG` gate.
+ * @param session - The session that prints the file and parses the runtime's `DEBUG` initializer.
  * @param source - The file to rewrite.
  * @param table - The node table that maps the file's node IDs.
- * @param options - How the file is rewritten, and the runtime root it copies `DEBUG` from.
+ * @param options - How the file is rewritten, and the runtime root its shape guards copy `DEBUG`
+ *   from.
  * @returns The file, ready to inline its calls.
  * @throws When the root's `src/ecstatic/debug.ts` cannot be read or declares no top-level
  *   `DEBUG` with an initializer, naming the file; or when the session is closed or its process
@@ -138,7 +139,7 @@ interface FileParts {
   readonly session: Session;
   readonly source: SourceFile;
   readonly table: NodeTable;
-  readonly debug: Debug;
+  readonly debug: Expression;
   readonly options: EmitFileOptions;
 }
 
@@ -148,7 +149,12 @@ class File implements EmitFile {
   readonly #replacements: Replacement[] = [];
   readonly #applied = new Set<Rule>();
   #names: NameGenerator;
-  #preamble: Preamble | undefined;
+  /**
+   * The name of the namespace import of the internal entry that a file with at least one rewrite
+   * declares once, ahead of its own statements. It must stay an import, whose binding is live
+   * before the module's body runs.
+   */
+  #namespace: string | undefined;
 
   constructor(parts: FileParts) {
     this.#parts = parts;
@@ -156,19 +162,19 @@ class File implements EmitFile {
   }
 
   inline(inlining: EachInlining, uses: readonly ViewUse[]): void {
-    const { table, options } = this.#parts;
+    const { table, debug, options } = this.#parts;
     const call = tableNode(table, inlining.call, "call", isCallExpression);
     const names = new NameGenerator(this.#names);
-    const { preamble, key } = nextPreamble(this.#preamble, names, shapeKey(inlining.shape));
+    const namespace = this.#namespace ?? names.unique("ecstatic_internal");
     const applied = new Set<Rule>();
-    const guard = { ...preamble, key };
+    const guard = { namespace, debug, key: shapeKey(inlining.shape) };
     const block = new Loop({ table, inlining, names, applied, guard }).build(call, uses);
     options.beforeCommit?.(inlining);
 
     const target = isExpressionStatement(call.parent) ? call.parent : call;
     this.#replacements.push({ target, node: block });
     this.#names = names;
-    this.#preamble = preamble;
+    this.#namespace = namespace;
     for (const rule of applied) this.#applied.add(rule);
   }
 
@@ -177,7 +183,8 @@ class File implements EmitFile {
   }
 
   async print(): Promise<PrintedFile> {
-    const preamble = this.#preamble === undefined ? [] : this.#preambleStatements(this.#preamble);
+    const namespace = this.#namespace;
+    const preamble = namespace === undefined ? [] : this.#preambleStatements(namespace);
     const { session, source } = this.#parts;
     return await printSpliced(session, source, preamble, this.#replacements);
   }
@@ -185,54 +192,26 @@ class File implements EmitFile {
   /**
    * The preamble's statements.
    *
-   * @param preamble - The names and shape keys the file's loops use.
-   * @returns The namespace import of the internal entry, the file's `DEBUG` copy, and one
-   *   constant per shape key.
+   * @param namespace - The name the file's loops reach the internal entry through.
+   * @returns The namespace import of the internal entry.
    */
-  #preambleStatements(preamble: Preamble): Statement[] {
+  #preambleStatements(namespace: string): Statement[] {
     const clause = createImportClause(
       undefined,
       undefined,
-      createNamespaceImport(createIdentifier(preamble.namespace)),
+      createNamespaceImport(createIdentifier(namespace)),
     );
-    const debug = getSynthesizedDeepClone(this.#parts.debug.initializer);
-    return [
-      createImportDeclaration(undefined, clause, string(INTERNAL_MODULE)),
-      constStatement([declaration(preamble.debug, debug)]),
-      ...[...preamble.keys].map(([key, name]) => constStatement([declaration(name, string(key))])),
-    ];
+    return [createImportDeclaration(undefined, clause, string(INTERNAL_MODULE))];
   }
 }
 
-/**
- * The preamble once a loop over a shape key is added: a copy, so a loop that fails to build leaves
- * the file's preamble as it was.
- *
- * @param current - The file's preamble, undefined before its first loop.
- * @param names - The generator the preamble's new names come from.
- * @param key - The loop's shape key.
- * @returns The preamble, and the name of the constant that holds `key`.
- */
-function nextPreamble(
-  current: Preamble | undefined,
-  names: NameGenerator,
-  key: string,
-): { preamble: Preamble; key: string } {
-  const base = current ?? {
-    namespace: names.unique("ecstatic_internal"),
-    debug: names.unique("DEBUG"),
-    keys: new Map<string, string>(),
-  };
-  const known = base.keys.get(key);
-  if (known !== undefined) return { preamble: base, key: known };
-  const name = names.unique("shapeKey");
-  return { preamble: { ...base, keys: new Map([...base.keys, [key, name]]) }, key: name };
-}
-
-/** The names a loop's shape guard reads: the preamble's, and the constant of its own shape key. */
-interface GuardNames {
+/** What a loop's shape guard is built from. */
+interface GuardParts {
+  /** The name of the preamble's namespace import of the internal entry. */
   readonly namespace: string;
-  readonly debug: string;
+  /** The runtime's `DEBUG` initializer, which the guard copies as its gate. */
+  readonly debug: Expression;
+  /** The literal the guard passes to `assertShape` as the shape the storage must match. */
   readonly key: string;
 }
 
@@ -242,7 +221,7 @@ interface LoopParts {
   readonly inlining: EachInlining;
   readonly names: NameGenerator;
   readonly applied: Set<Rule>;
-  readonly guard: GuardNames;
+  readonly guard: GuardParts;
 }
 
 /** Builds the block that replaces one `each` call. */
@@ -251,7 +230,7 @@ class Loop {
   readonly #inlining: EachInlining;
   readonly #names: NameGenerator;
   readonly #applied: Set<Rule>;
-  readonly #guard: GuardNames;
+  readonly #guard: GuardParts;
 
   constructor({ table, inlining, names, applied, guard }: LoopParts) {
     this.#table = table;
@@ -330,23 +309,25 @@ class Loop {
   }
 
   /**
-   * The shape guard, run once per call, before any row.
+   * The shape guard, run once per call, before any row. Its gate is a parenthesized copy of the
+   * runtime's `DEBUG` initializer, which reads no binding of the file, so the guard runs even
+   * before the module's body has.
    *
    * @param storage - The name of the local holding the storage.
-   * @returns `DEBUG && ecstatic_internal.assertShape(storage, shapeKey)`.
+   * @returns `(<DEBUG initializer>) && <namespace>.assertShape(storage, "<shape key>")`, through
+   *   the file's namespace import.
    */
   #shapeGuard(storage: string): Statement {
     const { namespace, debug, key } = this.#guard;
-    const guarded = createCallExpression(
+    const assertion = createCallExpression(
       member(createIdentifier(namespace), "assertShape"),
       undefined,
       undefined,
-      [createIdentifier(storage), createIdentifier(key)],
+      [createIdentifier(storage), string(key)],
       NodeFlags.None,
     );
-    return createExpressionStatement(
-      binary(createIdentifier(debug), SyntaxKind.AmpersandAmpersandToken, guarded),
-    );
+    const gate = parenthesized(getSynthesizedDeepClone(debug));
+    return createExpressionStatement(binary(gate, SyntaxKind.AmpersandAmpersandToken, assertion));
   }
 
   /**

@@ -24,18 +24,16 @@ import {
 import { type Checker, type CheckerSymbol, refersToArguments, resolveSymbol } from "../compiler.js";
 import {
   declarationKind,
+  type FunctionMember,
   type InlineCallback,
+  isFunctionMember,
   isThisParameter,
   isTypeOnly,
-  skipErased,
-} from "../syntax.js";
-import {
-  type FunctionMember,
-  forEachEvaluated,
-  isFunctionMember,
   runsWithClass,
+  skipErased,
   visitMemberHead,
-} from "./evaluated.js";
+} from "../syntax.js";
+import { forEachEvaluated } from "./evaluated.js";
 
 /** A `return` statement of a callback's own body. */
 export interface OwnReturn {

@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c10:SpringCoil{1:x=n}|";
 // rewrite-applies: callback-function
 // rewrite-applies: return-void
 import { archetype, component, createWorld, each, get, register, spawn } from "ecstatic";
@@ -18,7 +16,7 @@ export function scenario(): unknown {
 
   {
       const storage_1 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:SpringCoil{1:x=n}|");
       const n = storage_1.n;
       if (n > 0) {
           const SpringCoilRecord = storage_1.SpringCoil;

@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c11:SpindleKnot{1:x=n}|";
 // rewrite-applies: user-label-renamed
 import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
 
@@ -23,7 +21,7 @@ export function scenario(): unknown {
     // fallow-ignore-next-line complexity -- the callback packs the forms under test into one body
     {
         const storage_1 = storage;
-        DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c11:SpindleKnot{1:x=n}|");
         const n = storage_1.n;
         if (n > 0) {
             const SpindleKnotRecord = storage_1.SpindleKnot;

@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c8:PierRope{6:length=n}c9:PierCrate{6:weight=n}|";
 // rewrite-applies: mode-hoisted
 import { archetype, component, createWorld, each, query, register, spawn } from "ecstatic";
 
@@ -40,7 +38,7 @@ export function scenario(): unknown {
 
   {
       const storage = moorings;
-      DEBUG && ecstatic_internal.assertShape(storage, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage, "c8:PierRope{6:length=n}c9:PierCrate{6:weight=n}|");
       const n = storage.n;
       if (n > 0) {
           const PierRopeRecord = storage.PierRope;

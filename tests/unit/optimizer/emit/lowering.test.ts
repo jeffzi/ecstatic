@@ -1,3 +1,4 @@
+import { transformSync } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { closeProject, SPAWN_TIMEOUT_MS } from "../project.js";
@@ -5,6 +6,7 @@ import {
   CASE_PRELUDE,
   EmitProject,
   everyRun,
+  MODES,
   RUN_TIMEOUT_MS,
   type RunCase,
   THREE_MOVERS,
@@ -711,6 +713,61 @@ describe("EmitFile", () => {
 
       await expect(emitting).rejects.toThrow(/\bPosition\b.*\bslot operand\b/);
     });
+
+    it.each([
+      { name: "a field its component lacks", comp: "Position", field: "z" },
+      { name: "a component the shape lacks", comp: "Banana", field: "x" },
+    ])("throws naming the component and field when a use names $name", async ({ comp, field }) => {
+      const planned =
+        await project.planned(`${CASE_PRELUDE}${THREE_MOVERS}    const seen: number[] = [];
+    each(movers, (e) => {
+        seen.push(e.Position.x);
+    });
+    return seen;
+}
+`);
+
+      const emitting = project.emit(planned, {
+        inline: (file, inlining, uses) => {
+          file.inline(
+            inlining,
+            uses.map((use) => ({ ...use, comp, field })),
+          );
+        },
+      });
+
+      await expect(emitting).rejects.toThrow(`emit: the shape has no field ${comp}.${field}`);
+    });
+
+    it.each(
+      MODES.flatMap((mode) => [
+        { mode, name: "hit-points", key: '"hit-points"' },
+        { mode, name: "0", key: "0" },
+      ]),
+    )(
+      "emits a module that parses when a loop reads the field $name in $mode mode",
+      async ({ mode, key }) => {
+        const planned =
+          await project.planned(`import { archetype, component, createWorld, each, register } from "../src/ecstatic/index.js";
+
+const Odd = component("Odd", { ${key}: 1 });
+const Holder = archetype([Odd]);
+
+export function scenario(): unknown {
+    const storage = register(createWorld(), Holder);
+    const seen: number[] = [];
+    each(storage, ({ Odd: { ${key}: value } }) => {
+        seen.push(value);
+    });
+    return seen;
+}
+`);
+
+        const { text } = await project.emit(planned, { mode });
+
+        expect(() => transformSync(text, { loader: "ts", format: "esm" })).not.toThrow();
+      },
+    );
 
     it.each(GROWTH_CASES)(
       "leaves the columns the runtime leaves in realloc-safe mode: $name",

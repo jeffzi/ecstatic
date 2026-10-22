@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  CONVERGENT_FIXTURES,
   fixturePath,
   GOLDEN_FILE,
   INPUT_FILE,
   loadFixtureExport,
+  REWRITTEN_CONVERGENT_FIXTURES,
 } from "./fixture-corpus.js";
 
 /**
@@ -21,7 +21,7 @@ async function runScenario(file: string): Promise<unknown> {
 }
 
 describe("fixture traces", () => {
-  it.each(CONVERGENT_FIXTURES)(
+  it.each(REWRITTEN_CONVERGENT_FIXTURES)(
     "%s: the golden's trace equals the input's",
     async (fixture) => {
       const inputTrace = await runScenario(fixturePath(fixture, INPUT_FILE));

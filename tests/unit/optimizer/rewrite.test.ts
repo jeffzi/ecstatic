@@ -164,7 +164,8 @@ each(movers, async (e) => {
 `;
 
 /**
- * Binds, beside an inlined `each` call, every name a generated name of the loop could take: as
+ * Binds, beside an inlined `each` call, the names the loop generates or derives names from, plus
+ * `DEBUG` and `shapeKey`, which the guard's inline gate and literal key must not read: as
  * variables, an ambient declaration, an import alias, and parameters.
  */
 const NAMES_SOURCE = `import { archetype, component, each, type Storage } from "../src/ecstatic/index.js";
@@ -458,7 +459,7 @@ describe("createRewriter", () => {
         });
       });
 
-      it("lists the declaration files its sites consulted and the DEBUG copy's source", async () => {
+      it("lists the declaration files its sites consulted and the debug module its guards copy DEBUG from", async () => {
         const rewritten = await rewriteFile(MAIN_FILE);
 
         expect(rewritten.consulted).toStrictEqual(
@@ -592,7 +593,7 @@ describe("createRewriter", () => {
             {
               reason: "INTERNAL",
               pos: locate(path(rel), source, kept),
-              detail: `the call resolves to the ecstatic package root ${otherRoot}, not ${copiedRoot}, which the file's DEBUG copy comes from`,
+              detail: `the call resolves to the ecstatic package root ${otherRoot}, not ${copiedRoot}, which the file's shape guards copy DEBUG from`,
             },
           ]);
           expect(
@@ -613,7 +614,7 @@ describe("createRewriter", () => {
           {
             reason: "INTERNAL",
             pos: locate(path(NESTED_VENDOR_FILE), NESTED_VENDOR_SOURCE, FLAGS_CALL),
-            detail: `the call resolves to the ecstatic package root ${vendorRoot}, not ${root}, which the file's DEBUG copy comes from`,
+            detail: `the call resolves to the ecstatic package root ${vendorRoot}, not ${root}, which the file's shape guards copy DEBUG from`,
           },
         ]);
       });
@@ -766,7 +767,7 @@ describe("createRewriter", () => {
       );
     });
 
-    describe("when the DEBUG copy cannot be taken", () => {
+    describe("when DEBUG cannot be copied", () => {
       it.each([
         { name: "is missing", rel: BROKEN_FILE, runtimeRoot: BROKEN_ROOT },
         {
@@ -821,7 +822,6 @@ describe("createRewriter", () => {
       expect(generated.filter((name) => words(NAMES_SOURCE).has(name))).toStrictEqual([]);
       expect(generated).toStrictEqual(
         expect.arrayContaining([
-          "DEBUG_1",
           "PositionRecord_1",
           "VelocityRecord_1",
           "dxColumn",
@@ -832,7 +832,6 @@ describe("createRewriter", () => {
           "n_1",
           "record_1",
           "row_1",
-          "shapeKey_1",
           "storage_1",
           "xColumn_1",
         ]),

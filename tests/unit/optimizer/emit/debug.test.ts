@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { sourceFileName } from "../../../../src/plugin/optimizer/compiler.js";
 import { loadDebug } from "../../../../src/plugin/optimizer/emit/debug.js";
 import type { Session } from "../../../../src/plugin/optimizer/session.js";
 import {
@@ -46,8 +47,8 @@ describe("loadDebug", () => {
 
       const debug = await loadDebug(session, root);
 
-      expect(debug.path).toBe(projectPath(root, DEBUG_FILE));
-      expect(debug.initializer.getText()).toBe(initializer);
+      expect(sourceFileName(debug.getSourceFile())).toBe(projectPath(root, DEBUG_FILE));
+      expect(debug.getText()).toBe(initializer);
     });
 
     it("copies the initializer from the runtime's own debug module", async () => {
@@ -55,10 +56,10 @@ describe("loadDebug", () => {
 
       const debug = await loadDebug(session, root);
 
-      const declaration = debug.initializer.parent.getText();
-      expect(debug.path).toBe(projectPath(root, DEBUG_FILE));
+      const declaration = debug.parent.getText();
+      expect(sourceFileName(debug.getSourceFile())).toBe(projectPath(root, DEBUG_FILE));
       expect(declaration).toMatch(/^DEBUG\b/u);
-      expect(declaration.endsWith(`= ${debug.initializer.getText()}`)).toBe(true);
+      expect(declaration.endsWith(`= ${debug.getText()}`)).toBe(true);
     });
   });
 

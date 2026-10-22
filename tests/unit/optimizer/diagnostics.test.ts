@@ -67,6 +67,15 @@ function internalMessage(detail: string, suffix: string): string {
   );
 }
 
+/** The message of the NDEBUG_BOUND bail of an each call, with `suffix` after the runtime call. */
+function ndebugBoundMessage(suffix: string): string {
+  return (
+    "ecstatic: The each() call cannot be optimized (`NDEBUG` is declared in scope at the call). " +
+    `It compiles to the runtime call${suffix}. Rename the declaration; the optimized loop's debug ` +
+    "check reads the global `NDEBUG`."
+  );
+}
+
 describe("bailDiagnostics", () => {
   const shape = at("main.ts", 14, 3, 5);
   const storages = at("main.ts", 41, 5, 9);
@@ -178,6 +187,26 @@ describe("bailDiagnostics", () => {
           "ecstatic: main.ts could not be analyzed (internal error (`nil table`); please report " +
             "it). Its calls compile to the runtime calls.",
         ),
+      ]);
+    });
+  });
+
+  describe("when NDEBUG is declared in scope at the call", () => {
+    const bound = at("main.ts", 52, 6, 3);
+
+    it.each<{
+      mode: string;
+      strict: boolean;
+      category: BailDiagnostic["category"];
+      suffix: string;
+    }>([
+      { mode: "strict", strict: true, category: "error", suffix: " (strict mode)" },
+      { mode: "lenient", strict: false, category: "warning", suffix: "" },
+    ])("reports it as $category when $mode", ({ strict, category, suffix }) => {
+      const diagnostics = bailDiagnostics([bailAt("each", "NDEBUG_BOUND", bound)], strict);
+
+      expect(diagnostics).toStrictEqual([
+        diagnosticAt(bound, category, 99_921, ndebugBoundMessage(suffix)),
       ]);
     });
   });

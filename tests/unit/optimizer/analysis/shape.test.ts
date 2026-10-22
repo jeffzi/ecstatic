@@ -15,6 +15,7 @@ import {
   closeProject,
   openProject,
   projectPath,
+  RUNTIME_TSCONFIG,
   runtimeProject,
   SHARED_ARCHETYPE_FILES,
   SPAWN_TIMEOUT_MS,
@@ -427,13 +428,18 @@ function projectFile(rel: string): string {
   return projectPath(root, rel);
 }
 
-/** The storages argument of the `each` call in the case file holding `source`. */
-async function storagesIn(source: string): Promise<Expression> {
-  const file = await view.sourceFile(projectFile(`${CASE_STEM}${SOURCES.indexOf(source)}.ts`));
+/** The storages argument of the first `each` call in the file at `path` as `projectView` sees it. */
+async function eachStorages(projectView: ProjectView, path: string): Promise<Expression> {
+  const file = await projectView.sourceFile(path);
   const call = getTouchingPropertyName(file, file.text.indexOf("each(")).parent;
   const storages = isCallExpression(call) ? call.arguments[0] : undefined;
-  if (storages === undefined) throw new Error(`${source} holds no each call`);
+  if (storages === undefined) throw new Error(`${path} holds no each call`);
   return storages;
+}
+
+/** The storages argument of the `each` call in the case file holding `source`. */
+function storagesIn(source: string): Promise<Expression> {
+  return eachStorages(view, projectFile(`${CASE_STEM}${SOURCES.indexOf(source)}.ts`));
 }
 
 describe("resolveShapes", () => {
@@ -475,3 +481,141 @@ describe("resolveShapes", () => {
     },
   );
 });
+
+/** A case file whose `each` call walks a component mixing ref fields with plain-valued ones. */
+const REF_FIELDS_SOURCE = `import { archetype, component, each, ref, type Storage } from "../src/ecstatic/index.js";
+
+const Mixed = component("Mixed", {
+  count: 0,
+  on: true,
+  label: "",
+  id: ref<number>(),
+  flag: ref<boolean>(),
+  name: ref<string>(),
+});
+const Mixes = archetype([Mixed]);
+declare const s: Storage<typeof Mixes>;
+each(s, () => {});
+`;
+
+/**
+ * A declaration file declaring the component of {@link REF_FIELDS_SOURCE} as declaration emit
+ * writes it: each ref field's marker is gone, leaving its value type joined with `undefined`.
+ */
+const REF_FIELDS_DECLARATION = `import type { Component } from "../src/ecstatic/index.js";
+
+export declare const Mixed: Component<"Mixed", {
+  count: number;
+  on: boolean;
+  label: string;
+  id: number | undefined;
+  flag: boolean | undefined;
+  name: string | undefined;
+}>;
+`;
+
+/** A case file whose \`each\` call walks the component {@link REF_FIELDS_DECLARATION} declares. */
+const DECLARED_REF_FIELDS_SOURCE = `import { archetype, each, type Storage } from "../src/ecstatic/index.js";
+import { Mixed } from "./declared.js";
+
+const Mixes = archetype([Mixed]);
+declare const s: Storage<typeof Mixes>;
+each(s, () => {});
+`;
+
+/** A case file whose \`each\` call walks a component built from defaults typed by an annotation. */
+const ANNOTATED_REF_FIELDS_SOURCE = `import {
+  archetype,
+  component,
+  each,
+  ref,
+  type RefMarker,
+  type Storage,
+} from "../src/ecstatic/index.js";
+
+const defaults: {
+  count: number;
+  on: boolean;
+  label: string;
+  id: RefMarker<number>;
+  flag: RefMarker<boolean>;
+  name: RefMarker<string>;
+} = { count: 0, on: true, label: "", id: ref(), flag: ref(), name: ref() };
+const Mixed = component("Mixed", defaults);
+const Mixes = archetype([Mixed]);
+declare const s: Storage<typeof Mixes>;
+each(s, () => {});
+`;
+
+const REF_FIELDS_SHAPE: ArchShape = {
+  required: [
+    {
+      name: "Mixed",
+      fields: [
+        numberField("count"),
+        booleanField("on"),
+        plainField("label"),
+        plainField("id"),
+        plainField("flag"),
+        plainField("name"),
+      ],
+      relation: false,
+    },
+  ],
+  optional: [],
+};
+
+/** The runtime tsconfig with `strictNullChecks` set, and the options that require it following it. */
+function runtimeTsconfig(strictNullChecks: boolean): string {
+  const config: { compilerOptions: Record<string, unknown> } = JSON.parse(RUNTIME_TSCONFIG);
+  return JSON.stringify({
+    ...config,
+    compilerOptions: {
+      ...config.compilerOptions,
+      strictNullChecks,
+      exactOptionalPropertyTypes: strictNullChecks,
+    },
+  });
+}
+
+describe.each([{ strictNullChecks: true }, { strictNullChecks: false }])(
+  "resolveShapes with strictNullChecks $strictNullChecks",
+  ({ strictNullChecks }) => {
+    let refRoot = "";
+    let refSession: Session;
+    let refView: ProjectView;
+
+    beforeAll(async () => {
+      ({
+        root: refRoot,
+        session: refSession,
+        view: refView,
+      } = await openProject(
+        runtimeProject({
+          "tsconfig.json": runtimeTsconfig(strictNullChecks),
+          "app/refs.ts": REF_FIELDS_SOURCE,
+          "app/declared.d.ts": REF_FIELDS_DECLARATION,
+          "app/declared-refs.ts": DECLARED_REF_FIELDS_SOURCE,
+          "app/annotated-refs.ts": ANNOTATED_REF_FIELDS_SOURCE,
+        }),
+      ));
+    }, SPAWN_TIMEOUT_MS);
+
+    afterAll(() => refSession.close());
+
+    it.each([
+      { origin: "a ref marker", file: "app/refs.ts" },
+      { origin: "a declaration file's undefined-joined type", file: "app/declared-refs.ts" },
+      { origin: "an annotated defaults object", file: "app/annotated-refs.ts" },
+    ])("resolves ref fields declared through $origin as plain columns", async ({ file }) => {
+      const storages = await eachStorages(refView, projectPath(refRoot, file));
+
+      const resolved = await resolveShapes(refView.checker, storages);
+
+      expect({ shapes: resolved.shapes, reason: resolved.reason }).toStrictEqual({
+        shapes: [REF_FIELDS_SHAPE],
+        reason: undefined,
+      });
+    });
+  },
+);

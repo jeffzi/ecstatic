@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c9:VaultHold{1:x=n}|c9:VaultLock{2:hp=n,5:level=n,4:shut=b}";
 // rewrite-applies: destructure-optional-slot
 import { archetype, component, createWorld, each, register, spawn, u8 } from "ecstatic";
 
@@ -26,7 +24,7 @@ export function scenario(): unknown {
 
   {
       const storage_1 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:VaultHold{1:x=n}|c9:VaultLock{2:hp=n,5:level=n,4:shut=b}");
       const n = storage_1.n;
       if (n > 0) {
           const VaultLockRecord = storage_1.VaultLock;

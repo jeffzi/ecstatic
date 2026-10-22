@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c8:Position{1:x=n,1:y=n}c8:Velocity{2:dx=n,2:dy=n}|";
 import { Archetype, createWorld, each, get, register, spawn, type Storage } from "ecstatic";
 
 import { Position, Velocity } from "../../schema.js";
@@ -10,7 +8,7 @@ class Runner extends Archetype([Position, Velocity]) {}
 function advance(runners: Storage<Runner>, visited: number[]): void {
   {
       const storage = runners;
-      DEBUG && ecstatic_internal.assertShape(storage, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage, "c8:Position{1:x=n,1:y=n}c8:Velocity{2:dx=n,2:dy=n}|");
       const n = storage.n;
       if (n > 0) {
           const PositionRecord = storage.Position, VelocityRecord = storage.Velocity;

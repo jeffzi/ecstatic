@@ -593,6 +593,11 @@ describe("EmitFile", () => {
           source: `${SEEN_NUMBERS}${MOVER_EACH}    var x = e.Position.x;\n    seen.push(x);\n});\n`,
           expected: ["var-to-let"],
         },
+        ...["let x = e.Position.x;", "using held = null;"].map((declaration) => ({
+          name: `a body ${declaration.split(" ")[0]} declaration`,
+          source: `${SEEN_NUMBERS}${MOVER_EACH}    ${declaration}\n    seen.push(e.Position.x);\n});\n`,
+          expected: ["block-scoped-declaration"] satisfies Rule[],
+        })),
         {
           name: "a var only inside a function the body nests",
           source: `${SEEN_NUMBERS}${MOVER_EACH}    const x = e.Position.x;\n    seen.push((() => {\n        var y = x;\n        return y;\n    })());\n});\n`,
@@ -679,6 +684,22 @@ describe("EmitFile", () => {
           name: "a read of an outer let declared after the call, inside a nested function",
           source: deadZoneSource("seen.push(e.Position.x, () => later);", "let later = 1;"),
           absent: ["outer-let-dead-zone"],
+        },
+        {
+          name: "a read of an outer using declared after the call",
+          source: deadZoneSource("seen.push(e.Position.x, later);", "using later = null;"),
+          expected: ["outer-let-dead-zone"],
+        },
+        {
+          name: "a read of an outer await using declared after the call",
+          source: deadZoneSource(
+            "seen.push(e.Position.x, later);",
+            "await using later = null;",
+          ).replace(
+            "export function run(): unknown[]",
+            "export async function run(): Promise<unknown[]>",
+          ),
+          expected: ["outer-let-dead-zone"],
         },
         {
           name: "a read of an outer var declared after the call",

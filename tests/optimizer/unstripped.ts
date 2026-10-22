@@ -1,5 +1,6 @@
 /** Finds the shape guards in rewritten modules that can run while the runtime's `DEBUG` is false. */
 import {
+  type BinaryExpression,
   type BindingName,
   type ClassDeclaration,
   type ClassExpression,
@@ -52,18 +53,16 @@ const INTERNAL_ENTRY = "ecstatic/internal";
 /** The export of {@link INTERNAL_ENTRY} that a shape guard calls. */
 const SHAPE_GUARD = "assertShape";
 
-/** The names the emitter gives a file's `DEBUG` copy: `DEBUG`, or `DEBUG_<n>` when the file already binds `DEBUG`. */
-const DEBUG_COPY = /^DEBUG(?:_[1-9]\d*)?$/u;
-
 /** The problem reported when no module holds a shape guard, so that the check cannot pass vacuously. */
 export const NO_GUARDS =
   "no test module's output holds a shape guard, so the check has nothing to check";
 
-/** An identifier an `&&` expression requires to be true before its right operand runs. */
+/** An expression an `&&` expression requires to be true before its right operand runs. */
 interface Gate {
-  readonly name: string;
-  /** Whether a binding of a function, block, catch clause, class, or for statement declares the name there. */
-  readonly local: boolean;
+  /** The expression, inside any parentheses. */
+  readonly expression: Expression;
+  /** The identifiers the expression reads that the file binds, at its top level or in a scope around the guard. */
+  readonly bound: readonly string[];
 }
 
 /** One shape guard call and the gates around it, outermost first. */
@@ -84,13 +83,13 @@ interface GuardWalk {
   readonly found: Guard[];
 }
 
-/** The names one function, block, catch clause, class, or for statement binds, inside the scopes around it. */
+/** The names the file's top level, a function, block, catch clause, class, or for statement binds, inside the scopes around it. */
 interface Scope {
   readonly outer: Scope | undefined;
   readonly names: ReadonlySet<string>;
 }
 
-/** Whether `scope`, or a scope around it, binds `name`; the file's top level is no scope. */
+/** Whether `scope`, or a scope around it, binds `name`. */
 function binds(scope: Scope | undefined, name: string): boolean {
   for (let inner = scope; inner !== undefined; inner = inner.outer) {
     if (inner.names.has(name)) return true;
@@ -213,6 +212,29 @@ function internalBindings(statement: Statement): NamedImportBindings | undefined
   return clause.phaseModifier === SyntaxKind.TypeKeyword ? undefined : clause.namedBindings;
 }
 
+/** Adds to `names` every name the imports among `statements` bind, types included. */
+function importBindings(statements: readonly Statement[], names: Set<string>): void {
+  for (const statement of statements) {
+    if (!isImportDeclaration(statement)) continue;
+    const clause = statement.importClause;
+    if (clause === undefined) continue;
+    if (clause.name !== undefined) names.add(clause.name.text);
+    const bindings = clause.namedBindings;
+    if (bindings === undefined) continue;
+    if (isNamespaceImport(bindings)) names.add(bindings.name.text);
+    else for (const specifier of bindings.elements) names.add(specifier.name.text);
+  }
+}
+
+/** The scope of the top level of `file`: every name its statements and imports bind there. */
+function fileScope(file: SourceFile): Scope {
+  const names = new Set<string>();
+  lexicalBindings(file.statements, names);
+  hoistedVars(file, names);
+  importBindings(file.statements, names);
+  return { outer: undefined, names };
+}
+
 /** Every local name through which `file` can call the shape guard of {@link INTERNAL_ENTRY}. */
 function internalImports(file: SourceFile): GuardImports {
   const namespaces = new Set<string>();
@@ -237,30 +259,48 @@ function guardFunctionNames(imports: NamedImports, names: Set<string>): void {
   }
 }
 
-/**
- * The `DEBUG` copy a rewritten file carries: the `const` named `DEBUG` or `DEBUG_<n>` right after
- * the namespace import of {@link INTERNAL_ENTRY} that opens its preamble.
- *
- * @param file - The parsed module.
- * @returns The copy's name and initializer, or `undefined` when the file has no such copy right
- *   after the namespace import.
- */
-function debugCopyOf(file: SourceFile): { name: string; initializer: Expression } | undefined {
-  const statements = file.statements;
-  const namespaceImportAt = statements.findIndex((statement) => {
-    const bindings = internalBindings(statement);
-    return bindings !== undefined && isNamespaceImport(bindings);
-  });
-  const afterImport = namespaceImportAt < 0 ? undefined : statements[namespaceImportAt + 1];
-  const copy = afterImport === undefined ? undefined : soleConst(afterImport);
-  return copy !== undefined && DEBUG_COPY.test(copy.name) ? copy : undefined;
+/** `expression` inside any parentheses. */
+function unparenthesized(expression: Expression): Expression {
+  let inner = expression;
+  while (isParenthesizedExpression(inner)) inner = inner.expression;
+  return inner;
 }
 
 /** The text of `node`, inside any parentheses, when it is an identifier, and `""` otherwise. */
-function identifierName(node: Node): string {
-  let inner = node;
-  while (isParenthesizedExpression(inner)) inner = inner.expression;
+function identifierName(node: Expression): string {
+  const inner = unparenthesized(node);
   return isIdentifier(inner) ? inner.text : "";
+}
+
+/** Whether `node` is an `&&` expression. */
+function isAnd(node: Node): node is BinaryExpression {
+  return isBinaryExpression(node) && node.operatorToken.kind === SyntaxKind.AmpersandAmpersandToken;
+}
+
+/** The operands that must all be true for `expression` to be, inside any parentheses: those of an `&&` chain, or the expression itself. */
+function conjuncts(expression: Expression): Expression[] {
+  const inner = unparenthesized(expression);
+  return isAnd(inner) ? [...conjuncts(inner.left), ...conjuncts(inner.right)] : [inner];
+}
+
+/** Adds to `names` every identifier `node` reads, leaving out the names of property accesses. */
+function readNames(node: Node, names: Set<string>): void {
+  if (isIdentifier(node)) {
+    names.add(node.text);
+  } else if (isPropertyAccessExpression(node)) {
+    readNames(node.expression, names);
+  } else {
+    node.forEachChild((child) => {
+      readNames(child, names);
+    });
+  }
+}
+
+/** `expression` as a gate of code that runs in `scope`. */
+function gateOf(expression: Expression, scope: Scope | undefined): Gate {
+  const names = new Set<string>();
+  readNames(expression, names);
+  return { expression, bound: [...names].filter((name) => binds(scope, name)) };
 }
 
 /** Whether `node` calls the shape guard through one of `imports`. */
@@ -280,11 +320,10 @@ function collectGuards(
   scope: Scope | undefined,
   gates: readonly Gate[],
 ): void {
-  if (isBinaryExpression(node) && node.operatorToken.kind === SyntaxKind.AmpersandAmpersandToken) {
+  if (isAnd(node)) {
     collectGuards(node.left, walk, scope, gates);
-    const name = identifierName(node.left);
-    const rightGates = name === "" ? gates : [...gates, { name, local: binds(scope, name) }];
-    collectGuards(node.right, walk, scope, rightGates);
+    const leftGates = conjuncts(node.left).map((operand) => gateOf(operand, scope));
+    collectGuards(node.right, walk, scope, [...gates, ...leftGates]);
     return;
   }
   if (callsGuard(node, walk.imports)) walk.found.push({ call: node, gates });
@@ -294,14 +333,27 @@ function collectGuards(
   });
 }
 
-/** How `guard` can run while the file's `DEBUG` copy, named `copy`, is false; `undefined` when a gate reads the copy. */
-function guardProblem(guard: Guard, copy: string | undefined): string | undefined {
-  if (guard.gates.some((gate) => gate.name === copy && !gate.local)) return undefined;
-  if (guard.gates.length === 0) return "the shape guard runs without a DEBUG gate";
-  const names = guard.gates.map((gate) =>
-    gate.local ? `${gate.name} (a local binding)` : gate.name,
-  );
-  return `the shape guard is gated by ${names.join(", ")}, not by the file's DEBUG copy`;
+/**
+ * How `guard`, in `file`, can run while `runtime` is false.
+ *
+ * @param guard - The shape guard and its gates.
+ * @param file - The parsed module holding the guard.
+ * @param runtime - The initializer of `DEBUG` in `src/ecstatic/debug.ts`.
+ * @returns The problem, or `undefined` when a gate is `runtime` reading no binding of the file. A
+ *   gate that is `runtime` but reads a binding of the file is named with the names it reads there.
+ */
+function guardProblem(guard: Guard, file: SourceFile, runtime: Expression): string | undefined {
+  const { gates } = guard;
+  if (gates.some((gate) => gate.bound.length === 0 && sameTree(gate.expression, runtime))) {
+    return undefined;
+  }
+  if (gates.length === 0) return "the shape guard runs without a DEBUG gate";
+  const texts = gates.map(({ expression, bound }) => {
+    const text = expression.getText(file);
+    const shadowed = bound.length > 0 && sameTree(expression, runtime);
+    return shadowed ? `${text} (reading the file's own ${bound.join(", ")})` : text;
+  });
+  return `the shape guard is gated by ${texts.join(", ")}, not by the runtime's DEBUG initializer`;
 }
 
 /** Every child node of `node`, in order. */
@@ -343,34 +395,27 @@ function sameTree(a: Node, b: Node): boolean {
   );
 }
 
-/** The number of shape guards in `file`, the output named `name`, and every problem with them or its `DEBUG` copy. */
+/** The number of shape guards in `file`, the output named `name`, and every problem with them. */
 function fileProblems(
   name: string,
   file: SourceFile,
   runtime: Expression,
 ): { guards: number; problems: string[] } {
   const found: Guard[] = [];
-  collectGuards(file, { imports: internalImports(file), found }, undefined, []);
-  const copy = debugCopyOf(file);
+  collectGuards(file, { imports: internalImports(file), found }, fileScope(file), []);
   const problems: string[] = [];
   for (const guard of found) {
-    const problem = guardProblem(guard, copy?.name);
+    const problem = guardProblem(guard, file, runtime);
     if (problem === undefined) continue;
     const { line } = file.getLineAndCharacterOfPosition(guard.call.getStart(file));
     problems.push(`${name}:${line + 1}: ${problem}`);
-  }
-  if (copy !== undefined && !sameTree(copy.initializer, runtime)) {
-    problems.push(
-      `${name}: the DEBUG copy ${copy.name} is initialized to ${copy.initializer.getText(file)}, ` +
-        "not as src/ecstatic/debug.ts initializes DEBUG",
-    );
   }
   return { guards: found.length, problems };
 }
 
 /**
- * Every problem with the shape guards of `outputs`: each guard that can run while its file's
- * `DEBUG` copy is false, and each copy initialized otherwise than `runtime`.
+ * Every problem with the shape guards of `outputs`: each guard no gate of which is `runtime`, read
+ * where no binding of its file shadows a name `runtime` reads.
  *
  * @param outputs - Rewritten modules keyed by slash-separated path from the repository root; those
  *   under `src/` are left out.

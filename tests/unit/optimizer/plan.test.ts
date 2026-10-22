@@ -34,26 +34,24 @@ function callback(overrides: Partial<Callback> = {}): Callback {
     returns: [],
     varDecls: [],
     paramRedeclarations: [],
-    directEval: [],
     hazards: [],
     params: 0,
     firstParam: "none",
-    arrow: false,
     async: false,
     generator: false,
-    exprBody: false,
+    ndebugBound: false,
     ...overrides,
   };
 }
 
-/** An arrow callback with one plain identifier parameter, which passes every callback check. */
-function inlineArrow(overrides: Partial<Callback> = {}): Callback {
-  return callback({ arrow: true, params: 1, firstParam: "identifier", ...overrides });
+/** A callback with one plain identifier parameter, which passes every callback check. */
+function viewCallback(overrides: Partial<Callback> = {}): Callback {
+  return callback({ params: 1, firstParam: "identifier", ...overrides });
 }
 
 /** A callback that keeps its call a runtime call: it takes two parameters. */
 function keptCallback(): Callback {
-  return callback({ arrow: true, params: 2, firstParam: "identifier" });
+  return callback({ params: 2, firstParam: "identifier" });
 }
 
 /** A site for `op` whose call is the whole expression of a statement. */
@@ -144,9 +142,9 @@ function fromLoop(loop: NodeID, line: number, column: number): ViewEscape {
   return { kind: "nested-loop", loop, node: 0, pos: lineColumn(line, column) };
 }
 
-/** An inline arrow callback whose view references escape at `escapes`. */
+/** An inline callback whose view references escape at `escapes`. */
 function escaping(...escapes: ViewEscape[]): Callback {
-  return inlineArrow({ escapes });
+  return viewCallback({ escapes });
 }
 
 /** `result` with its bails ordered by call ID. */
@@ -163,8 +161,8 @@ describe("plan", () => {
           ...eachAt(
             0,
             50,
-            inlineArrow(),
-            { ...eachAt(1, 70, inlineArrow(), placed(has, 2, 80)), filtered: true },
+            viewCallback(),
+            { ...eachAt(1, 70, viewCallback(), placed(has, 2, 80)), filtered: true },
             placed(has, 3, 60),
           ),
           filtered: true,
@@ -190,8 +188,8 @@ describe("plan", () => {
   describe("when several each sites are eligible", () => {
     it("rewrites in post-order by source offset", () => {
       const sites = [
-        eachAt(0, 10, inlineArrow(), eachAt(1, 20, inlineArrow())),
-        eachAt(2, 5, inlineArrow()),
+        eachAt(0, 10, viewCallback(), eachAt(1, 20, viewCallback())),
+        eachAt(2, 5, viewCallback()),
       ];
 
       const result = plan(sites);
@@ -203,7 +201,7 @@ describe("plan", () => {
     });
 
     it("rewrites siblings given out of order by source offset", () => {
-      const result = plan([eachAt(1, 40, inlineArrow()), eachAt(0, 10, inlineArrow())]);
+      const result = plan([eachAt(1, 40, viewCallback()), eachAt(0, 10, viewCallback())]);
 
       expect(result).toStrictEqual({
         bails: [],
@@ -281,7 +279,7 @@ describe("plan", () => {
       },
       {
         name: "first recorded reason wins",
-        site: statement("each", inlineArrow(), "SHAPE_UNRESOLVED", "STORAGES_DYNAMIC"),
+        site: statement("each", viewCallback(), "SHAPE_UNRESOLVED", "STORAGES_DYNAMIC"),
         want: "SHAPE_UNRESOLVED",
       },
       {
@@ -291,7 +289,7 @@ describe("plan", () => {
       },
       {
         name: "recorded reason before an array literal of storages",
-        site: { ...statement("each", inlineArrow(), "STORAGES_DYNAMIC"), arrayLiteral: true },
+        site: { ...statement("each", viewCallback(), "STORAGES_DYNAMIC"), arrayLiteral: true },
         want: "STORAGES_DYNAMIC",
       },
       {
@@ -332,35 +330,35 @@ describe("plan", () => {
     }>([
       {
         name: "expression statement with a hazard-free body carrying returns and var declarations",
-        site: statement("each", inlineArrow({ returns, varDecls: vars })),
+        site: statement("each", viewCallback({ returns, varDecls: vars })),
         mode: "hoisted",
         continues: returns,
         varToLet: vars,
       },
       {
         name: "arrow body",
-        site: { ...statement("each", inlineArrow()), context: "arrow-body" },
+        site: { ...statement("each", viewCallback()), context: "arrow-body" },
         mode: "hoisted",
         continues: [],
         varToLet: [],
       },
       {
         name: "body with a hazard point",
-        site: statement("each", inlineArrow({ hazards: [7] })),
+        site: statement("each", viewCallback({ hazards: [7] })),
         mode: "realloc-safe",
         continues: [],
         varToLet: [],
       },
       {
         name: "object-pattern parameter",
-        site: statement("each", inlineArrow({ firstParam: "object-pattern" })),
+        site: statement("each", viewCallback({ firstParam: "object-pattern" })),
         mode: "hoisted",
         continues: [],
         varToLet: [],
       },
       {
         name: "no parameter",
-        site: statement("each", callback({ arrow: true })),
+        site: statement("each", callback()),
         mode: "hoisted",
         continues: [],
         varToLet: [],
@@ -374,6 +372,71 @@ describe("plan", () => {
         bails: [],
         rewrites: [{ call: 3, pos: at(40), shape: MOVER_SHAPE, mode, continues, varToLet }],
       });
+    });
+  });
+
+  describe("when NDEBUG is declared in scope at an eligible each call", () => {
+    const bound = viewCallback({ ndebugBound: true });
+
+    it.each<{ name: string; site: Site }>([
+      { name: "expression statement", site: eachAt(3, 40, bound) },
+      { name: "arrow body", site: { ...eachAt(3, 40, bound), context: "arrow-body" } },
+      {
+        name: "body with a hazard point",
+        site: eachAt(3, 40, viewCallback({ ndebugBound: true, hazards: [7] })),
+      },
+    ])("bails instead of inlining for $name", ({ site }) => {
+      const result = plan([site]);
+
+      expect(result).toStrictEqual({ bails: [bailAt(3, 40, "NDEBUG_BOUND")], rewrites: [] });
+    });
+
+    it("bails the enclosing each too once the inner one keeps its runtime call", () => {
+      const inner = eachAt(2, 30, bound);
+      const outer = eachAt(1, 10, bound, inner);
+
+      const result = plan([outer]);
+
+      expect(result).toStrictEqual({
+        bails: [bailAt(2, 30, "NDEBUG_BOUND"), bailAt(1, 10, "NDEBUG_BOUND")],
+        rewrites: [],
+      });
+    });
+  });
+
+  describe("when NDEBUG is declared in scope at a call that would not inline", () => {
+    const bound = viewCallback({ ndebugBound: true });
+
+    it.each<{ name: string; site: Site; want: Bail }>([
+      {
+        name: "async callback",
+        site: eachAt(2, 20, callback({ async: true, ndebugBound: true })),
+        want: bailAt(2, 20, "CALLBACK_ASYNC"),
+      },
+      {
+        name: "recorded reason",
+        site: { ...eachAt(2, 20, bound), reasons: ["SHAPE_UNRESOLVED"] },
+        want: bailAt(2, 20, "SHAPE_UNRESOLVED"),
+      },
+      {
+        name: "escaping view reference",
+        site: eachAt(2, 20, { ...bound, escapes: [escapeAt("view", 3, 7)] }),
+        want: viewEscapes(2, 20, "line 3, column 7: the view as a value"),
+      },
+      {
+        name: "filtered each",
+        site: { ...eachAt(2, 20, bound), filtered: true },
+        want: bailAt(2, 20, "OP_NOT_REWRITTEN"),
+      },
+      {
+        name: "query",
+        site: placed(statement("query", bound), 2, 20),
+        want: bailAt(2, 20, "OP_NOT_REWRITTEN", "query"),
+      },
+    ])("reports the reason it would report without the declaration: $name", ({ site, want }) => {
+      const result = plan([site]);
+
+      expect(result).toStrictEqual({ bails: [want], rewrites: [] });
     });
   });
 
@@ -433,7 +496,7 @@ describe("plan", () => {
     it.each([
       {
         name: "filtered each",
-        site: { ...eachAt(2, 20, inlineArrow()), filtered: true },
+        site: { ...eachAt(2, 20, viewCallback()), filtered: true },
         want: notRewritten,
       },
       {
@@ -449,7 +512,7 @@ describe("plan", () => {
       {
         name: "each over an array literal of two storages",
         site: {
-          ...eachAt(2, 20, inlineArrow()),
+          ...eachAt(2, 20, viewCallback()),
           arrayLiteral: true,
           shapes: [MOVER_SHAPE, STATUE_SHAPE],
         },
@@ -469,9 +532,9 @@ describe("plan", () => {
 
   describe("when an each nests another each", () => {
     const keptLoopUse = "a reference from a nested callback that keeps its runtime call";
-    const inlined = eachAt(2, 30, inlineArrow());
+    const inlined = eachAt(2, 30, viewCallback());
     const kept = eachAt(2, 30, keptCallback());
-    const middle = eachAt(2, 30, keptCallback(), eachAt(3, 50, inlineArrow()));
+    const middle = eachAt(2, 30, keptCallback(), eachAt(3, 50, viewCallback()));
     const silent = bailAt(1, 10, "OP_NOT_REWRITTEN");
 
     it.each<{ name: string; outer: Site; want: PlanResult }>([
@@ -546,7 +609,7 @@ describe("plan", () => {
   describe("when planning a site throws", () => {
     const shapelessDetail = "eligible each site has 0 shapes, want 1";
     const has = statement("has", undefined);
-    const shapeless = statement("each", inlineArrow());
+    const shapeless = statement("each", viewCallback());
 
     it.each<{ name: string; sites: Site[]; want: PlanResult }>([
       {
@@ -564,7 +627,7 @@ describe("plan", () => {
       {
         name: "nested site throws",
         sites: [
-          eachAt(0, 0, inlineArrow(), placed(shapeless, 1, 10), placed(has, 2, 20)),
+          eachAt(0, 0, viewCallback(), placed(shapeless, 1, 10), placed(has, 2, 20)),
           placed(has, 3, 30),
         ],
         want: {

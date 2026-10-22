@@ -216,8 +216,6 @@ export interface Callback {
    * such a `var` starts with the parameter's value, which a fresh per-row binding would lose.
    */
   readonly paramRedeclarations: readonly NodeID[];
-  /** In source order, the direct `eval` calls anywhere in the callback, nested functions included. */
-  readonly directEval: readonly NodeID[];
   /**
    * In source order, every node the callback evaluates that lies outside the allowlist of nodes
    * unable to run user code that grows a storage.
@@ -226,11 +224,13 @@ export interface Callback {
   /** Declared parameters; a TypeScript `this` parameter is a type annotation and is not counted. */
   readonly params: number;
   readonly firstParam: ParamForm;
-  readonly arrow: boolean;
   readonly async: boolean;
   readonly generator: boolean;
-  /** Only an arrow function has one; a function expression's body is always a block. */
-  readonly exprBody: boolean;
+  /**
+   * Whether `NDEBUG` at the call resolves to a declaration of the file rather than the global: the
+   * inlined loop's shape guard reads `NDEBUG` at the call, so such a declaration would capture it.
+   */
+  readonly ndebugBound: boolean;
 }
 
 /**
@@ -491,6 +491,7 @@ export const REASONS = [
   "VIEW_ESCAPES",
   "UNSUPPORTED_ASSIGNMENT",
   "INTERNAL",
+  "NDEBUG_BOUND",
   "ARG_COUNT",
   "NOT_STATEMENT",
   "OP_NOT_REWRITTEN",
@@ -572,6 +573,12 @@ const REASON_CATALOG: { readonly [R in Reason]: Omit<ReasonInfo, "id"> } = {
     code: 99_920,
     category: "strict",
     text: `internal error (\`${DETAIL_PLACEHOLDER}\`); please report it`,
+  },
+  NDEBUG_BOUND: {
+    code: 99_921,
+    category: "warning",
+    text: "`NDEBUG` is declared in scope at the call",
+    hint: "Rename the declaration; the optimized loop's debug check reads the global `NDEBUG`.",
   },
   ARG_COUNT: {
     category: "silent",

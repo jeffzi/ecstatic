@@ -127,9 +127,7 @@ function trackRequests(client: InternalClient): () => Promise<void> {
   Reflect.set(client, "apiRequest", async (method: string, params: unknown) => {
     const request = send(method, params);
     inFlight.add(request);
-    const forget = (): void => {
-      inFlight.delete(request);
-    };
+    const forget = (): boolean => inFlight.delete(request);
     void request.then(forget, forget);
     return await request;
   });
@@ -202,9 +200,7 @@ export async function startCompiler(executable: string | undefined): Promise<Com
       kill: true,
       once: true,
     });
-    const kill = (): void => {
-      child.kill("SIGKILL");
-    };
+    const kill = (): boolean => child.kill("SIGKILL");
     let exited = false;
     const markExited = (): void => {
       exited = true;
@@ -352,8 +348,7 @@ export async function updateSnapshot(
  * @throws When the compiler process has exited.
  */
 export async function programFileNames(project: Project): Promise<readonly string[]> {
-  const names = await project.program.getSourceFileNames();
-  return names.map((name) => nativeFileName(name));
+  return (await project.program.getSourceFileNames()).map((name) => nativeFileName(name));
 }
 
 /**
@@ -508,7 +503,7 @@ export async function foreignValueFileName(
   checker: Checker,
   expr: Node,
 ): Promise<string | undefined> {
-  const declaration = await valueDeclaration(await resolveSymbol(checker, expr));
+  const declaration = await (await resolveSymbol(checker, expr))?.valueDeclaration?.resolve();
   if (declaration === undefined) return undefined;
   const file = nodeFileName(declaration);
   return file === nodeFileName(expr) ? undefined : file;
@@ -529,16 +524,22 @@ export async function refersToArguments(checker: Checker, name: Node): Promise<b
 }
 
 /**
- * The declaration of the value `symbol` names.
+ * The declarations of `symbol`. Unlike its value declaration, these exist for a property of a
+ * mapped type: the mapped property keeps the declarations of the property it maps.
  *
- * @param symbol - Symbol to inspect; undefined gives undefined.
- * @returns The value declaration, or undefined when `symbol` declares no value.
- * @throws When the compiler process has exited.
+ * @param symbol - Symbol to inspect; undefined declares nothing.
+ * @returns The declarations in declaration order; none for a property mapped over a literal key.
+ * @throws When a declaration's source file is no longer available, or the compiler process has
+ *   exited.
  */
-export async function valueDeclaration(
-  symbol: CheckerSymbol | undefined,
-): Promise<Node | undefined> {
-  return await symbol?.valueDeclaration?.resolve();
+export async function declarationsOf(symbol: CheckerSymbol | undefined): Promise<Node[]> {
+  return await Promise.all(
+    (symbol?.declarations ?? []).map(async (handle) => {
+      const declaration = await handle.resolve();
+      if (declaration === undefined) throw new Error(`a declaration in ${handle.path} is gone`);
+      return declaration;
+    }),
+  );
 }
 
 /**
@@ -580,13 +581,7 @@ export function nodeFileName(node: Node): string {
  *   exited.
  */
 export async function declarationFileNames(symbol: CheckerSymbol | undefined): Promise<string[]> {
-  return await Promise.all(
-    (symbol?.declarations ?? []).map(async (handle) => {
-      const declaration = await handle.resolve();
-      if (declaration === undefined) throw new Error(`a declaration in ${handle.path} is gone`);
-      return nodeFileName(declaration);
-    }),
-  );
+  return (await declarationsOf(symbol)).map(nodeFileName);
 }
 
 // ---------------------------------------------------------------------------
@@ -707,6 +702,24 @@ export async function isGlobalValue(checker: Checker, expr: Node, name: string):
     resolveSymbol(checker, expr),
   ]);
   return global !== undefined && resolved === global;
+}
+
+/**
+ * The value `name` would read at `location`: a declaration in scope there, an import included and
+ * not followed, or a global.
+ *
+ * @param checker - Checker of the program holding `location`.
+ * @param location - Node whose scope the lookup starts from.
+ * @param name - Name to look up.
+ * @returns The declaring symbol, or undefined when `name` reads nothing at `location`.
+ * @throws When the compiler process has exited.
+ */
+export async function resolveValueAt(
+  checker: Checker,
+  location: Node,
+  name: string,
+): Promise<CheckerSymbol | undefined> {
+  return await checker.resolveName(name, SymbolFlags.Value, location);
 }
 
 /**

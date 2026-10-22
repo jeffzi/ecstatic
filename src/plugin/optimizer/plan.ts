@@ -210,6 +210,8 @@ class Planner {
     if (escape !== undefined) return escape;
     // Inlining an each that holds an inlined each would need loop composition.
     if (site.filtered || this.#holdsInlined(site.nested)) return { reason: "OP_NOT_REWRITTEN" };
+    // Checked last so it is reported only on a call that would otherwise be inlined.
+    if (reason.ndebugBound) return { reason: "NDEBUG_BOUND" };
     return reason;
   }
 

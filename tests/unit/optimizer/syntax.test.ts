@@ -18,6 +18,7 @@ import type { ProjectView, Session } from "../../../src/plugin/optimizer/session
 import {
   arithmeticOperator,
   boundNames,
+  isArgumentsRead,
   isReference,
   logicalOperator,
   outermostParens,
@@ -123,9 +124,32 @@ const REFERENCE_CASES = [
   { name: "a type annotation", source: "let v: Base;", text: "Base", nth: 0, expected: false },
 ];
 
-const SOURCES = [...SKIP_CASES, ...PARENS_CASES, ...BOUND_CASES, ...REFERENCE_CASES].map(
-  ({ source }) => source,
-);
+const ARGUMENTS_READ_CASES = [
+  { name: "a plain read", source: "f(arguments);", expected: true },
+  { name: "a shorthand property", source: "({ arguments });", expected: true },
+  { name: "a binding element's default", source: "const { a = arguments } = v;", expected: true },
+  { name: "a property access name", source: "x.arguments;", expected: false },
+  { name: "a property assignment name", source: "({ arguments: 1 });", expected: false },
+  { name: "an object method name", source: "({ arguments() {} });", expected: false },
+  { name: "a getter name", source: "({ get arguments() { return 1; } });", expected: false },
+  { name: "a setter name", source: "({ set arguments(value: number) {} });", expected: false },
+  { name: "a class field name", source: "class C { arguments = 1; }", expected: false },
+  { name: "a class method name", source: "class C { arguments() {} }", expected: false },
+  { name: "an enum member name", source: "enum E { arguments }", expected: false },
+  {
+    name: "the property a binding element reads",
+    source: "const { arguments: a } = v;",
+    expected: false,
+  },
+];
+
+const SOURCES = [
+  ...SKIP_CASES,
+  ...PARENS_CASES,
+  ...BOUND_CASES,
+  ...REFERENCE_CASES,
+  ...ARGUMENTS_READ_CASES,
+].map(({ source }) => source);
 
 /** An assignment operator and the binary operators it maps to; `undefined` when it has none. */
 interface AssignmentOperator {
@@ -296,6 +320,18 @@ describe("isReference", () => {
       expect(reference).toBe(expected);
     },
   );
+});
+
+describe("isArgumentsRead", () => {
+  it.each(ARGUMENTS_READ_CASES)("answers $expected for $name", async ({ source, expected }) => {
+    const statement = await firstStatement(source);
+    const [id] = identifiersNamed(statement, "arguments");
+    if (id === undefined) throw new Error(`${source} names arguments nowhere`);
+
+    const read = isArgumentsRead(id);
+
+    expect(read).toBe(expected);
+  });
 });
 
 describe("arithmeticOperator", () => {

@@ -40,7 +40,13 @@ import {
 } from "typescript/ast/is";
 import { visitNode } from "typescript/ast/visitor";
 
-import type { ArchShape, Field, ViewUse } from "../facts.js";
+import {
+  type ArchShape,
+  componentField,
+  type Field,
+  shapeComponent,
+  type ViewUse,
+} from "../facts.js";
 import { type NodeTable, tableNode } from "../nodes.js";
 import type { Mode } from "../plan.js";
 import { skipParens, skipWrappers } from "../syntax.js";
@@ -415,10 +421,7 @@ export class Lowering {
    * @returns The hoisted column, or in realloc-safe mode the record's current one.
    */
   columnArray(use: ViewUse): Expression {
-    const isRelation = this.#components().some(
-      ({ name, relation }) => name === use.comp && relation,
-    );
-    if (isRelation) this.note("relation-data-field");
+    if (shapeComponent(this.#shape, use.comp)?.relation === true) this.note("relation-data-field");
     const column = this.#column(use);
     return column.local === undefined
       ? member(createIdentifier(column.record), column.field)
@@ -443,9 +446,8 @@ export class Lowering {
    * @throws Error when the shape has no such field.
    */
   field(use: ViewUse): Field {
-    const field = this.#components()
-      .flatMap(({ name, fields }) => (name === use.comp ? fields : []))
-      .find(({ name }) => name === use.field);
+    const component = shapeComponent(this.#shape, use.comp);
+    const field = component === undefined ? undefined : componentField(component, use.field);
     if (field === undefined) {
       throw new Error(`emit: the shape has no field ${use.comp}.${use.field}`);
     }
@@ -541,7 +543,8 @@ export class Lowering {
     let column = this.#columns.get(key);
     if (column === undefined) {
       const record = this.#record(use.comp);
-      const local = this.mode === "hoisted" ? this.#local(`${use.field}Column`) : undefined;
+      const base = IDENTIFIER_NAME.test(use.field) ? `${use.field}Column` : "column";
+      const local = this.mode === "hoisted" ? this.#local(base) : undefined;
       column = { record, field: use.field, local };
       this.#columns.set(key, column);
     }
@@ -559,10 +562,6 @@ export class Lowering {
 
   #storageArray(name: string): Expression {
     return member(createIdentifier(this.#storage), name);
-  }
-
-  #components(): ArchShape["required"] {
-    return [...this.#shape.required, ...this.#shape.optional];
   }
 
   #local(base: string): string {

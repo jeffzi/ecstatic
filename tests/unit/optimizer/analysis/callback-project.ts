@@ -3,7 +3,7 @@ import { isCallExpression, isIdentifier } from "typescript/ast/is";
 
 import {
   inlineCallback,
-  summarizeCallback,
+  prepareCallback,
 } from "../../../../src/plugin/optimizer/analysis/callback.js";
 import { PackageRoots } from "../../../../src/plugin/optimizer/analysis/roots.js";
 import { resolveShapes } from "../../../../src/plugin/optimizer/analysis/shape.js";
@@ -283,7 +283,7 @@ export class CallbackProject {
       arrayLiteral: false,
     };
     const scope = { checker: view.checker, roots: this.#roots, table, file };
-    const callback = await summarizeCallback(scope, site, fn);
+    const callback = (await prepareCallback(scope, site, fn))();
     return { callback, site, table };
   }
 

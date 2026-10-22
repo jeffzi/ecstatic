@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c9:SwarmSpot{1:x=n,1:y=n}c9:SwarmWing{4:beat=b}|c10:SwarmSting{2:hp=n}";
 // rewrite-applies: mode-realloc-safe
 // rewrite-applies: write-required-field
 // rewrite-applies: write-optional-field
@@ -43,7 +41,7 @@ export function scenario(): unknown {
 
   {
       const storage_1 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:SwarmSpot{1:x=n,1:y=n}c9:SwarmWing{4:beat=b}|c10:SwarmSting{2:hp=n}");
       const n_1 = storage_1.n;
       if (n_1 > 0) {
           const SwarmSpotRecord = storage_1.SwarmSpot, SwarmWingRecord = storage_1.SwarmWing, SwarmStingRecord = storage_1.SwarmSting;

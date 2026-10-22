@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c10:BannerFlag{4:size=n}c12:BannerRaised{}|c10:BannerTorn{}";
 // rewrite-applies: required-tag
 // rewrite-applies: optional-tag
 // rewrite-applies: presence-optional
@@ -24,7 +22,7 @@ export function scenario(): unknown {
 
   {
       const storage_1 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:BannerFlag{4:size=n}c12:BannerRaised{}|c10:BannerTorn{}");
       const n = storage_1.n;
       if (n > 0) {
           for (let i = n - 1; i >= 0; i--) {

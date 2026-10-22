@@ -130,9 +130,10 @@ const HAZARD_FREE_CASES: readonly HazardFreeCase[] = [
 });`,
   },
   {
-    name: "global Math methods",
+    name: "global Math methods with primitive-typed arguments",
     source: `each(enemies, (e) => {
 	e.Position.x = Math.max(e.Position.x, Math.abs(e.Velocity.dx));
+	total = Math.round(e.Position.y as number) + Math.min(total, 1 as const);
 });`,
   },
   {
@@ -262,6 +263,17 @@ each(enemies, () => {
 });`,
   },
   {
+    name: "operands asserted to a primitive type whose value is already primitive",
+    source: `each(enemies, (e) => {
+	total = -(e.Position.x as number) + +(total satisfies number);
+	total = (e.Position.x as number) * (1 as const) + <number>e.Position.y;
+	total += visited[total as number] ?? visited[e.id!] ?? 0;
+	const label = \`\${e.Position.x as number}\${1 as const}\`;
+	const keyed = { [e.id as number]: 1 };
+	if ((e.Position.x as number) < (1 as const)) total += 1;
+});`,
+  },
+  {
     name: "setResource whose value holds functions and unions of plain objects",
     source: `declare const deeper: { deep: { n: number } } | { deep: { n: 1 } };
 const Hooks = resource("Hooks", { run: (): number => 0 });
@@ -288,6 +300,17 @@ each(enemies, () => {
 	total = Math.max(1, 2);
 });`,
     marks: ["Math.max(1, 2)"],
+  },
+  {
+    name: "global Math methods with arguments typed any, cast through unknown, or object-typed",
+    source: `declare const boxed: { valueOf(): number };
+each(enemies, () => {
+	total = Math.abs(loose);
+	total = Math.max(1, boxed as unknown as number);
+	// @ts-expect-error -- an object argument converts through its valueOf, so the call stays a hazard
+	total = Math.floor(boxed);
+});`,
+    marks: ["Math.abs(loose)", "Math.max(1, boxed", "Math.floor(boxed)"],
   },
   {
     name: "spawn into the iterated shape or an unresolved one",
@@ -389,6 +412,47 @@ each(enemies, () => {
       "plain}`",
       "visited[loose]",
       "loose]: 1",
+    ],
+  },
+  {
+    name: "object operands asserted to a primitive type",
+    source: `declare const boxed: { valueOf(): number; toString(): string };
+let held = boxed;
+each(enemies, () => {
+	total = +(boxed as unknown as number);
+	(held as unknown as number)++;
+	total = (boxed as unknown as number) + 1;
+	total = (boxed as unknown as number) < 1 ? 1 : 0;
+	const read = visited[boxed as unknown as number];
+	const label = \`\${boxed as unknown as string}\`;
+	const keyed = { [boxed as unknown as string]: 1 };
+});`,
+    marks: [
+      "+(boxed",
+      "(held as",
+      "(boxed as unknown as number) + 1",
+      "(boxed as unknown as number) < 1",
+      "visited[boxed",
+      "boxed as unknown as string}",
+      "boxed as unknown as string]",
+    ],
+  },
+  {
+    name: "an object operand behind each erased wrapper",
+    source: `declare const boxed: { valueOf(): number };
+each(enemies, () => {
+	total = -(boxed as unknown as number);
+	total = -((boxed as unknown as number) satisfies number);
+	total = -(boxed as unknown as number | undefined)!;
+	total = -<number><unknown>boxed;
+	total = -(((boxed as unknown as number)));
+});`,
+    marks: [
+      "-(boxed as unknown as number);",
+      "-((boxed as unknown as number) satisfies",
+      "-(boxed as unknown as number | undefined)!",
+      "-<number>",
+      "-(((boxed",
     ],
   },
   {

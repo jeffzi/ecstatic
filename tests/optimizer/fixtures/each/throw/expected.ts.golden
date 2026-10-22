@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c9:SparkFuse{1:x=n}|";
 // rewrite-applies: throw
 import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
 
@@ -22,7 +20,7 @@ export function scenario(): unknown {
   try {
     {
         const storage_1 = storage;
-        DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:SparkFuse{1:x=n}|");
         const n = storage_1.n;
         if (n > 0) {
             const SparkFuseRecord = storage_1.SparkFuse;

@@ -24,8 +24,8 @@ export interface RewrittenModule {
   readonly fileBail: FileBail | undefined;
   /**
    * The declaration files the shape resolution of the module's sites consulted, and the
-   * `src/ecstatic/debug.ts` its `DEBUG` copy came from when a call was rewritten; sorted and unique.
-   * A change to any of them can change the rewrite.
+   * `src/ecstatic/debug.ts` its shape guards copy `DEBUG` from when a call was rewritten; sorted
+   * and unique. A change to any of them can change the rewrite.
    */
   readonly consulted: readonly string[];
 }
@@ -45,7 +45,7 @@ export interface Rewriter {
    *
    * A call whose rewrite throws, or that resolves to another package root than the file's first
    * rewritten call, keeps its runtime call and becomes an `INTERNAL` bail; the file's other calls
-   * are still rewritten. When that root's `DEBUG` copy cannot be taken, every planned rewrite
+   * are still rewritten. When that root's `DEBUG` cannot be copied, every planned rewrite
    * becomes an `INTERNAL` bail and the file is left unchanged. When analyzing the file throws for
    * any reason but the session ending, the file is left unchanged and reported as one file bail.
    *
@@ -86,7 +86,7 @@ interface RewriteContext {
 }
 
 interface Emitted {
-  /** The file and the `DEBUG` copy's source, when at least one call was inlined. */
+  /** The file and the module its shape guards copy `DEBUG` from, when at least one call was inlined. */
   readonly inlined: { readonly file: EmitFile; readonly debug: string } | undefined;
   /** The planned rewrites that keep their runtime call, as `INTERNAL` bails. */
   readonly failed: readonly Bail[];
@@ -192,19 +192,19 @@ async function emitRewrites(
       failed.push(internalBail(rewrite, thrownMessage(error)));
     }
   }
-  const debug = debugPath(root);
-  return { inlined: failed.length === rewrites.length ? undefined : { file, debug }, failed };
+  const inlined = failed.length === rewrites.length ? undefined : { file, debug: debugPath(root) };
+  return { inlined, failed };
 }
 
 /**
  * The detail of the bail of a call that resolves to another package root than the file's.
  *
  * @param root - The package root the call resolves to.
- * @param copied - The package root the file's `DEBUG` copy comes from.
+ * @param copied - The package root the file's shape guards copy `DEBUG` from.
  * @returns The detail.
  */
 function otherRootDetail(root: string, copied: string): string {
-  return `the call resolves to the ecstatic package root ${root}, not ${copied}, which the file's DEBUG copy comes from`;
+  return `the call resolves to the ecstatic package root ${root}, not ${copied}, which the file's shape guards copy DEBUG from`;
 }
 
 /**

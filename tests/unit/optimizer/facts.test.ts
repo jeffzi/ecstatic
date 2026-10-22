@@ -196,6 +196,13 @@ const REASON_ROWS: readonly ReasonInfo[] = [
     text: "internal error (`<detail>`); please report it",
   },
   {
+    id: "NDEBUG_BOUND",
+    code: 99_921,
+    category: "warning",
+    text: "`NDEBUG` is declared in scope at the call",
+    hint: "Rename the declaration; the optimized loop's debug check reads the global `NDEBUG`.",
+  },
+  {
     id: "ARG_COUNT",
     category: "silent",
     text: "argument count matches no rewritable overload",

@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c10:GardenSeed{1:x=n}|";
 // rewrite-applies: block-scoped-declaration
 // rewrite-applies: closure
 // rewrite-applies: return-in-nested-function
@@ -24,7 +22,7 @@ export function scenario(): unknown {
 
   {
       const storage_1 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:GardenSeed{1:x=n}|");
       const n = storage_1.n;
       if (n > 0) {
           const GardenSeedRecord = storage_1.GardenSeed;

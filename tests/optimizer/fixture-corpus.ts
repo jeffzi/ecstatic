@@ -1,4 +1,4 @@
-import { readdirSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,8 +46,23 @@ export const FIXTURES = CORPUS_FILES.filter((file) => basename(file) === INPUT_F
   .map(fixtureOf)
   .toSorted();
 
-/** Every fixture whose golden behaves as its input does: all but the divergent ones. */
-export const CONVERGENT_FIXTURES = FIXTURES.filter((fixture) => !fixture.startsWith(DIVERGENT));
+/** Whether `fixture`'s golden exists and is byte-identical to its input: the input left as written. */
+function goldenCopiesInput(fixture: string): boolean {
+  const golden = fixturePath(fixture, GOLDEN_FILE);
+  return (
+    existsSync(golden) &&
+    readFileSync(golden, "utf8") === readFileSync(fixturePath(fixture, INPUT_FILE), "utf8")
+  );
+}
+
+/**
+ * Every fixture whose golden behaves as its input does but is not a copy of it: the rewritten
+ * fixtures outside `divergent/`. A fixture left as written has nothing to compare; one with no
+ * golden yet stays in, so the list loads before `-u` writes its first golden.
+ */
+export const REWRITTEN_CONVERGENT_FIXTURES = FIXTURES.filter(
+  (fixture) => !fixture.startsWith(DIVERGENT) && !goldenCopiesInput(fixture),
+);
 
 /**
  * Imports a fixture module against a fresh module registry.

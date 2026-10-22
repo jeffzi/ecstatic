@@ -1,51 +1,25 @@
 import {
   type ArrowFunction,
-  type ConstructorDeclaration,
   type FunctionDeclaration,
   type FunctionExpression,
-  type GetAccessorDeclaration,
-  type MethodDeclaration,
   ModifierFlags,
   type Node,
   type PropertyDeclaration,
-  type SetAccessorDeclaration,
 } from "typescript/ast";
 import {
   isArrowFunction,
-  isComputedPropertyName,
-  isConstructorDeclaration,
-  isDecorator,
   isFunctionDeclaration,
   isFunctionExpression,
-  isGetAccessorDeclaration,
-  isMethodDeclaration,
   isPropertyDeclaration,
-  isSetAccessorDeclaration,
 } from "typescript/ast/is";
 
-import { isTypeOnly } from "../syntax.js";
-
-/** A class or object-literal member with parameters and a body that runs when it is called. */
-export type FunctionMember =
-  | MethodDeclaration
-  | GetAccessorDeclaration
-  | SetAccessorDeclaration
-  | ConstructorDeclaration;
-
-/**
- * Whether a node is a method, accessor, or constructor.
- *
- * @param node - The node to test.
- * @returns Whether `node` is a function member.
- */
-export function isFunctionMember(node: Node): node is FunctionMember {
-  return (
-    isMethodDeclaration(node) ||
-    isGetAccessorDeclaration(node) ||
-    isSetAccessorDeclaration(node) ||
-    isConstructorDeclaration(node)
-  );
-}
+import {
+  type FunctionMember,
+  isFunctionMember,
+  isTypeOnly,
+  runsWithClass,
+  visitMemberHead,
+} from "../syntax.js";
 
 /**
  * Whether a node is an arrow function, a function expression, or a function declaration: code that
@@ -86,35 +60,6 @@ export function forEachEvaluated(node: Node, visit: (child: Node) => void): void
   node.forEachChild((child) => {
     if (!isTypeOnly(child)) visit(child);
   });
-}
-
-/**
- * Calls `visit` on the parts of a member that run when its class or object is evaluated: its
- * modifiers, decorators among them, and its name when the name is computed.
- *
- * @param member - The class or object-literal member.
- * @param visit - Called once per part, in source order.
- */
-export function visitMemberHead(
-  member: FunctionMember | PropertyDeclaration,
-  visit: (part: Node) => void,
-): void {
-  member.modifiers?.forEach((modifier) => {
-    visit(modifier);
-  });
-  const name = isConstructorDeclaration(member) ? undefined : member.name;
-  if (name !== undefined && isComputedPropertyName(name)) visit(name);
-}
-
-/**
- * Whether a child of a member's parameter runs when the class is evaluated rather than when the
- * member is called: it is one of the parameter's decorators.
- *
- * @param child - A child of a member's parameter.
- * @returns Whether `child` is a decorator.
- */
-export function runsWithClass(child: Node): boolean {
-  return isDecorator(child);
 }
 
 /**

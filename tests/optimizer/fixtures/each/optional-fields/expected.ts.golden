@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c8:WardHull{1:x=n}|c10:WardShield{2:hp=n,5:level=n}";
 // rewrite-applies: mode-realloc-safe
 // rewrite-applies: read-optional-field
 // rewrite-applies: write-optional-field
@@ -44,7 +42,7 @@ export function scenario(): unknown {
   // fallow-ignore-next-line complexity -- the callback packs the forms under test into one body
   {
       const storage_1 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c8:WardHull{1:x=n}|c10:WardShield{2:hp=n,5:level=n}");
       const n = storage_1.n;
       if (n > 0) {
           const WardShieldRecord = storage_1.WardShield;

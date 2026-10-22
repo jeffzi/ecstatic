@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c10:LadderStep{1:x=n}|";
 // rewrite-applies: return-void
 // rewrite-applies: return-value
 // rewrite-applies: return-labeled
@@ -32,7 +30,7 @@ export function scenario(): unknown {
 
   {
       const storage_1 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:LadderStep{1:x=n}|");
       const n = storage_1.n;
       if (n > 0) {
           const LadderStepRecord = storage_1.LadderStep;
@@ -45,7 +43,7 @@ export function scenario(): unknown {
   }
   {
       const storage_2 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_2, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_2, "c10:LadderStep{1:x=n}|");
       const n_1 = storage_2.n;
       if (n_1 > 0) {
           const LadderStepRecord_1 = storage_2.LadderStep;
@@ -76,7 +74,7 @@ export function scenario(): unknown {
   // fallow-ignore-next-line complexity -- the callback packs the forms under test into one body
   {
       const storage_3 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_3, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_3, "c10:LadderStep{1:x=n}|");
       const n_2 = storage_3.n;
       if (n_2 > 0) {
           const LadderStepRecord_2 = storage_3.LadderStep;
@@ -96,7 +94,7 @@ export function scenario(): unknown {
   }
   {
       const storage_4 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_4, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_4, "c10:LadderStep{1:x=n}|");
       const n_3 = storage_4.n;
       if (n_3 > 0) {
           const LadderStepRecord_3 = storage_4.LadderStep;

@@ -1,5 +1,11 @@
-import type { Expression, NodeArray } from "typescript/ast";
-import { isArrayLiteralExpression, isSpreadElement } from "typescript/ast/is";
+import { type Expression, type NodeArray, SyntaxKind, type TypeNode } from "typescript/ast";
+import {
+  isArrayLiteralExpression,
+  isParenthesizedTypeNode,
+  isPropertySignatureDeclaration,
+  isSpreadElement,
+  isUnionTypeNode,
+} from "typescript/ast/is";
 
 import {
   apparentType,
@@ -7,6 +13,7 @@ import {
   type Checker,
   type CheckerSymbol,
   declarationFileNames,
+  declarationsOf,
   foreignValueFileName,
   isAnyOrUnknown,
   isArrayLike,
@@ -90,6 +97,22 @@ export async function resolveStorageShape(
   const resolver = new ShapeResolver(checker);
   const shape = await resolver.storageShape(storage);
   return { shape, declarationFiles: [...resolver.files].toSorted() };
+}
+
+/**
+ * Whether a type annotation is a union with `undefined` among its members.
+ *
+ * @param type - The annotation; undefined when there is none.
+ * @returns Whether `type`, its parentheses skipped, is a union naming `undefined`.
+ */
+function joinsUndefined(type: TypeNode | undefined): boolean {
+  let node = type;
+  while (node !== undefined && isParenthesizedTypeNode(node)) node = node.type;
+  return (
+    node !== undefined &&
+    isUnionTypeNode(node) &&
+    node.types.some((member) => member.kind === SyntaxKind.UndefinedKeyword)
+  );
 }
 
 /**
@@ -293,12 +316,47 @@ class ShapeResolver {
     );
   }
 
+  /**
+   * Reads one field of a component's fields type. A field declared by `ref()` is plain whatever
+   * its value type, as the runtime stores every reference in a plain array: without
+   * `strictNullChecks`, a `ref<number>()` field's value type `number | undefined` collapses to
+   * `number` and would otherwise read as a numeric column.
+   *
+   * @param property - A property of a component's fields type.
+   * @returns The field with its column kind.
+   * @throws When a consulted declaration's source file is no longer available.
+   */
   async #field(property: CheckerSymbol): Promise<Field> {
-    const [, type] = await Promise.all([
+    const [, type, isRef] = await Promise.all([
       this.#consult(property),
       typeOfSymbol(this.#checker, property),
+      this.#isRefField(property),
     ]);
-    return { name: symbolName(property), kind: await fieldKind(this.#checker, type) };
+    const kind = isRef ? "plain" : await fieldKind(this.#checker, type);
+    return { name: symbolName(property), kind };
+  }
+
+  /**
+   * Whether a field is declared by `ref()`. The fields type maps each default to its value type, so
+   * the marker survives only on the declaration the mapped property keeps. Declaration emit drops
+   * the marker and writes the field's value type joined with `undefined`, which no other field
+   * default produces, so a declared type naming `undefined` in a union marks a ref as well.
+   *
+   * @param property - A property of a component's fields type.
+   * @returns Whether its declared type is a union naming `undefined`, or its declaration's type
+   *   carries `__ecstatic_ref_marker`.
+   * @throws When a declaration's source file is no longer available, or the compiler process has
+   *   exited.
+   */
+  async #isRefField(property: CheckerSymbol): Promise<boolean> {
+    const [declaration] = await declarationsOf(property);
+    if (declaration === undefined) return false;
+    if (isPropertySignatureDeclaration(declaration) && joinsUndefined(declaration.type)) {
+      return true;
+    }
+    const declared = await typeAtLocation(this.#checker, declaration);
+    const marker = await propertyOfType(this.#checker, declared, "__ecstatic_ref_marker");
+    return marker !== undefined;
   }
 
   /**

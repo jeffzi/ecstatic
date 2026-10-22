@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, v
 
 import {
   declarationFileNames,
+  declarationsOf,
   foreignValueFileName,
   isAccessorProperty,
   isAccessorSymbol,
@@ -15,11 +16,11 @@ import {
   propertyOfType,
   refersToArguments,
   resolveSymbol,
+  resolveValueAt,
   sourceFileName,
   symbolName,
   typeOfSymbol,
   typeSymbol,
-  valueDeclaration,
 } from "../../../src/plugin/optimizer/compiler.js";
 import {
   openSession,
@@ -47,6 +48,8 @@ export declare const box: Box;
 export const literal = { size: 1 };
 export declare const shape: { w: number };
 export const unresolved = missing;
+export declare const mapped: { [K in keyof typeof literal]: string };
+export declare const keyed: Record<"key", number>;
 `;
 
 const GLOBALS = `export const usesMath = Math.max;
@@ -84,8 +87,17 @@ function appFile(name: string): string {
   return join(root, "app", name);
 }
 
-/** The identifier `word` inside the first occurrence of `text` in `app/<name>`. */
-async function identifierIn(name: string, text: string, word: string): Promise<Node> {
+/**
+ * The identifier `word` inside the first occurrence of `text` in `app/<name>`.
+ *
+ * @param name - File name under `app/`.
+ * @param text - Text whose first occurrence locates the identifier.
+ * @param word - The identifier within `text`; defaults to `text`, for a `text` that is one
+ *   identifier.
+ * @returns The identifier node.
+ * @throws When `text` is not in the file, or the file is not part of the program.
+ */
+async function identifierIn(name: string, text: string, word = text): Promise<Node> {
   const source = await view.sourceFile(appFile(name));
   const start = source.text.indexOf(text);
   if (start < 0) throw new Error(`${text} is not in ${name}`);
@@ -196,22 +208,28 @@ describe("refersToArguments", () => {
   });
 });
 
-describe("valueDeclaration", () => {
-  it("returns the declaration of a value", async () => {
-    const symbol = await symbolIn("uses.ts", "const local", "local");
+describe("declarationsOf", () => {
+  it.each([
+    { holder: "an object literal", value: "literal" },
+    { holder: "a type mapped over that literal", value: "mapped" },
+  ])("returns the literal's property declaration for a property of $holder", async ({ value }) => {
+    const property = await propertyOfType(view.checker, await constType(value), "size");
+    if (property === undefined) throw new Error(`${value} has no property size`);
 
-    const declaration = await valueDeclaration(symbol);
+    const declarations = await declarationsOf(property);
 
-    expect(declaration?.kind).toBe(SyntaxKind.VariableDeclaration);
-    expect(declaration?.getText()).toBe("local = { y: 1 }");
+    expect(
+      declarations.map((declaration) => ({ kind: declaration.kind, text: declaration.getText() })),
+    ).toStrictEqual([{ kind: SyntaxKind.PropertyAssignment, text: "size: 1" }]);
   });
 
-  it("returns undefined for a type", async () => {
-    const symbol = await symbolIn("uses.ts", "v: Velocity", "Velocity");
+  it("returns none for a property mapped over a key with no declaration", async () => {
+    const property = await propertyOfType(view.checker, await constType("keyed"), "key");
+    if (property === undefined) throw new Error("keyed has no property key");
 
-    const declaration = await valueDeclaration(symbol);
+    const declarations = await declarationsOf(property);
 
-    expect(declaration).toBeUndefined();
+    expect(declarations).toStrictEqual([]);
   });
 });
 
@@ -351,6 +369,70 @@ describe("isGlobalValue", () => {
     const actual = await isGlobalValue(view.checker, access, "Math");
 
     expect(actual).toBe(false);
+  });
+});
+
+describe("resolveValueAt", () => {
+  it.each([
+    { reference: "a top-level const", file: "shadows.ts", text: "localMath", name: "Math" },
+    {
+      reference: "a parameter of the enclosing function",
+      file: "shadows.ts",
+      text: "return undefined",
+      word: "undefined",
+      name: "undefined",
+    },
+    { reference: "an import", file: "uses.ts", text: "fromImport", name: "origin" },
+  ])("finds $reference in scope at the location", async ({ file, text, word, name }) => {
+    const location = await identifierIn(file, text, word);
+
+    const symbol = await resolveValueAt(view.checker, location, name);
+
+    expect({
+      name: symbol === undefined ? undefined : symbolName(symbol),
+      files: await declarationFileNames(symbol),
+    }).toStrictEqual({ name, files: [appFile(file)] });
+  });
+
+  it.each([
+    {
+      reference: "a name only the globals declare",
+      file: "globals.ts",
+      text: "usesMath",
+      name: "Math",
+    },
+    {
+      reference: "a parameter's name outside its function",
+      file: "shadows.ts",
+      text: "localMath",
+      name: "undefined",
+    },
+  ])("finds the global for $reference", async ({ file, text, name }) => {
+    const location = await identifierIn(file, text);
+
+    const symbol = await resolveValueAt(view.checker, location, name);
+
+    const files = await declarationFileNames(symbol);
+    expect({
+      name: symbol === undefined ? undefined : symbolName(symbol),
+      inProject: files.some((declared) => declared.startsWith(appFile(""))),
+    }).toStrictEqual({ name, inProject: false });
+  });
+
+  it.each([
+    {
+      reference: "a name declared only as a type",
+      file: "schema.ts",
+      text: "origin",
+      name: "Velocity",
+    },
+    { reference: "a name declared nowhere", file: "globals.ts", text: "usesMath", name: "banana" },
+  ])("finds nothing for $reference", async ({ file, text, name }) => {
+    const location = await identifierIn(file, text);
+
+    const symbol = await resolveValueAt(view.checker, location, name);
+
+    expect(symbol).toBeUndefined();
   });
 });
 

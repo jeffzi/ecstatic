@@ -4,7 +4,7 @@
  * `new.target`, `super`, labels, throws, and references to bindings outside the callback.
  */
 
-import { type Identifier, type Node, NodeFlags, type Statement, SyntaxKind } from "typescript/ast";
+import { type Identifier, type Node, type Statement, SyntaxKind } from "typescript/ast";
 import {
   isArrowFunction,
   isBindingElement,
@@ -20,7 +20,6 @@ import {
   isMethodDeclaration,
   isModuleBlock,
   isParameterDeclaration,
-  isPropertyAccessExpression,
   isPropertyAssignment,
   isPropertyDeclaration,
   isSourceFile,
@@ -28,7 +27,14 @@ import {
   isVariableStatement,
 } from "typescript/ast/is";
 
-import { boundNames, isReference } from "../syntax.js";
+import {
+  boundNames,
+  declarationKind,
+  isArgumentsRead,
+  isFunctionMember,
+  isReference,
+  runsWithClass,
+} from "../syntax.js";
 import type { Rule } from "./catalog.js";
 
 /** The rule a node of the callback's body applies by its kind alone. */
@@ -56,18 +62,11 @@ const KIND_RULES: ReadonlyMap<SyntaxKind, Rule> = new Map([
 export function bodyRule(node: Node): Rule | undefined {
   const rule = KIND_RULES.get(node.kind);
   if (rule !== undefined) return rule;
-  if (
-    node.kind === SyntaxKind.VariableDeclarationList &&
-    (node.flags & NodeFlags.BlockScoped) !== 0
-  ) {
+  if (node.kind === SyntaxKind.VariableDeclarationList && declarationKind(node) !== "var") {
     return "block-scoped-declaration";
   }
   if (isMetaProperty(node) && node.keywordToken === SyntaxKind.NewKeyword) return "new-target";
-  const isArguments =
-    isIdentifier(node) &&
-    node.text === "arguments" &&
-    !(isPropertyAccessExpression(node.parent) && node.parent.name === node);
-  return isArguments ? "arguments" : undefined;
+  return isArgumentsRead(node) ? "arguments" : undefined;
 }
 
 /** The rules a use of the callback's own `this` binding applies. */
@@ -83,9 +82,10 @@ const OWN_SCOPE_RULES: ReadonlySet<Rule> = new Set([
 
 /**
  * Whether a node of a callback applies a rule as the callback's own code. `this`, `arguments`,
- * `super`, and `new.target` are the callback's own outside code that binds its own; a block-scoped
- * declaration, a label, a throw, and a dead-zone read are its own outside any function nested in
- * it, arrows included.
+ * `super`, and `new.target` are the callback's own outside code that binds its own; a
+ * member's parameter decorators run with the class, so they are outside the member's code. A
+ * block-scoped declaration, a label, a throw, and a dead-zone read are its own outside any
+ * function nested in it, arrows included.
  *
  * @param node - The node, inside `callback`.
  * @param callback - The callback.
@@ -97,7 +97,12 @@ export function inOwnCode(node: Node, callback: Node, rule: Rule): boolean {
   if (!ownScope && !OWN_THIS_RULES.has(rule)) return true;
   for (let child = node; child.parent !== callback; child = child.parent) {
     const { parent } = child;
-    if ((ownScope && isArrowFunction(parent)) || entersOwnThis(child, parent)) return false;
+    if (ownScope && isArrowFunction(parent)) return false;
+    if (isParameterDeclaration(parent) && runsWithClass(child) && isFunctionMember(parent.parent)) {
+      child = parent;
+    } else if (entersOwnThis(child, parent)) {
+      return false;
+    }
   }
   return true;
 }
@@ -204,7 +209,7 @@ function declarationOf(statement: Statement, name: string): { blockScoped: boole
       boundNames(candidate.name).includes(name),
     );
     if (!declares) return undefined;
-    return { blockScoped: (declarationList.flags & NodeFlags.BlockScoped) !== 0 };
+    return { blockScoped: declarationKind(declarationList) !== "var" };
   }
   if (isClassDeclaration(statement) || isFunctionDeclaration(statement)) {
     if (statement.name?.text !== name) return undefined;

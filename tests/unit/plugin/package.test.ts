@@ -91,9 +91,9 @@ function packedPaths(output: string): string[] {
   });
 }
 
-/** The initializer text of the first `DEBUG` declaration in `text`, or undefined when there is none. */
-function debugInitializer(text: string): string | undefined {
-  return /\bconst DEBUG\w*(?::[^=]+)?\s*=\s*([\s\S]+?);\s*$/mu.exec(text)?.[1];
+/** The gate of the first shape guard in `text`, inside its parentheses, or undefined when there is none. */
+function guardGate(text: string): string | undefined {
+  return /^\s*\((.+)\) && [\w$]+\.assertShape\(/mu.exec(text)?.[1];
 }
 
 /** The text of the code a transform returned, or the empty string when it returned none. */
@@ -254,7 +254,7 @@ describe("built package", () => {
   });
 
   it(
-    "rewrites an inline each through the packed plugin with the packed runtime's DEBUG copy",
+    "rewrites an inline each through the packed plugin, gating its guard with the packed runtime's DEBUG initializer",
     async () => {
       const entry = createRequire(join(consumer, "package.json")).resolve("ecstatic/vite");
       const module: unknown = await import(pathToFileURL(entry).href);
@@ -266,8 +266,7 @@ describe("built package", () => {
         await host.transform(CONSUMER_SOURCE, normalizePath(join(consumer, CONSUMER_FILE))),
       );
 
-      expect(code).toContain("assertShape");
-      expect(debugInitializer(code)).toBe(INSTALLED_DEBUG_INITIALIZER);
+      expect(guardGate(code)).toBe(INSTALLED_DEBUG_INITIALIZER);
     },
     SPAWN_TIMEOUT_MS,
   );

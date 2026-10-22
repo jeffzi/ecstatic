@@ -43,7 +43,7 @@ const TRANSFORMED_HELPERS = [
 /** A module whose `each` calls compile to inlined loops, in a project holding a runtime copy. */
 const MAIN_MODULE = "app/main.ts";
 
-/** A module that binds `DEBUG` itself, so the emitter names its `DEBUG` copy apart. */
+/** A module that binds `DEBUG` itself, beside the guards the emitter writes. */
 const FLAGS_MODULE = "app/flags.ts";
 
 const INLINED_SOURCE = `import { archetype, component, each, type Storage } from "../src/ecstatic/index.js";
@@ -58,32 +58,31 @@ export function advance(movers: Storage<typeof Mover>): void {
 }
 `;
 
-/** The `src/ecstatic/debug.ts` the rejecting cases compare `DEBUG` copies with. */
+/** The `src/ecstatic/debug.ts` the rejecting cases compare gates with. */
 const CHECKER_RUNTIME = `declare const NDEBUG: boolean | undefined;
 export const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
 `;
 
-/** A `DEBUG` copy initialized as {@link CHECKER_RUNTIME} initializes `DEBUG`. */
-const RUNTIME_COPY = 'const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;';
+/** The initializer of `DEBUG` in {@link CHECKER_RUNTIME}. */
+const CHECKER_GATE = 'typeof NDEBUG === "undefined" || !NDEBUG';
 
-const BARE_GUARD = "ecstatic_internal.assertShape(storage, shapeKey);";
+const SHAPE_KEY = "c8:Position{1:x=n,1:y=n}|";
 
-/** A shape guard gated by {@link RUNTIME_COPY}. */
-const GATED_GUARD = `DEBUG && ${BARE_GUARD}`;
+const BARE_GUARD = `ecstatic_internal.assertShape(storage, "${SHAPE_KEY}");`;
 
-const NO_GUARD_BODY = "void storage;";
+/** A shape guard gated by {@link CHECKER_GATE}, as the emitter writes one. */
+const GATED_GUARD = `(${CHECKER_GATE}) && ${BARE_GUARD}`;
 
 /** The test module the rejecting cases write their outputs as. */
 const REJECTED_MODULE = "tests/unit/a.test.ts";
 
-/** The problem named for a `DEBUG` copy initialized to `true` in {@link REJECTED_MODULE}. */
-const WRONG_COPY = `${REJECTED_MODULE}: the DEBUG copy DEBUG is initialized to true, not as src/ecstatic/debug.ts initializes DEBUG`;
+/** The problem named for a guard on line 4 of {@link REJECTED_MODULE} whose gate reads an `NDEBUG` the file binds. */
+const SHADOWED = `${REJECTED_MODULE}:4: the shape guard is gated by ${CHECKER_GATE} (reading the file's own NDEBUG), not by the runtime's DEBUG initializer`;
 
-/** The problem named for a guard on line 5 of {@link REJECTED_MODULE} gated by a `DEBUG` that is no copy. */
-const FOREIGN_GATE = `${REJECTED_MODULE}:5: the shape guard is gated by DEBUG, not by the file's DEBUG copy`;
-
-/** The problem named for a guard on line 5 of {@link REJECTED_MODULE} gated by a shadowed copy. */
-const SHADOWED = `${REJECTED_MODULE}:5: the shape guard is gated by DEBUG (a local binding), not by the file's DEBUG copy`;
+/** The problem named for a guard on line 4 of {@link REJECTED_MODULE} gated by `gate` alone. */
+function gatedOtherwise(gate: string): string {
+  return `${REJECTED_MODULE}:4: the shape guard is gated by ${gate}, not by the runtime's DEBUG initializer`;
+}
 
 let session: Session;
 let rewriter: Rewriter;
@@ -106,11 +105,10 @@ afterAll(async () => {
   await session.close();
 });
 
-/** The output of a rewritten module whose preamble declares `declarations` on line 2 and whose function holds `guard` on line 5. */
+/** The output of a rewritten module that declares `declarations` on line 2 and whose function holds `guard` on line 4. */
 function guardedModule(declarations: string, guard: string): string {
   return `import * as ecstatic_internal from "ecstatic/internal";
 ${declarations}
-const shapeKey = "c8:Position{1:x=n,1:y=n}|";
 export function run(storage: unknown): void {
   ${guard}
 }
@@ -170,14 +168,14 @@ describe("unstrippedProblems", () => {
       expect(checked).toStrictEqual(expect.arrayContaining(TRANSFORMED_HELPERS));
     });
 
-    it("finds every shape guard gated by a copy of the runtime DEBUG", () => {
+    it("finds every shape guard gated by the runtime's DEBUG initializer", () => {
       const problems = unstrippedProblems(outputs, runtime);
 
       expect(problems).toStrictEqual([]);
     });
   });
 
-  describe("when every guard is gated by a copy of the runtime DEBUG", () => {
+  describe("when every guard is gated by the runtime's DEBUG initializer", () => {
     let emitted: { main: string; flags: string };
 
     beforeAll(async () => {
@@ -213,7 +211,7 @@ describe("unstrippedProblems", () => {
         name: "a guard with no gate under src/ beside the guards the emitter writes",
         outputs: (): Record<string, string> => ({
           [MAIN_MODULE]: emitted.main,
-          "src/each.ts": guardedModule(RUNTIME_COPY, BARE_GUARD),
+          "src/each.ts": guardedModule("", BARE_GUARD),
         }),
       },
     ])("reports nothing for $name", async ({ outputs }) => {
@@ -223,161 +221,150 @@ describe("unstrippedProblems", () => {
 
       expect(problems).toStrictEqual([]);
     });
+
+    it.each([
+      {
+        name: "a gate in more parentheses",
+        declarations: "",
+        guard: `((${CHECKER_GATE})) && ${BARE_GUARD}`,
+      },
+      {
+        name: "a gate after another gate",
+        declarations: "const enabled = true;",
+        guard: `enabled && ${GATED_GUARD}`,
+      },
+      {
+        name: "a gate inside a parenthesized chain of gates",
+        declarations: "const enabled = true;",
+        guard: `(enabled && (${CHECKER_GATE})) && ${BARE_GUARD}`,
+      },
+    ])("reports nothing for $name", async ({ declarations, guard }) => {
+      const problems = await checkerProblems({
+        [REJECTED_MODULE]: guardedModule(declarations, guard),
+      });
+
+      expect(problems).toStrictEqual([]);
+    });
   });
 
-  describe("when a local binding shadows the DEBUG copy", () => {
+  describe("when the file binds a name the gate reads", () => {
     it.each([
-      { binding: "function parameter", guard: `function f(DEBUG: boolean) { ${GATED_GUARD} }` },
+      { binding: "top-level const", declarations: "const NDEBUG = false;", guard: GATED_GUARD },
+      {
+        binding: "named import",
+        declarations: 'import { NDEBUG } from "./flags.js";',
+        guard: GATED_GUARD,
+      },
+      { binding: "function parameter", guard: `function f(NDEBUG: boolean) { ${GATED_GUARD} }` },
       {
         binding: "destructured parameter",
-        guard: `function f({ DEBUG }: { DEBUG: boolean }) { ${GATED_GUARD} }`,
+        guard: `function f({ NDEBUG }: { NDEBUG: boolean }) { ${GATED_GUARD} }`,
       },
-      { binding: "block-scoped const", guard: `{ const DEBUG = true; ${GATED_GUARD} }` },
-      { binding: "hoisted var", guard: `function f() { ${GATED_GUARD} var DEBUG = true; }` },
-      { binding: "catch clause", guard: `try { throw true; } catch (DEBUG) { ${GATED_GUARD} }` },
-      { binding: "class name", guard: `void class DEBUG { static { ${GATED_GUARD} } };` },
-      { binding: "function expression name", guard: `void function DEBUG() { ${GATED_GUARD} };` },
-      { binding: "for-of const", guard: `for (const DEBUG of [true]) ${GATED_GUARD}` },
-      { binding: "block-scoped let", guard: `{ let DEBUG = true; ${GATED_GUARD} }` },
-      { binding: "block function declaration", guard: `{ function DEBUG() {} ${GATED_GUARD} }` },
-      { binding: "block class declaration", guard: `{ class DEBUG {} ${GATED_GUARD} }` },
-      { binding: "enum", guard: `{ enum DEBUG {} ${GATED_GUARD} }` },
-      { binding: "namespace", guard: `{ namespace DEBUG {} ${GATED_GUARD} }` },
+      { binding: "block-scoped const", guard: `{ const NDEBUG = true; ${GATED_GUARD} }` },
+      { binding: "hoisted var", guard: `function f() { ${GATED_GUARD} var NDEBUG = true; }` },
+      { binding: "catch clause", guard: `try { throw true; } catch (NDEBUG) { ${GATED_GUARD} }` },
+      { binding: "class name", guard: `void class NDEBUG { static { ${GATED_GUARD} } };` },
+      { binding: "function expression name", guard: `void function NDEBUG() { ${GATED_GUARD} };` },
+      { binding: "for-of const", guard: `for (const NDEBUG of [true]) ${GATED_GUARD}` },
+      { binding: "block-scoped let", guard: `{ let NDEBUG = true; ${GATED_GUARD} }` },
+      { binding: "block function declaration", guard: `{ function NDEBUG() {} ${GATED_GUARD} }` },
+      { binding: "block class declaration", guard: `{ class NDEBUG {} ${GATED_GUARD} }` },
+      { binding: "enum", guard: `{ enum NDEBUG {} ${GATED_GUARD} }` },
+      { binding: "namespace", guard: `{ namespace NDEBUG {} ${GATED_GUARD} }` },
       {
         binding: "case block const",
-        guard: `switch (storage) { case 0: const DEBUG = true; ${GATED_GUARD} }`,
+        guard: `switch (storage) { case 0: const NDEBUG = true; ${GATED_GUARD} }`,
       },
       {
         binding: "for initializer let",
-        guard: `for (let DEBUG = true; DEBUG; DEBUG = false) ${GATED_GUARD}`,
+        guard: `for (let NDEBUG = true; NDEBUG; NDEBUG = false) ${GATED_GUARD}`,
       },
-      { binding: "for-in const", guard: `for (const DEBUG in {}) ${GATED_GUARD}` },
-      { binding: "arrow parameter", guard: `void ((DEBUG: boolean) => { ${GATED_GUARD} });` },
-    ])("names the guard shadowed by a $binding", async ({ guard }) => {
+      { binding: "for-in const", guard: `for (const NDEBUG in {}) ${GATED_GUARD}` },
+      { binding: "arrow parameter", guard: `void ((NDEBUG: boolean) => { ${GATED_GUARD} });` },
+    ])("names the guard whose gate reads a $binding", async ({ declarations = "", guard }) => {
       const problems = await checkerProblems({
-        [REJECTED_MODULE]: guardedModule(RUNTIME_COPY, guard),
+        [REJECTED_MODULE]: guardedModule(declarations, guard),
       });
 
       expect(problems).toStrictEqual([SHADOWED]);
     });
   });
 
-  describe("when a guard can run without the DEBUG copy", () => {
+  describe("when a guard can run without the runtime's DEBUG initializer", () => {
     it.each([
       {
         name: "a guard with no gate",
-        outputs: { [REJECTED_MODULE]: guardedModule(RUNTIME_COPY, BARE_GUARD) },
-        expected: [`${REJECTED_MODULE}:5: the shape guard runs without a DEBUG gate`],
+        outputs: { [REJECTED_MODULE]: guardedModule("", BARE_GUARD) },
+        expected: [`${REJECTED_MODULE}:4: the shape guard runs without a DEBUG gate`],
       },
       {
         name: "a guard gated by another identifier",
         outputs: {
+          [REJECTED_MODULE]: guardedModule("const enabled = true;", `enabled && ${BARE_GUARD}`),
+        },
+        expected: [gatedOtherwise("enabled")],
+      },
+      {
+        name: "a guard gated by a top-level DEBUG holding the runtime's initializer",
+        outputs: {
           [REJECTED_MODULE]: guardedModule(
-            `${RUNTIME_COPY} const enabled = true;`,
-            `enabled && ${BARE_GUARD}`,
+            `const DEBUG = ${CHECKER_GATE};`,
+            `DEBUG && ${BARE_GUARD}`,
           ),
         },
-        expected: [
-          `${REJECTED_MODULE}:5: the shape guard is gated by enabled, not by the file's DEBUG copy`,
-        ],
+        expected: [gatedOtherwise("DEBUG")],
+      },
+      {
+        name: "a guard gated by the runtime's initializer or another operand",
+        outputs: {
+          [REJECTED_MODULE]: guardedModule(
+            "const enabled = true;",
+            `(${CHECKER_GATE} || enabled) && ${BARE_GUARD}`,
+          ),
+        },
+        expected: [gatedOtherwise(`${CHECKER_GATE} || enabled`)],
+      },
+      {
+        name: "a guard gated with another unary operator",
+        outputs: {
+          [REJECTED_MODULE]: guardedModule(
+            "",
+            `(typeof NDEBUG === "undefined" || -NDEBUG) && ${BARE_GUARD}`,
+          ),
+        },
+        expected: [gatedOtherwise('typeof NDEBUG === "undefined" || -NDEBUG')],
+      },
+      {
+        name: "a guard gated by negating another identifier",
+        outputs: {
+          [REJECTED_MODULE]: guardedModule(
+            "",
+            `(typeof NDEBUG === "undefined" || !OTHER) && ${BARE_GUARD}`,
+          ),
+        },
+        expected: [gatedOtherwise('typeof NDEBUG === "undefined" || !OTHER')],
       },
       {
         name: "a guard through a named import with no gate",
         outputs: {
-          [REJECTED_MODULE]:
-            'import { assertShape } from "ecstatic/internal";\nassertShape(storage, shapeKey);\n',
+          [REJECTED_MODULE]: `import { assertShape } from "ecstatic/internal";\nassertShape(storage, "${SHAPE_KEY}");\n`,
         },
         expected: [`${REJECTED_MODULE}:2: the shape guard runs without a DEBUG gate`],
       },
       {
         name: "a guard through an aliased named import with no gate",
         outputs: {
-          [REJECTED_MODULE]:
-            'import { assertShape as check } from "ecstatic/internal";\ncheck(storage, shapeKey);\n',
+          [REJECTED_MODULE]: `import { assertShape as check } from "ecstatic/internal";\ncheck(storage, "${SHAPE_KEY}");\n`,
         },
         expected: [`${REJECTED_MODULE}:2: the shape guard runs without a DEBUG gate`],
       },
-      {
-        name: "a guard gated by a DEBUG declared beside another name",
-        outputs: {
-          [REJECTED_MODULE]: guardedModule(`${RUNTIME_COPY.slice(0, -1)}, other = 1;`, GATED_GUARD),
-        },
-        expected: [FOREIGN_GATE],
-      },
-      {
-        name: "a guard gated by a const whose name no DEBUG copy takes",
-        outputs: {
-          [REJECTED_MODULE]: guardedModule(
-            RUNTIME_COPY.replace("DEBUG =", "DEBUG_0 ="),
-            `DEBUG_0 && ${BARE_GUARD}`,
-          ),
-        },
-        expected: [
-          `${REJECTED_MODULE}:5: the shape guard is gated by DEBUG_0, not by the file's DEBUG copy`,
-        ],
-      },
-      {
-        name: "a guard gated by a DEBUG declared before the namespace import",
-        outputs: {
-          [REJECTED_MODULE]: `${RUNTIME_COPY}\nexport function run(storage: unknown): void {\n  ${GATED_GUARD}\n}\nimport * as ecstatic_internal from "ecstatic/internal";\n`,
-        },
-        expected: [
-          `${REJECTED_MODULE}:3: the shape guard is gated by DEBUG, not by the file's DEBUG copy`,
-        ],
-      },
-    ])("names $name", async ({ outputs, expected }) => {
-      const problems = await checkerProblems(outputs);
-
-      expect(problems).toStrictEqual(expected);
-    });
-  });
-
-  describe("when the DEBUG copy is initialized otherwise", () => {
-    it.each([
-      {
-        name: "a copy that gates a guard",
-        outputs: { [REJECTED_MODULE]: guardedModule("const DEBUG = true;", GATED_GUARD) },
-        expected: [WRONG_COPY],
-      },
-      {
-        name: "a copy that gates no guard",
-        outputs: {
-          [REJECTED_MODULE]: guardedModule("const DEBUG = true;", NO_GUARD_BODY),
-          "tests/unit/b.test.ts": guardedModule(RUNTIME_COPY, GATED_GUARD),
-        },
-        expected: [WRONG_COPY],
-      },
-      {
-        name: "a copy with another unary operator",
-        outputs: {
-          [REJECTED_MODULE]: guardedModule(
-            'const DEBUG = typeof NDEBUG === "undefined" || -NDEBUG;',
-            GATED_GUARD,
-          ),
-        },
-        expected: [
-          `${REJECTED_MODULE}: the DEBUG copy DEBUG is initialized to typeof NDEBUG === "undefined" || -NDEBUG, not as src/ecstatic/debug.ts initializes DEBUG`,
-        ],
-      },
-      {
-        name: "a copy that negates another identifier",
-        outputs: {
-          [REJECTED_MODULE]: guardedModule(
-            'const DEBUG = typeof NDEBUG === "undefined" || !OTHER;',
-            GATED_GUARD,
-          ),
-        },
-        expected: [
-          `${REJECTED_MODULE}: the DEBUG copy DEBUG is initialized to typeof NDEBUG === "undefined" || !OTHER, not as src/ecstatic/debug.ts initializes DEBUG`,
-        ],
-      },
     ])("names $name", async ({ outputs, expected }) => {
       const problems = await checkerProblems(outputs);
 
       expect(problems).toStrictEqual(expected);
     });
 
-    it("names a copy whose call passes fewer arguments than the runtime's", async () => {
+    it("names a gate whose call passes fewer arguments than the runtime's", async () => {
       const callRuntime = runtimeDebug(
         await session.parseText(
           projectPath(REPO_ROOT, "tests/optimizer/call-debug.ts"),
@@ -385,24 +372,12 @@ describe("unstrippedProblems", () => {
         ),
       );
       const files = await parsed({
-        [REJECTED_MODULE]: guardedModule("const DEBUG = enabled(NDEBUG);", GATED_GUARD),
+        [REJECTED_MODULE]: guardedModule("", `enabled(NDEBUG) && ${BARE_GUARD}`),
       });
 
       const problems = unstrippedProblems(files, callRuntime);
 
-      expect(problems).toStrictEqual([
-        `${REJECTED_MODULE}: the DEBUG copy DEBUG is initialized to enabled(NDEBUG), not as src/ecstatic/debug.ts initializes DEBUG`,
-      ]);
-    });
-  });
-
-  describe("when a parenthesized copy gates the guard", () => {
-    it("reports nothing", async () => {
-      const problems = await checkerProblems({
-        [REJECTED_MODULE]: guardedModule(RUNTIME_COPY, `(DEBUG) && ${BARE_GUARD}`),
-      });
-
-      expect(problems).toStrictEqual([]);
+      expect(problems).toStrictEqual([gatedOtherwise("enabled(NDEBUG)")]);
     });
   });
 
@@ -410,18 +385,17 @@ describe("unstrippedProblems", () => {
     it.each([
       {
         name: "no guard in any output",
-        outputs: { [REJECTED_MODULE]: guardedModule(RUNTIME_COPY, NO_GUARD_BODY) },
+        outputs: { [REJECTED_MODULE]: guardedModule("", "void storage;") },
       },
       {
         name: "only a direct call of the runtime's assertShape",
         outputs: {
-          [REJECTED_MODULE]:
-            'import { assertShape } from "../../src/ecstatic/shape-guard.js";\nassertShape(storage, "c8:Position{1:x=n,1:y=n}|");\n',
+          [REJECTED_MODULE]: `import { assertShape } from "../../src/ecstatic/shape-guard.js";\nassertShape(storage, "${SHAPE_KEY}");\n`,
         },
       },
       {
         name: "guards only under src/",
-        outputs: { "src/each.ts": guardedModule(RUNTIME_COPY, GATED_GUARD) },
+        outputs: { "src/each.ts": guardedModule("", GATED_GUARD) },
       },
       {
         name: "a call through a type-only namespace import",
@@ -432,14 +406,13 @@ describe("unstrippedProblems", () => {
       {
         name: "a call through a type-only named import",
         outputs: {
-          [REJECTED_MODULE]:
-            'import { type assertShape } from "ecstatic/internal";\nassertShape(storage, shapeKey);\n',
+          [REJECTED_MODULE]: `import { type assertShape } from "ecstatic/internal";\nassertShape(storage, "${SHAPE_KEY}");\n`,
         },
       },
       {
         name: "a call beside a side-effect import",
         outputs: {
-          [REJECTED_MODULE]: 'import "ecstatic/internal";\nassertShape(storage, shapeKey);\n',
+          [REJECTED_MODULE]: `import "ecstatic/internal";\nassertShape(storage, "${SHAPE_KEY}");\n`,
         },
       },
     ])("reports it has nothing to check for $name", async ({ outputs }) => {

@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c9:DockCrate{1:x=n}|";
 // rewrite-applies: callback-without-parameter
 import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
 
@@ -22,7 +20,7 @@ export function scenario(): unknown {
 
   {
       const storage = empty;
-      DEBUG && ecstatic_internal.assertShape(storage, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage, "c9:DockCrate{1:x=n}|");
       const n = storage.n;
       if (n > 0) {
           for (let i = n - 1; i >= 0; i--) {
@@ -32,7 +30,7 @@ export function scenario(): unknown {
   }
   {
       const storage_1 = full;
-      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:DockCrate{1:x=n}|");
       const n_1 = storage_1.n;
       if (n_1 > 0) {
           for (let i_1 = n_1 - 1; i_1 >= 0; i_1--) {

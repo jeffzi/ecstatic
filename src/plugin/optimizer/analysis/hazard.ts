@@ -28,7 +28,13 @@ import {
 
 import { type Checker, type CheckerSymbol, isGlobalValue, typeAtLocation } from "../compiler.js";
 import { type ArchShape, type Op, shapeKey } from "../facts.js";
-import { declarationKind, type InlineCallback, isThisParameter, skipWrappers } from "../syntax.js";
+import {
+  declarationKind,
+  type InlineCallback,
+  isThisParameter,
+  skipErased,
+  skipWrappers,
+} from "../syntax.js";
 import { forEachEvaluated } from "./evaluated.js";
 import {
   isDestructuringAssignment,
@@ -423,10 +429,10 @@ class HazardWalker {
   }
 
   /**
-   * Whether a call is on the allowlist: a method of the global `Math`, or an ecstatic op that never
-   * replaces the iterated storage's arrays and whose object arguments cannot run a getter at the
-   * depth it reads them. `spawn` and `spawnMany` qualify only into a storage whose shape key
-   * differs from every iterated one.
+   * Whether a call is on the allowlist: a method of the global `Math` whose arguments are all
+   * primitive, or an ecstatic op that never replaces the iterated storage's arrays and whose object
+   * arguments cannot run a getter at the depth it reads them. `spawn` and `spawnMany` qualify only
+   * into a storage whose shape key differs from every iterated one.
    *
    * @param call - The call to test.
    * @returns Whether the call runs no user code.
@@ -438,7 +444,7 @@ class HazardWalker {
       isPropertyAccessExpression(callee) && isGlobalValue(this.#checker, callee.expression, "Math"),
       recognize(this.#checker, this.#scope.roots, call),
     ]);
-    if (math) return true;
+    if (math) return await this.#primitiveArguments(call);
     const reads = recognized === undefined ? undefined : ARGUMENT_READS.get(recognized.op);
     if (recognized === undefined || reads === undefined) return false;
     const args = call.arguments;
@@ -447,6 +453,21 @@ class HazardWalker {
       Promise.all(args.slice(reads.from).map(async (arg) => await this.#argumentSafe(reads, arg))),
     ]);
     return elsewhere && safe.every(Boolean);
+  }
+
+  /**
+   * Whether every argument of a call is primitive. A `Math` method converts each argument to a
+   * number, which runs an object's valueOf or toString.
+   *
+   * @param call - The call to test.
+   * @returns Whether no argument can convert through user code.
+   * @throws When the compiler process has exited.
+   */
+  async #primitiveArguments(call: CallExpression): Promise<boolean> {
+    const primitive = await Promise.all(
+      call.arguments.map(async (arg) => await this.#primitive(arg)),
+    );
+    return primitive.every(Boolean);
   }
 
   async #argumentSafe(reads: Reads, arg: Expression): Promise<boolean> {
@@ -483,13 +504,16 @@ class HazardWalker {
 
   /**
    * Whether an expression's static type holds only primitives, which convert without running user
-   * code.
+   * code. The type is read inside every erased wrapper, because an assertion such as
+   * `x as unknown as number` hides an object, whose valueOf or toString still runs, behind a
+   * primitive type.
    *
    * @param expr - The expression to test.
    * @returns Whether every value of `expr` is a primitive.
+   * @throws When the compiler process has exited.
    */
   async #primitive(expr: Expression): Promise<boolean> {
-    return await isPrimitiveType(await typeAtLocation(this.#checker, expr));
+    return await isPrimitiveType(await typeAtLocation(this.#checker, skipErased(expr)));
   }
 
   /**

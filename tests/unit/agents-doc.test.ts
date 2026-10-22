@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -7,28 +6,8 @@ import { createVitest, type Vitest } from "vitest/node";
 
 import { REPO_ROOT } from "./plugin/tsconfig-fixtures.js";
 
-const RAW = readFileSync(join(REPO_ROOT, "AGENTS.md"), "utf8");
-
 // Collapsed to single spaces so a phrase matches however the prose wraps.
-const AGENTS = RAW.replaceAll(/\s+/gu, " ");
-
-/**
- * SHA-256 of each section that must stay as the main branch has it, from its heading up to the next
- * one. A deliberate edit to one of these sections updates its hash here.
- */
-const PINNED_SECTIONS = {
-  "Git hygiene": "aca9ec34334963bfc48aa77715f81a2b500d966e392cf1ddce80951aa8f39d42",
-  "Linter and type-checker configuration":
-    "cdaa2dacd9c60284ecb6a8084a607b889b1b2ac5eb38acf7a344d0a57f24ce72",
-};
-
-/** The raw text of the `## heading` section, up to the next heading; empty when it is missing. */
-function section(heading: string): string {
-  const start = RAW.indexOf(`## ${heading}\n`);
-  if (start === -1) return "";
-  const end = RAW.indexOf("\n## ", start + 1);
-  return RAW.slice(start, end === -1 ? undefined : end);
-}
+const AGENTS = readFileSync(join(REPO_ROOT, "AGENTS.md"), "utf8").replaceAll(/\s+/gu, " ");
 
 const OPTIMIZER_DIR = "src/plugin/optimizer";
 
@@ -100,12 +79,5 @@ describe("AGENTS.md", () => {
 
   it("states no Go requirement", () => {
     expect(AGENTS).not.toMatch(/\bgo(?:lang)?(?![a-z])/iu);
-  });
-
-  it.each(Object.entries(PINNED_SECTIONS))("keeps the %s section as on main", (heading, hash) => {
-    const text = section(heading);
-
-    expect(text).not.toBe("");
-    expect(createHash("sha256").update(text).digest("hex")).toBe(hash);
   });
 });

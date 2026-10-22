@@ -2,7 +2,9 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { analyze } from "../../../../src/plugin/optimizer/analysis/analyze.js";
 import { inlineCallback } from "../../../../src/plugin/optimizer/analysis/callback.js";
+import { PackageRoots } from "../../../../src/plugin/optimizer/analysis/roots.js";
 import type {
   Callback,
   NodeID,
@@ -11,11 +13,15 @@ import type {
   ViewUse,
 } from "../../../../src/plugin/optimizer/facts.js";
 import type { NodeTable } from "../../../../src/plugin/optimizer/nodes.js";
-import { SPAWN_TIMEOUT_MS } from "../project.js";
+import {
+  openProject,
+  projectPath,
+  RUNTIME_TSCONFIG,
+  runtimeProject,
+  SPAWN_TIMEOUT_MS,
+} from "../project.js";
 import {
   CallbackProject,
-  DIRECT_EVAL_MARKS,
-  EVAL_SOURCE,
   type Located,
   MARK_DECL,
   markOffset,
@@ -31,29 +37,20 @@ import {
 interface CallbackForm {
   readonly params: number;
   readonly firstParam: ParamForm;
-  readonly arrow: boolean;
   readonly async: boolean;
   readonly generator: boolean;
-  readonly exprBody: boolean;
 }
 
 /** The form of a callback with no parameter, written as a plain function expression. */
 const BARE_FORM: CallbackForm = {
   params: 0,
   firstParam: "none",
-  arrow: false,
   async: false,
   generator: false,
-  exprBody: false,
 };
 
-/** An arrow taking one identifier parameter, with `overrides` applied. */
-function arrowForm(overrides: Partial<CallbackForm> = {}): CallbackForm {
-  return { ...BARE_FORM, params: 1, firstParam: "identifier", arrow: true, ...overrides };
-}
-
-/** A function expression taking one identifier parameter, with `overrides` applied. */
-function functionForm(overrides: Partial<CallbackForm> = {}): CallbackForm {
+/** A callback taking one identifier parameter, with `overrides` applied. */
+function viewForm(overrides: Partial<CallbackForm> = {}): CallbackForm {
   return { ...BARE_FORM, params: 1, firstParam: "identifier", ...overrides };
 }
 
@@ -64,18 +61,13 @@ const ARROW_SOURCE = "each(s, (e) => {});";
 const FUNCTION_SOURCE = "each(s, function (e) {});";
 
 const FORM_CASES: readonly { name: string; source: string; want: CallbackForm }[] = [
-  { name: "arrow with an identifier parameter", source: ARROW_SOURCE, want: arrowForm() },
-  {
-    name: "arrow with an expression body",
-    source: "each(s, (e) => e);",
-    want: arrowForm({ exprBody: true }),
-  },
-  { name: "async arrow", source: "each(s, async (e) => {});", want: arrowForm({ async: true }) },
-  { name: "function expression", source: FUNCTION_SOURCE, want: functionForm() },
+  { name: "arrow with an identifier parameter", source: ARROW_SOURCE, want: viewForm() },
+  { name: "async arrow", source: "each(s, async (e) => {});", want: viewForm({ async: true }) },
+  { name: "function expression", source: FUNCTION_SOURCE, want: viewForm() },
   {
     name: "generator function expression",
     source: "each(s, function* (e) {});",
-    want: functionForm({ generator: true }),
+    want: viewForm({ generator: true }),
   },
   {
     name: "async generator query callback without parameters",
@@ -85,37 +77,37 @@ const FORM_CASES: readonly { name: string; source: string; want: CallbackForm }[
   {
     name: "object pattern parameter",
     source: "each(s, ({ id }: any) => {});",
-    want: arrowForm({ firstParam: "object-pattern" }),
+    want: viewForm({ firstParam: "object-pattern" }),
   },
   {
     name: "identifier parameter with a default",
     source: "each(s, (e = 0) => {});",
-    want: arrowForm({ firstParam: "other" }),
+    want: viewForm({ firstParam: "other" }),
   },
   {
     name: "object pattern parameter with a default",
     source: "each(s, ({ id }: any = {}) => {});",
-    want: arrowForm({ firstParam: "other" }),
+    want: viewForm({ firstParam: "other" }),
   },
   {
     name: "rest parameter",
     source: "each(s, (...e: number[]) => {});",
-    want: arrowForm({ firstParam: "other" }),
+    want: viewForm({ firstParam: "other" }),
   },
   {
     name: "array pattern parameter",
     source: "each(s, ([a]: any) => {});",
-    want: arrowForm({ firstParam: "other" }),
+    want: viewForm({ firstParam: "other" }),
   },
   {
     name: "second parameter counted",
     source: "each(s, (e, f = 0) => {});",
-    want: arrowForm({ params: 2 }),
+    want: viewForm({ params: 2 }),
   },
   {
     name: "this parameter not counted",
     source: "each(s, function (this: unknown, e) {});",
-    want: functionForm(),
+    want: viewForm(),
   },
 ];
 
@@ -434,6 +426,73 @@ each(enemies, () => {
 	spawn(ships);
 });`;
 
+const LOOP_CALL = "each(s, (e) => {});";
+
+/** `declaration` followed by the loop call, both at the top level. */
+function beforeLoop(declaration: string): string {
+  return `${declaration}\n${LOOP_CALL}`;
+}
+
+/** `declaration` followed by the loop call, both in the body of a function. */
+function inFunction(declaration: string): string {
+  return `function run(): void {\n\t${declaration}\n\t${LOOP_CALL}\n}`;
+}
+
+/**
+ * A source declaring `NDEBUG` somewhere, and whether that declaration is in scope at its loop
+ * call.
+ */
+const NDEBUG_CASES: readonly { name: string; source: string; bound: boolean }[] = [
+  { name: "a top-level const", source: beforeLoop("const NDEBUG = false;"), bound: true },
+  { name: "a top-level let", source: beforeLoop("let NDEBUG = false;"), bound: true },
+  { name: "a top-level var", source: beforeLoop("var NDEBUG = false;"), bound: true },
+  { name: "a top-level function", source: beforeLoop("function NDEBUG(): void {}"), bound: true },
+  { name: "a top-level class", source: beforeLoop("class NDEBUG {}"), bound: true },
+  {
+    name: "an import",
+    source: beforeLoop('import { Position as NDEBUG } from "../position.js";'),
+    bound: true,
+  },
+  { name: "an enclosing const", source: inFunction("const NDEBUG = false;"), bound: true },
+  { name: "an enclosing let", source: inFunction("let NDEBUG = false;"), bound: true },
+  { name: "an enclosing var", source: inFunction("var NDEBUG = false;"), bound: true },
+  {
+    name: "an enclosing block's const",
+    source: `{\n\tconst NDEBUG = false;\n\t${LOOP_CALL}\n}`,
+    bound: true,
+  },
+  {
+    name: "a parameter of the enclosing function",
+    source: `function run(NDEBUG: boolean): void {\n\t${LOOP_CALL}\n}`,
+    bound: true,
+  },
+  { name: "an enclosing function", source: inFunction("function NDEBUG(): void {}"), bound: true },
+  { name: "an enclosing class", source: inFunction("class NDEBUG {}"), bound: true },
+  { name: "no declaration", source: LOOP_CALL, bound: false },
+  {
+    name: "a const in the callback body",
+    source: "each(s, (e) => {\n\tconst NDEBUG = false;\n});",
+    bound: false,
+  },
+  { name: "a callback parameter", source: "each(s, (NDEBUG) => {});", bound: false },
+  {
+    name: "a const in a sibling function",
+    source: `function other(): void {\n\tconst NDEBUG = false;\n}\n${LOOP_CALL}`,
+    bound: false,
+  },
+  { name: "a type alias", source: beforeLoop("type NDEBUG = boolean;"), bound: false },
+  {
+    name: "a var merged with an ambient declaration of it",
+    source: beforeLoop("declare var NDEBUG: boolean;\nvar NDEBUG = false;"),
+    bound: true,
+  },
+  {
+    name: "an ambient const, which emits no binding",
+    source: beforeLoop("declare const NDEBUG: boolean;"),
+    bound: false,
+  },
+];
+
 /** A body whose recorded nodes `nodes` picks from the callback start at the marks. */
 interface NodeListCase {
   readonly name: string;
@@ -464,12 +523,6 @@ const NODE_LIST_CASES: readonly NodeListCase[] = [
 });`,
     nodes: (callback) => callback.paramRedeclarations,
     marks: ["p;", "vx: any = 2", "id: any = 0"],
-  },
-  {
-    name: "every direct eval call",
-    source: EVAL_SOURCE,
-    nodes: (callback) => callback.directEval,
-    marks: DIRECT_EVAL_MARKS,
   },
   {
     name: "the function-local reads of a function expression",
@@ -515,6 +568,7 @@ const project = new CallbackProject(
     ...NOT_INLINE_CASES.map(({ source }) => source),
     ...LOOSE_USE_CASES.map(({ source }) => source),
     ...NODE_LIST_CASES.map(({ source }) => source),
+    ...NDEBUG_CASES.map(({ source }) => source),
     RETURNS_SOURCE,
   ],
   [
@@ -580,7 +634,7 @@ describe("inlineCallback", () => {
   });
 });
 
-describe("summarizeCallback", () => {
+describe("callback summary", () => {
   it.each(FORM_CASES)("records the form of $name", async ({ source, want }) => {
     const located = await project.looseCall(source);
 
@@ -589,10 +643,8 @@ describe("summarizeCallback", () => {
     expect({
       params: callback.params,
       firstParam: callback.firstParam,
-      arrow: callback.arrow,
       async: callback.async,
       generator: callback.generator,
-      exprBody: callback.exprBody,
     }).toStrictEqual(want);
   });
 
@@ -655,6 +707,17 @@ describe("summarizeCallback", () => {
     );
   });
 
+  it.each(NDEBUG_CASES)(
+    "records whether NDEBUG is declared in scope at the call for $name",
+    async ({ source, bound }) => {
+      const located = await project.looseCall(source);
+
+      const { callback } = await project.summarize(located);
+
+      expect(callback.ndebugBound).toBe(bound);
+    },
+  );
+
   it("adds the declaration files a spawn target's shape consulted to the site", async () => {
     const located = await project.viewCall(SPAWN_ELSEWHERE_SOURCE);
 
@@ -664,4 +727,47 @@ describe("summarizeCallback", () => {
       expect.arrayContaining([join(project.root, "app", "archetypes.ts")]),
     );
   });
+});
+
+/**
+ * A script file: it neither imports nor exports, so under default module detection the compiler
+ * files its top-level `NDEBUG` with the globals, while a bundler still loads it as a module.
+ */
+const SCRIPT_SOURCE = `declare const ecs: typeof import("../src/ecstatic/index.js");
+declare const s: any;
+const NDEBUG = false;
+ecs.each(s, (e) => {});
+`;
+
+describe("a script file's top-level NDEBUG", () => {
+  it(
+    "records NDEBUG as declared in scope at the call",
+    async () => {
+      const config: { compilerOptions: Record<string, unknown> } = JSON.parse(RUNTIME_TSCONFIG);
+      const opened = await openProject(
+        runtimeProject({
+          "tsconfig.json": JSON.stringify({
+            ...config,
+            compilerOptions: {
+              ...config.compilerOptions,
+              module: "esnext",
+              moduleResolution: "bundler",
+              moduleDetection: "legacy",
+            },
+          }),
+          "app/script.ts": SCRIPT_SOURCE,
+        }),
+      );
+      try {
+        const file = await opened.view.sourceFile(projectPath(opened.root, "app/script.ts"));
+
+        const { sites } = await analyze(opened.view.checker, file, new PackageRoots());
+
+        expect(sites.map((site) => site.callback?.ndebugBound)).toStrictEqual([true]);
+      } finally {
+        await opened.session.close();
+      }
+    },
+    SPAWN_TIMEOUT_MS,
+  );
 });

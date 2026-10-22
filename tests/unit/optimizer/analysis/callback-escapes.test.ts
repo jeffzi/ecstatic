@@ -479,7 +479,7 @@ beforeAll(() => project.open(), SPAWN_TIMEOUT_MS);
 
 afterAll(() => project.close());
 
-describe("summarizeCallback", () => {
+describe("callback summary", () => {
   describe("when a view reference does not lower", () => {
     it.each(ESCAPE_CASES)(
       "records the node, position, and kind of each for $name",

@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c9:ShelfPage{1:x=n}|";
 // rewrite-applies: this
 // rewrite-applies: arguments
 // rewrite-applies: super
@@ -36,7 +34,7 @@ class Collector extends Named {
     const seen: unknown[] = [];
     {
         const storage_1 = storage;
-        DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:ShelfPage{1:x=n}|");
         const n = storage_1.n;
         if (n > 0) {
             const ShelfPageRecord = storage_1.ShelfPage;

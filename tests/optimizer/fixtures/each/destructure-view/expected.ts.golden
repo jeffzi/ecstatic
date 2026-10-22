@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c9:PartsSpot{1:x=n}c9:PartsLamp{2:on=b}c10:PartsFixed{}|c8:PartsLit{}";
 // rewrite-applies: destructure-view
 // rewrite-applies: destructure-view-nested
 // rewrite-applies: destructure-id
@@ -29,7 +27,7 @@ export function scenario(): unknown {
 
   {
       const storage_1 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:PartsSpot{1:x=n}c9:PartsLamp{2:on=b}c10:PartsFixed{}|c8:PartsLit{}");
       const n = storage_1.n;
       if (n > 0) {
           const PartsLampRecord = storage_1.PartsLamp, PartsSpotRecord = storage_1.PartsSpot;

@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c10:LedgerBase{1:x=n}|c11:LedgerEntry{5:first=p,6:second=p,5:third=n}";
 // rewrite-applies: destructure-optional-slot
 // rewrite-applies: destructure-default-plain
 import {
@@ -32,7 +30,7 @@ export function scenario(): unknown {
 
   {
       const storage_1 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:LedgerBase{1:x=n}|c11:LedgerEntry{5:first=p,6:second=p,5:third=n}");
       const n = storage_1.n;
       if (n > 0) {
           const LedgerEntryRecord = storage_1.LedgerEntry;

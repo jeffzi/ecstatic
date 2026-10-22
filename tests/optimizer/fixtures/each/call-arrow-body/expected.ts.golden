@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c8:KiteTail{1:x=n}|";
 // rewrite-applies: callback-arrow
 // rewrite-applies: read-required-field
 import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
@@ -23,7 +21,7 @@ export function scenario(): unknown {
     // oxlint-disable-next-line typescript/no-confusing-void-expression -- the each call as an arrow's expression body is the behavior under test
     {
         const storage_1 = storage;
-        DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c8:KiteTail{1:x=n}|");
         const n = storage_1.n;
         if (n > 0) {
             const KiteTailRecord = storage_1.KiteTail;

@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c8:Position{1:x=n,1:y=n}c6:Health{2:hp=n}|";
 import { createWorld, each, register, spawn } from "ecstatic";
 
 import { Mover, Statue } from "../../schema.js";
@@ -19,7 +17,7 @@ export function scenario(): unknown {
   each(movers, (outer) => {
     {
         const storage = statues;
-        DEBUG && ecstatic_internal.assertShape(storage, shapeKey);
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage, "c8:Position{1:x=n,1:y=n}c6:Health{2:hp=n}|");
         const n = storage.n;
         if (n > 0) {
             const HealthRecord = storage.Health;

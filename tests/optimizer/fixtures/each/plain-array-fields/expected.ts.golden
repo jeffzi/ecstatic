@@ -1,6 +1,4 @@
 import * as ecstatic_internal from "ecstatic/internal";
-const DEBUG = typeof NDEBUG === "undefined" || !NDEBUG;
-const shapeKey = "c10:ScrollNote{4:page=n,4:text=p}c10:ScrollSeal{5:owner=p}|";
 // rewrite-applies: mode-hoisted
 // rewrite-applies: read-required-field
 // rewrite-applies: write-required-field
@@ -24,7 +22,7 @@ export function scenario(): unknown {
 
   {
       const storage_1 = storage;
-      DEBUG && ecstatic_internal.assertShape(storage_1, shapeKey);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:ScrollNote{4:page=n,4:text=p}c10:ScrollSeal{5:owner=p}|");
       const n = storage_1.n;
       if (n > 0) {
           const ScrollNoteRecord = storage_1.ScrollNote, ScrollSealRecord = storage_1.ScrollSeal;

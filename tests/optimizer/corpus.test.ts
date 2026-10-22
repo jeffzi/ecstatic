@@ -12,6 +12,7 @@ import {
   type FileBail,
 } from "../../src/plugin/optimizer/diagnostics.js";
 import { RULES, type Rule } from "../../src/plugin/optimizer/emit/catalog.js";
+import type { EmitFile } from "../../src/plugin/optimizer/emit/emit.js";
 import {
   DETAIL_PLACEHOLDER,
   REASONS,
@@ -362,7 +363,7 @@ function catalogGaps(
 async function rewriteAll(session: Session, files: readonly string[]): Promise<CorpusRun> {
   const view = await session.update();
   const planned = new Map<string, PlanResult>();
-  const applied = new Map<string, Set<Rule>>();
+  const emitted = new Map<string, EmitFile>();
   const seams: RewriteSeams = {
     analyze: async (checker, source, roots) => {
       const analysis = await analyze(checker, source, roots);
@@ -371,9 +372,7 @@ async function rewriteAll(session: Session, files: readonly string[]): Promise<C
     },
     inline: (file, inlining, uses) => {
       file.inline(inlining, uses);
-      const rules = applied.get(inlining.pos.file) ?? new Set<Rule>();
-      for (const rule of file.applied()) rules.add(rule);
-      applied.set(inlining.pos.file, rules);
+      emitted.set(inlining.pos.file, file);
     },
   };
   const rewriter = createRewriter(session, seams);
@@ -381,6 +380,9 @@ async function rewriteAll(session: Session, files: readonly string[]): Promise<C
   for (const file of files) {
     modules.set(file, await rewriter.rewrite(view, file));
   }
+  const applied = new Map(
+    [...emitted].map(([file, emit]) => [file, new Set(emit.applied())] as const),
+  );
   return { modules, planned, applied };
 }
 
@@ -443,7 +445,7 @@ const SHAPE_ROWS = [
     resolves: true,
   },
   { row: "as cast", fixture: "shape/as-cast", resolves: true },
-  { row: "wide Storage", fixture: "shape/wide-storage", resolves: false },
+  { row: "wide Storage", fixture: "bail/shape-unresolved", resolves: false },
   {
     row: "union of storages of different shapes",
     fixture: "shape/union-of-shapes",

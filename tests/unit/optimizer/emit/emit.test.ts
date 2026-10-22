@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { shapeKey } from "../../../../src/plugin/optimizer/facts.js";
@@ -15,11 +17,15 @@ import {
   rewriteAt,
 } from "./emit-project.js";
 
-/** A shape-key constant of the preamble, capturing its name and the shape key it holds. */
-const SHAPE_KEY_CONSTANT = /^const (shapeKey\w*) = "([^"]*\|[^"]*)";$/gmu;
+/** The shape guard of a loop, capturing the shape key it checks the storage against. */
+const SHAPE_GUARD = /assertShape\(\w+, "([^"]*)"\)/gu;
 
-/** The shape guard of a loop, capturing the name of the constant it checks the storage against. */
-const SHAPE_GUARD = /assertShape\(\w+, (\w+)\)/gu;
+/** A shape guard on a line of its own, gated by the project runtime's `DEBUG` initializer. */
+const RUNTIME_GATED_GUARD =
+  /^\(typeof NDEBUG === "undefined" \|\| !NDEBUG\) && ecstatic_internal\.assertShape\(\w+, "[^"]*"\);$/u;
+
+/** A shape guard on a line of its own, gated by the `DEBUG` initializer of the alternate runtime root. */
+const ROOT_GATED_GUARD = /^\(typeof NDEBUG !== "string"\) && ecstatic_internal\.assertShape\(/u;
 
 let project: EmitProject;
 
@@ -41,16 +47,63 @@ function splitAtLoops(text: string): { before: string; loops: string[]; inside: 
   return { before, loops, inside: loops.join(ROW_LOOP) };
 }
 
-/** The shape-key constants `text` declares, keyed by the shape key each holds. */
-function shapeKeyNames(text: string): Map<string, string> {
-  return new Map(
-    [...text.matchAll(SHAPE_KEY_CONSTANT)].map(([, name = "", key = ""]) => [key, name]),
-  );
+/** The shape key each shape guard in `text` checks its storage against, in order. */
+function guards(text: string): string[] {
+  return [...text.matchAll(SHAPE_GUARD)].map(([, key = ""]) => key);
 }
 
-/** The constant each shape guard in `text` checks its storage against, in order. */
-function guards(text: string): string[] {
-  return [...text.matchAll(SHAPE_GUARD)].map(([, name = ""]) => name);
+/** The lines of `text` that read `NDEBUG`, trimmed. */
+function ndebugLines(text: string): string[] {
+  return text
+    .split("\n")
+    .filter((line) => line.includes("NDEBUG"))
+    .map((line) => line.trim());
+}
+
+/**
+ * The module the circular-import case enters by: its `total` sums an inlined loop over a fresh
+ * storage, and its `scenario` returns the sum its partner took while this module had not yet run.
+ */
+const CYCLE_ENTRY_SOURCE = `import { createWorld, each, register, spawn } from "../src/ecstatic/index.js";
+import { Mover } from "../app/schema.js";
+import { early } from "./partner.js";
+
+export function total(): number {
+    const movers = register(createWorld(), Mover);
+    spawn(movers, { Position: { x: 2, y: 0 }, Velocity: { dx: 0, dy: 0 } });
+    spawn(movers, { Position: { x: 3, y: 0 }, Velocity: { dx: 0, dy: 0 } });
+    let sum = 0;
+    each(movers, (e) => {
+        sum += e.Position.x;
+    });
+    return sum;
+}
+
+export function scenario(): unknown {
+    return early;
+}
+`;
+
+/** The module the entry imports, which calls the entry's `total` as it loads. */
+const CYCLE_PARTNER_SOURCE = `import { total } from "./entry.js";
+
+export const early = total();
+`;
+
+/**
+ * Writes `entry` and the partner it imports as the two modules of the cycle in the project
+ * directory `dir`, a sibling of `app/`.
+ *
+ * @param root - The project root.
+ * @param dir - The directory's name.
+ * @param entry - The entry module's text.
+ * @returns The entry module's path relative to `app/`.
+ */
+function writeCycle(root: string, dir: string, entry: string): string {
+  mkdirSync(projectPath(root, dir), { recursive: true });
+  writeFileSync(projectPath(root, `${dir}/entry.ts`), entry);
+  writeFileSync(projectPath(root, `${dir}/partner.ts`), CYCLE_PARTNER_SOURCE);
+  return `../${dir}/entry.ts`;
 }
 
 /** Two `each` calls over Mover storages and one over a Statue storage, in a strict-mode file. */
@@ -380,6 +433,29 @@ describe("EmitFile", () => {
       );
     });
 
+    describe("when a circular import calls the loop before its module has run", () => {
+      it(
+        "runs the loop as the runtime call does, with checks on and stripped",
+        async () => {
+          const planned = await project.planned(CYCLE_ENTRY_SOURCE);
+          const { text } = await project.emit(planned);
+          const modules = {
+            runtime: writeCycle(project.root, "cycle-runtime", CYCLE_ENTRY_SOURCE),
+            rewritten: writeCycle(project.root, "cycle-rewritten", text),
+          };
+
+          const checked = await project.run(modules);
+          const stripped = await project.run(modules, true);
+
+          expect({ checked, stripped }).toStrictEqual({
+            checked: { runtime: 5, rewritten: 5 },
+            stripped: { runtime: 5, rewritten: 5 },
+          });
+        },
+        RUN_TIMEOUT_MS,
+      );
+    });
+
     describe("when reading the storage arrays", () => {
       const HOISTS = [/\.x[,;]/u, /\.y[,;]/u, /\.entities[,;]/u, /\.mask[,;]/u];
       const INDEXES = [/\.x\[/u, /\.y\[/u, /\.entities\[/u, /\.mask\[/u];
@@ -437,7 +513,10 @@ describe("EmitFile", () => {
     );
 
     describe("when guarding the compiled shape", () => {
-      /** Casts an empty storage to a shape it lacks, declaring the names the preamble would take. */
+      /**
+       * Casts an empty storage to a shape it lacks, in a file that binds `ecstatic_internal`,
+       * `DEBUG` and `shapeKey` itself, which the guard's inline gate and literal key must not read.
+       */
       const GUARD_SOURCE = `const ecstatic_internal = 0;
 const DEBUG = false;
 const shapeKey = "banana";
@@ -480,28 +559,24 @@ export function scenario(): unknown {
 
         const { text } = await project.emit(planned);
 
-        const names = shapeKeyNames(text);
-        expect(guards(text)).toStrictEqual(
-          planned.rewrites.map(({ shape }) => names.get(shapeKey(shape))),
-        );
+        expect(guards(text)).toStrictEqual(planned.rewrites.map(({ shape }) => shapeKey(shape)));
         expect(new Set(guards(text)).size).toBe(2);
       });
     });
 
     describe("when adding the file preamble", () => {
-      it("adds the internal import, one constant per distinct shape key, and the DEBUG copy once", async () => {
+      it("adds the internal import once and gates every guard with the runtime's DEBUG initializer", async () => {
         const planned = await project.planned(PREAMBLE_SOURCE);
 
         const { text } = await project.emit(planned);
 
         expect(text.split('from "ecstatic/internal"')).toHaveLength(2);
-        expect(text.split("\n").filter((line) => line.includes("NDEBUG"))).toHaveLength(1);
-        expect([...shapeKeyNames(text).keys()].toSorted()).toStrictEqual(
-          [...new Set(planned.rewrites.map(({ shape }) => shapeKey(shape)))].toSorted(),
+        expect(ndebugLines(text)).toStrictEqual(
+          planned.rewrites.map(() => expect.stringMatching(RUNTIME_GATED_GUARD)),
         );
       });
 
-      it("copies the DEBUG initializer of the runtime root it is given", async () => {
+      it("gates the guards with the DEBUG initializer of the runtime root it is given", async () => {
         const root = writeProject({
           "src/ecstatic/debug.ts": `declare const NDEBUG: unknown;
 
@@ -510,9 +585,13 @@ export const DEBUG: boolean = typeof NDEBUG !== "string";
 `,
         });
 
-        const { text } = await project.rewrite(PREAMBLE_SOURCE, { root });
+        const planned = await project.planned(PREAMBLE_SOURCE);
 
-        expect(text).toMatch(/^const DEBUG\w* = typeof NDEBUG !== "string";$/mu);
+        const { text } = await project.emit(planned, { root });
+
+        expect(ndebugLines(text)).toStrictEqual(
+          planned.rewrites.map(() => expect.stringMatching(ROOT_GATED_GUARD)),
+        );
       });
 
       it("rejects naming the runtime root's debug module when it cannot be read", async () => {
@@ -526,8 +605,11 @@ export const DEBUG: boolean = typeof NDEBUG !== "string";
 
     describe("when inlining a site throws once its loop is built", () => {
       it.each([
-        { name: "the first site, whose loop allocated the preamble names", failing: [0] },
-        { name: "the one site of its shape, whose loop added its shape key", failing: [1] },
+        {
+          name: "the first site, whose loop allocated the preamble's namespace name",
+          failing: [0],
+        },
+        { name: "the one site of its shape, whose guard carries its own shape key", failing: [1] },
         { name: "every site, so no loop is left to need the preamble", failing: [0, 1, 2] },
       ])("leaves the file as it was for $name", async ({ failing }) => {
         const planned = await project.planned(PREAMBLE_SOURCE);

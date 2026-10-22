@@ -3,34 +3,50 @@ import {
   type AsExpression,
   type BinaryOperator,
   type BindingName,
+  type ConstructorDeclaration,
   type Expression,
   type FunctionExpression,
+  type GetAccessorDeclaration,
   type Identifier,
+  type MethodDeclaration,
   type Node,
   NodeFlags,
   type NonNullExpression,
   type ParameterDeclaration,
   type ParenthesizedExpression,
+  type PropertyDeclaration,
   type SatisfiesExpression,
+  type SetAccessorDeclaration,
   SyntaxKind,
   type TypeAssertion,
 } from "typescript/ast";
 import {
   isArrowFunction,
   isAsExpression,
+  isBindingElement,
   isBreakOrContinueStatement,
   isClassLikeDeclaration,
+  isComputedPropertyName,
+  isConstructorDeclaration,
+  isDecorator,
+  isEnumMember,
   isExpressionWithTypeArguments,
   isFunctionExpression,
+  isGetAccessorDeclaration,
   isHeritageClause,
   isIdentifier,
   isInterfaceDeclaration,
+  isJsxAttribute,
   isLabeledStatement,
   isMetaProperty,
+  isMethodDeclaration,
   isNonNullExpression,
   isParenthesizedExpression,
   isPropertyAccessExpression,
+  isPropertyAssignment,
+  isPropertyDeclaration,
   isSatisfiesExpression,
+  isSetAccessorDeclaration,
   isSourceFile,
   isTypeAliasDeclaration,
   isTypeAssertion,
@@ -288,4 +304,92 @@ export function declarationKind(list: Node): DeclarationKind {
  */
 export function isThisParameter(param: ParameterDeclaration): boolean {
   return isIdentifier(param.name) && param.name.text === "this";
+}
+
+/** A class or object-literal member with parameters and a body that runs when it is called. */
+export type FunctionMember =
+  | MethodDeclaration
+  | GetAccessorDeclaration
+  | SetAccessorDeclaration
+  | ConstructorDeclaration;
+
+/**
+ * Whether a node is a method, accessor, or constructor.
+ *
+ * @param node - The node to test.
+ * @returns Whether `node` is a function member.
+ */
+export function isFunctionMember(node: Node): node is FunctionMember {
+  return (
+    isMethodDeclaration(node) ||
+    isGetAccessorDeclaration(node) ||
+    isSetAccessorDeclaration(node) ||
+    isConstructorDeclaration(node)
+  );
+}
+
+/**
+ * Calls `visit` on the parts of a member that run when its class or object is evaluated: its
+ * modifiers, decorators among them, and its name when the name is computed.
+ *
+ * @param member - The class or object-literal member.
+ * @param visit - Called once per part, in source order.
+ */
+export function visitMemberHead(
+  member: FunctionMember | PropertyDeclaration,
+  visit: (part: Node) => void,
+): void {
+  member.modifiers?.forEach((modifier) => {
+    visit(modifier);
+  });
+  const name = isConstructorDeclaration(member) ? undefined : member.name;
+  if (name !== undefined && isComputedPropertyName(name)) visit(name);
+}
+
+/**
+ * Whether a child of a member's parameter runs when the class is evaluated rather than when the
+ * member is called: it is one of the parameter's decorators.
+ *
+ * @param child - A child of a member's parameter.
+ * @returns Whether `child` is a decorator.
+ */
+export function runsWithClass(child: Node): boolean {
+  return isDecorator(child);
+}
+
+/**
+ * Whether a node reads the `arguments` object of the code around it, by syntax alone: an
+ * identifier named `arguments` that is a reference and not the name of a member, an enum member,
+ * a JSX attribute, or the property a binding element reads. A shorthand property `{ arguments }`
+ * reads it.
+ *
+ * @param node - The node to test.
+ * @returns Whether `node` reads `arguments`.
+ */
+export function isArgumentsRead(node: Node): node is Identifier {
+  return (
+    isIdentifier(node) && node.text === "arguments" && isReference(node) && !namesProperty(node)
+  );
+}
+
+/**
+ * Whether an identifier names a property rather than reading a binding.
+ *
+ * @param id - The identifier.
+ * @returns Whether `id` is the name of a property assignment, a class or object-literal member, an
+ *   enum member, or a JSX attribute, or the property a binding element reads.
+ */
+function namesProperty(id: Identifier): boolean {
+  const { parent } = id;
+  if (isBindingElement(parent)) return parent.propertyName === id;
+  return (
+    (isPropertyAssignment(parent) ||
+      isPropertyDeclaration(parent) ||
+      isMethodDeclaration(parent) ||
+      isGetAccessorDeclaration(parent) ||
+      isSetAccessorDeclaration(parent) ||
+      isEnumMember(parent) ||
+      isJsxAttribute(parent)) &&
+    parent.name === id
+  );
 }
