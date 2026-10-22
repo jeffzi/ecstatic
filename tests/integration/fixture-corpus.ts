@@ -13,7 +13,7 @@ export const CORPUS_ROOT = realpathSync(fileURLToPath(new URL("fixtures", import
 export const INPUT_FILE = "input.ts";
 
 /**
- * Rewritten by `npx vitest run --project fixtures -u`. Golden files under `divergent/` differ from
+ * Rewritten by `npx vitest run --project integration -u`. Golden files under `divergent/` differ from
  * the input by design.
  */
 export const GOLDEN_FILE = "expected.ts.golden";

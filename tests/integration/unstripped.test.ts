@@ -27,7 +27,7 @@ const REWRITE_TIMEOUT_MS = 60_000;
  * tests' program is checked: a superset of what those projects transform, helpers they import from
  * `scripts/` and `tests/unit/optimizer/` included.
  */
-const OPTIMIZER_TESTS = "tests/optimizer/";
+const INTEGRATION_TESTS = "tests/integration/";
 
 /** Modules outside the runtime unit tests that the optimized unit projects still transform. */
 const TRANSFORMED_HELPERS = [
@@ -95,7 +95,7 @@ beforeAll(async () => {
   runtime = runtimeDebug(await session.parse(join(REPO_ROOT, "src", "ecstatic", "debug.ts")));
   checkerRuntime = runtimeDebug(
     await session.parseText(
-      join(REPO_ROOT, "tests", "optimizer", "checker-debug.ts"),
+      join(REPO_ROOT, "tests", "integration", "checker-debug.ts"),
       CHECKER_RUNTIME,
     ),
   );
@@ -152,7 +152,7 @@ describe("unstrippedProblems", () => {
       const view = await session.update();
       const files = (await view.sourceFileNames()).filter((file) => {
         const name = repoName(file);
-        return !name.startsWith(OPTIMIZER_TESTS);
+        return !name.startsWith(INTEGRATION_TESTS);
       });
       checked = files.map(repoName);
       const rewritten = await Promise.all(
@@ -367,7 +367,7 @@ describe("unstrippedProblems", () => {
     it("names a gate whose call passes fewer arguments than the runtime's", async () => {
       const callRuntime = runtimeDebug(
         await session.parseText(
-          projectPath(REPO_ROOT, "tests/optimizer/call-debug.ts"),
+          projectPath(REPO_ROOT, "tests/integration/call-debug.ts"),
           "export const DEBUG = enabled(NDEBUG, true);\n",
         ),
       );
@@ -429,7 +429,7 @@ describe("runtimeDebug", () => {
     { name: "a let DEBUG", text: "export let DEBUG = true;\n" },
     { name: "a DEBUG with no initializer", text: "export declare const DEBUG: boolean;\n" },
   ])("rejects a debug module declaring $name, naming the file", async ({ text }) => {
-    const file = projectPath(REPO_ROOT, "tests/optimizer/bad-debug.ts");
+    const file = projectPath(REPO_ROOT, "tests/integration/bad-debug.ts");
     const debug = await session.parseText(file, text);
 
     const read = (): Expression => runtimeDebug(debug);

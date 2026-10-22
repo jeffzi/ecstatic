@@ -33,9 +33,9 @@ const LIFECYCLE_PROJECT = "unit";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
-/** The path of a file in `tests/optimizer`, named the way Vitest names modules. */
-function optimizerTestFile(name: string): string {
-  return normalizePath(join(ROOT, "tests", "optimizer", name));
+/** The path of a file in `tests/integration`, named the way Vitest names modules. */
+function integrationTestFile(name: string): string {
+  return normalizePath(join(ROOT, "tests", "integration", name));
 }
 
 const VITEST_CONFIG = join(ROOT, "vitest.config.ts");
@@ -46,13 +46,13 @@ const REWRITE_MARKER = "assertShape";
 // Vitest names test and setup files the way Vite names modules: absolute, with `/` separators.
 const SKIP_CHECKED = normalizePath(join(ROOT, "tests", "skip-checked.ts"));
 
-const CORPUS_TEST = optimizerTestFile("corpus.test.ts");
+const CORPUS_TEST = integrationTestFile("corpus.test.ts");
 
-const VITE_SMOKE_TEST = optimizerTestFile("vite-smoke.test.ts");
+const VITE_SMOKE_TEST = integrationTestFile("vite-smoke.test.ts");
 
-const GOLDEN_LOADER_TEST = optimizerTestFile("golden-loader.test.ts");
+const GOLDEN_LOADER_TEST = integrationTestFile("golden-loader.test.ts");
 
-const UNSTRIPPED_TEST = optimizerTestFile("unstripped.test.ts");
+const UNSTRIPPED_TEST = integrationTestFile("unstripped.test.ts");
 
 const INLINE_EACH_MODULE = join(ROOT, "tests", "unit", "inline-each.ts");
 
@@ -207,7 +207,7 @@ describe("vitest config", () => {
     { name: "Vite smoke test", file: VITE_SMOKE_TEST },
     { name: "golden loader test", file: GOLDEN_LOADER_TEST },
     { name: "unstripped-guard test", file: UNSTRIPPED_TEST },
-  ])("runs the $name in the fixtures project only", async ({ file }) => {
+  ])("runs the $name in the integration project only", async ({ file }) => {
     const holders = await Promise.all(
       vitest.projects.map(async (project) => {
         const { testFiles } = await project.globTestFiles();
@@ -217,7 +217,7 @@ describe("vitest config", () => {
 
     const names = holders.flat();
 
-    expect(names).toStrictEqual(["fixtures"]);
+    expect(names).toStrictEqual(["integration"]);
   });
 
   it("defines NDEBUG and skips #checked tests exactly in the ndebug projects", () => {
@@ -237,8 +237,8 @@ describe("vitest config", () => {
       unit: { ndebug: undefined, skipsChecked: false },
       "unit-optimized": { ndebug: undefined, skipsChecked: false },
       "unit-ndebug": { ndebug: true, skipsChecked: true },
-      fixtures: { ndebug: undefined, skipsChecked: false },
-      "fixtures-ndebug": { ndebug: true, skipsChecked: false },
+      integration: { ndebug: undefined, skipsChecked: false },
+      "integration-ndebug": { ndebug: true, skipsChecked: false },
     });
   });
 

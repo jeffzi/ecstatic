@@ -1,9 +1,9 @@
 import { configDefaults, defineConfig } from "vitest/config";
 
 import ecstatic from "./src/plugin/vite.js";
-import { goldenLoader } from "./tests/optimizer/golden-loader.js";
+import { goldenLoader } from "./tests/integration/golden-loader.js";
 
-const FIXTURE_TESTS = ["tests/optimizer/**/*.test.ts"];
+const INTEGRATION_TESTS = ["tests/integration/**/*.test.ts"];
 const UNIT_TESTS = ["tests/unit/**/*.test.ts"];
 // The optimizer's and the plugin's own tests drive the optimizer directly, so an optimized project
 // leaves them out and runs only the tests of the runtime it rewrites.
@@ -92,7 +92,7 @@ export default defineConfig({
         extends: true,
         resolve: SOURCE_RESOLVE,
         plugins: [goldenLoader()],
-        test: { name: "fixtures", include: FIXTURE_TESTS },
+        test: { name: "integration", include: INTEGRATION_TESTS },
       },
       {
         extends: true,
@@ -100,17 +100,17 @@ export default defineConfig({
         plugins: [goldenLoader()],
         define: { NDEBUG: "true" },
         test: {
-          name: "fixtures-ndebug",
-          include: FIXTURE_TESTS,
+          name: "integration-ndebug",
+          include: INTEGRATION_TESTS,
           // The corpus and unstripped-guard tests run the optimizer in Node, and the golden loader
           // test runs the loader's hooks, where NDEBUG changes nothing. The Vite smoke test's builds
           // run in a child process the NDEBUG define never reaches. An NDEBUG run only repeats them.
           exclude: [
             ...configDefaults.exclude,
-            "tests/optimizer/corpus.test.ts",
-            "tests/optimizer/golden-loader.test.ts",
-            "tests/optimizer/unstripped.test.ts",
-            "tests/optimizer/vite-smoke.test.ts",
+            "tests/integration/corpus.test.ts",
+            "tests/integration/golden-loader.test.ts",
+            "tests/integration/unstripped.test.ts",
+            "tests/integration/vite-smoke.test.ts",
           ],
         },
       },

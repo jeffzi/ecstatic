@@ -45,7 +45,7 @@ describe("AGENTS.md", () => {
   });
 
   it("gives the golden regeneration command", () => {
-    expect(AGENTS).toContain("`npx vitest run --project fixtures -u`");
+    expect(AGENTS).toContain("`npx vitest run --project integration -u`");
   });
 
   it.each([

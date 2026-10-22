@@ -143,12 +143,12 @@ describe("build", () => {
       { tsconfig: "tests/tsconfig.json", specifier: "ecstatic", module: "index.ts" },
       { tsconfig: "tests/tsconfig.json", specifier: "ecstatic/internal", module: "internal.ts" },
       {
-        tsconfig: "tests/optimizer/fixtures/tsconfig.json",
+        tsconfig: "tests/integration/fixtures/tsconfig.json",
         specifier: "ecstatic",
         module: "index.ts",
       },
       {
-        tsconfig: "tests/optimizer/fixtures/tsconfig.json",
+        tsconfig: "tests/integration/fixtures/tsconfig.json",
         specifier: "ecstatic/internal",
         module: "internal.ts",
       },

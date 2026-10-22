@@ -31,9 +31,9 @@ Package manager is **npm** (`package-lock.json`).
 - `npm run build` — compile the runtime (`src/ecstatic/`) to `dist/` with `tsconfig.build.json`,
   then the plugin (`src/plugin/`) to `dist/plugin/` with `tsconfig.build-plugin.json`
 - `npm test` — `vitest run --coverage` over the `types`, `unit`, `unit-optimized`, `unit-ndebug`,
-  `fixtures`, and `fixtures-ndebug` projects; coverage thresholds fail the run, and untested `src/`
+  `integration`, and `integration-ndebug` projects; coverage thresholds fail the run, and untested `src/`
   files count against them
-- `npx vitest run --project fixtures -u` — regenerate the fixture golden files after an intended
+- `npx vitest run --project integration -u` — regenerate the fixture golden files after an intended
   change to the optimizer's output
 - `npm run test:types` — type-only tests (`tests/types/*.test-d.ts`)
 - `npm run examples` — build, then run each `examples/*.ts` with tsx

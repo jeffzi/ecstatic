@@ -46,7 +46,7 @@ const BAIL_CORPUS = "bail";
 const SAMPLE_FIXTURE = "bail/sample";
 
 /** The command that rewrites every golden from the current output. */
-const UPDATE_COMMAND = "npx vitest run --project fixtures -u";
+const UPDATE_COMMAND = "npx vitest run --project integration -u";
 
 /** Opening the session and rewriting every file of a corpus, on a slow CI runner. */
 const CORPUS_TIMEOUT_MS = 180_000;
