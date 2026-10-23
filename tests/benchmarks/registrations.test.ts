@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { each, register, type Storage } from "ecstatic";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Position, spawnArch, trackedArch, Velocity } from "../../benchmarks/archetypes.js";
 import { DEFAULT_N, DT } from "../../benchmarks/helpers.js";
@@ -36,6 +36,28 @@ vi.mock("ecstatic", async (importOriginal) => {
   return { ...actual, each: vi.fn(actual.each), register: vi.fn(actual.register) };
 });
 
+/** Every factory `warmedBench` and every yield `manualBench` returned while the suites registered. */
+const timingHelperResults = vi.hoisted(() => new Set<unknown>());
+
+// The suites' timing helpers are what the timing tests pin, so a registration that times its body
+// any other way escapes them: recording what the helpers return tells each registration's route.
+vi.mock("../../benchmarks/helpers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../benchmarks/helpers.js")>();
+  return {
+    ...actual,
+    warmedBench: (...args: Parameters<typeof actual.warmedBench>) => {
+      const factory = actual.warmedBench(...args);
+      timingHelperResults.add(factory);
+      return factory;
+    },
+    manualBench: (...args: Parameters<typeof actual.manualBench>) => {
+      const manual = actual.manualBench(...args);
+      timingHelperResults.add(manual);
+      return manual;
+    },
+  };
+});
+
 const registerMock = vi.mocked(register);
 const eachMock = vi.mocked(each);
 
@@ -49,8 +71,8 @@ function registeredStorage(arch: unknown): Storage {
   return result.value;
 }
 
-/** Runs the generator registered as `name` up to its first yield and returns the timed body. */
-function startRegistered(name: string): () => void {
+/** The generator the benchmark registered as `name` starts, before its first yield. */
+function registeredGenerator(name: string): Generator<unknown, unknown, unknown> {
   const factory = registered.get(name);
   if (factory === undefined) {
     throw new Error(`no benchmark registered as '${name}'`);
@@ -59,7 +81,12 @@ function startRegistered(name: string): () => void {
   if (!isGenerator(gen)) {
     throw new Error(`'${name}' is not a generator benchmark`);
   }
-  return firstTimedBody(gen);
+  return gen;
+}
+
+/** Runs the generator registered as `name` up to its first yield and returns the timed body. */
+function startRegistered(name: string): () => void {
+  return firstTimedBody(registeredGenerator(name));
 }
 
 /** The callbacks `body` hands to each(), in call order. */
@@ -86,14 +113,29 @@ function eachTargets(body: () => void): unknown[] {
   return eachMock.mock.calls.map(([target]) => (isStorage(target) ? target.archetype : target));
 }
 
-beforeAll(async () => {
-  await import("../../benchmarks/iteration-bench.js");
-  await import("../../benchmarks/reference-bench.js");
-});
+await import("../../benchmarks/access-bench.js");
+await import("../../benchmarks/entity-bench.js");
+await import("../../benchmarks/iteration-bench.js");
+await import("../../benchmarks/many-bench.js");
+await import("../../benchmarks/reference-bench.js");
 
 afterEach(() => {
   eachMock.mockClear();
   registerMock.mockClear();
+});
+
+describe("every registered benchmark", () => {
+  it.each([...registered.keys()])(
+    "%s yields mitata a manual-timing body made by warmedBench or manualBench",
+    (name) => {
+      const first: unknown = registeredGenerator(name).next().value;
+
+      expect(first).toStrictEqual({ heap: false, manual: expect.any(Function) });
+      expect(timingHelperResults.has(registered.get(name)) || timingHelperResults.has(first)).toBe(
+        true,
+      );
+    },
+  );
 });
 
 /** What a twin benchmark must iterate through each(), and the storage whose Position its timed pass advances. */

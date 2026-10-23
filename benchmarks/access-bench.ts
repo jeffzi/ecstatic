@@ -3,7 +3,7 @@
  *
  * Every body is net-neutral — it reads or overwrites fields without changing
  * the population — so the world is built once per bench and reused across
- * every sample, letting mitata batch for its best resolution.
+ * every sample.
  */
 
 import { get, set } from "ecstatic";

@@ -245,30 +245,33 @@ function registerDefaults<A extends AnyArchetype>(world: World, arch: A): Storag
 // Timing shims
 // ---------------------------------------------------------------------------
 
-/** The generator yield shape that keeps mitata's batching but drops its heap statistic. */
-export interface TimedYield {
+/**
+ * The generator yield shape that puts mitata into manual-timing mode with no heap statistic.
+ *
+ * mitata calls `manual` once per sample and records the number it returns as that sample's time,
+ * in nanoseconds, so nothing it does around the call reaches the reading. `heap: false` because
+ * the suite owns time and nothing else: memory is gated separately by the allocation gate.
+ */
+interface ManualYield {
   heap: false;
-  bench: () => void;
+  manual: () => number;
 }
+
+/** A mitata generator benchmark that times one body call per sample. */
+export type TimedBenchmark = () => Generator<ManualYield, void, unknown>;
 
 /**
- * Time a body under mitata's default batching, reporting time only.
+ * Time one call of `run`.
  *
- * `heap: false` because the suite owns time and nothing else: memory is gated
- * separately by the allocation gate, and mitata's per-iteration heap delta is
- * GC-timing noise that would otherwise gate optimization verdicts.
- *
- * @param body - Work to time; mitata calls it many times per sample against whatever the
- * enclosing generator set up, so it must leave that state as it found it.
- * @returns The object to `yield` from a mitata generator benchmark; `bench` is `body` itself,
- * not a wrapper.
+ * @param run - Work to time; called exactly once.
+ * @returns The wall time the call took, in nanoseconds.
+ * @throws Whatever `run` throws, unchanged.
  */
-function timedBench(body: () => void): TimedYield {
-  return { heap: false, bench: body };
+function elapsedNs(run: () => void): number {
+  const started = performance.now();
+  run();
+  return (performance.now() - started) * NS_PER_MS;
 }
-
-/** A mitata generator benchmark that times one body under `timedBench` batching. */
-export type TimedBenchmark = () => Generator<TimedYield, void, unknown>;
 
 /**
  * The lifecycle every net-neutral benchmark shares: build, one untimed pass, time, release.
@@ -277,11 +280,16 @@ export type TimedBenchmark = () => Generator<TimedYield, void, unknown>;
  * must match, such as an `each()` benchmark and its inlined twin, pass the same `build`, so they
  * can differ only in the body they time.
  *
+ * Each sample is one call of `body`, never a batch: a body replayed inside mitata's loop is timed
+ * by how that loop compiles around it rather than by the body alone.
+ *
  * @param build - Builds the context the body runs over; called once per run, outside the clock.
- * @param body - The pass to time; it receives the same context for the warmup and every timed
- * call, so it must leave that context as it found it.
- * @returns A generator benchmark that runs the body once, yields it to `timedBench`, and destroys
- * the context's world when mitata resumes it after timing.
+ * @param body - The pass to time; it receives the same context for the warmup and every sample,
+ * so it must leave that context as it found it.
+ * @returns A generator benchmark that runs the body once untimed, yields a manual-timing body
+ * whose every call runs `body` once and reports that call's elapsed nanoseconds, and destroys the
+ * context's world when mitata resumes it after timing.
+ * @throws Whatever `build` or the untimed pass of `body` throws, when the generator starts.
  */
 export function warmedBench<C extends { world: World }>(
   build: () => C,
@@ -294,16 +302,10 @@ export function warmedBench<C extends { world: World }>(
     };
     pass();
 
-    yield timedBench(pass);
+    yield { heap: false, manual: () => elapsedNs(pass) };
 
     destroyWorld(ctx.world);
   };
-}
-
-/** The generator yield shape that puts mitata into manual-timing mode. */
-interface ManualYield {
-  heap: false;
-  manual: () => number;
 }
 
 /**
@@ -311,9 +313,7 @@ interface ManualYield {
  *
  * Benches whose body consumes the world it runs against — spawning, despawning,
  * anything that leaves the population changed — cannot reuse one world across
- * samples, and mitata's default batching would replay the body thousands of
- * times per sample against a world that only survives the first. Manual mode
- * disables batching.
+ * samples, so every sample builds its own.
  *
  * `heap: false` because the heap delta would otherwise be swamped by the
  * per-iteration world construction rather than reporting what `body` allocated.
@@ -324,6 +324,7 @@ interface ManualYield {
  * @returns The object to `yield` from a mitata generator benchmark; its `manual` reports the
  * elapsed nanoseconds of `body` alone, and destroys the context's world after every call,
  * whether or not `body` threw.
+ * @throws Whatever `build` or `body` throws, from `manual`.
  */
 export function manualBench<C extends { world: World }>(
   build: () => C,
@@ -335,12 +336,11 @@ export function manualBench<C extends { world: World }>(
       const ctx = build();
 
       // The world is released in a `finally` so a throwing body does not leak
-      // it: mitata surfaces the exception, and every later iteration builds a
-      // fresh world regardless.
-      const started = performance.now();
+      // it.
       try {
-        body(ctx);
-        return (performance.now() - started) * NS_PER_MS;
+        return elapsedNs(() => {
+          body(ctx);
+        });
       } finally {
         destroyWorld(ctx.world);
       }

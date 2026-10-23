@@ -16,9 +16,10 @@ storage.
 
 `each_with_despawn` and `deferred_despawn` consume the population they run against, so the suite's
 `manualBench` shim rebuilds their world before each iteration and destroys it after, both outside
-the clock. The rest are [net-neutral](../rationale.md#conventions) and reuse one world. Every
-benchmark here ends with `destroyWorld()`. The tracked archetype also declares the optional Alive
-tag, but no benchmark here enables it.
+the clock. The rest are [net-neutral](../rationale.md#conventions) and reuse one world. Each sample
+times one call of the body, never a batch of replayed calls
+([timing lifecycle](../rationale.md#conventions)). Every benchmark here ends with `destroyWorld()`.
+The tracked archetype also declares the optional Alive tag, but no benchmark here enables it.
 
 - [throughput](#throughput)
 - [helper_call](#helper_call)
@@ -141,7 +142,7 @@ churn. Inspired by the `IteratePathological` benchmark in EnTT, a C++ ECS librar
 | `soa10Arch`   | F10                                           | `sweep`: `a += b * DT`, `c += d * DT`, ..., `i += j * DT`  |
 
 Every update adds `DT`, or a field the system never writes times `DT`, so no value shrinks toward
-the subnormal range, however many times mitata replays the frame.
+the subnormal range, however many times the frame runs.
 
 **Operation:**
 

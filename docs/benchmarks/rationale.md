@@ -58,17 +58,37 @@ workloads access entities in unpredictable order; sequential access would give u
 favorable cache behavior. The shuffle is driven by a seeded generator, so a given entity layout is
 reproducible across runs.
 
-**Timing lifecycle.** Only the benchmark body is timed. How the world around it is managed depends
-on what the body does:
+**Timing lifecycle.** Only the benchmark body is timed, one call per sample, under mitata's
+manual-timing mode. How the world around it is managed depends on what the body does:
 
 - **Net-neutral bodies** — reads, overwrites, or a despawn-then-respawn pair that restores the
-  population — build one world during setup and reuse it for every sample. mitata batches these,
-  replaying the body thousands of times per sample for its best resolution.
-- **World-consuming bodies** — anything that leaves the population changed — run under mitata's
-  manual-timing mode. The suite's own `manualBench` helper rebuilds the world before each iteration
-  and destroys it after, both outside the clock, so each iteration starts from identical state.
-  Manual mode also disables batching, which would otherwise replay a consuming body against a world
-  that only survives the first replay.
+  population — build one world during setup, run the body once untimed, and reuse that world for
+  every sample. Each sample times a single call of the body. The world is destroyed once timing
+  ends.
+- **World-consuming bodies** — anything that leaves the population changed — get a fresh world per
+  sample. The suite's own `manualBench` helper builds the world before each call and destroys it
+  after, both outside the clock and even when the body throws, so each call starts from identical
+  state.
+
+mitata's default mode batches a short body instead, replaying it thousands of times per sample
+inside its own loop. On V8, that loop is the code the optimizing compiler works on, so a batched
+reading depends on how the loop compiles around the body rather than on the body alone: the same
+function read differently in its own module than copied into another. One call per sample times the
+body the way a program calls a system, once, with other work between calls.
+
+The price is resolution. `performance.now()` advances in steps, about 41.7 ns under both Node and
+Bun on the Apple M2 Max the suite was measured on, so a one-call sample is a whole number of steps.
+A body that runs in about 1.1 µs has its median resolved to about 3.7 %, a 375 ns body to about 11
+%, and two readings less than one step apart are not different. A body never repeats its own work
+inside one timed call to rise above the step: that is a replay loop under another name, and it
+brings back what one call per sample removes.
+
+A change to how bodies are timed must not make placement matter. Identical code timed in its home
+module and alone in a module of its own must not read further apart than process-to-process
+variation allows. Judge it over ten processes per placement, running each home process and its
+minimal counterpart back to back and testing the paired differences, on every engine the suite runs.
+A change that adds such a placement effect is rejected; one that leaves an existing effect in place
+is not, and the benchmark's specification records the effect.
 
 Consuming benchmarks report no heap statistic: the per-iteration world construction would dominate
 the delta rather than reporting what the body itself allocated.

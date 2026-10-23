@@ -14,7 +14,7 @@ import {
   tagArch,
   trackedArch,
 } from "../../benchmarks/archetypes.js";
-import type { TimedYield } from "../../benchmarks/helpers.js";
+import type { manualBench } from "../../benchmarks/helpers.js";
 import type { SoAColumns } from "../../src/ecstatic/world.js";
 import { REPO_ROOT, writeFixture } from "../unit/plugin/tsconfig-fixtures.js";
 
@@ -54,18 +54,6 @@ export function liveValues(storage: Storage, component: Component, field: string
   return Array.from(fieldColumn(storage, component, field), Number).slice(0, storage.n);
 }
 
-/** Narrows a generator's yielded value to the `timedBench` shape. */
-function isTimedYield(value: unknown): value is TimedYield {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "heap" in value &&
-    value.heap === false &&
-    "bench" in value &&
-    typeof value.bench === "function"
-  );
-}
-
 /**
  * Overwrites `storage`'s live values of one field, row by row.
  *
@@ -91,13 +79,34 @@ export function setLiveValues(
   });
 }
 
-/** Takes a generator's first yield and returns its `timedBench` body, throwing when it is not one. */
-export function firstTimedBody(gen: Generator<unknown, unknown, unknown>): () => void {
+/** The yield that puts mitata into manual timing: one call per sample, reporting nanoseconds. */
+type ManualYield = ReturnType<typeof manualBench>;
+
+/** Narrows a generator's yielded value to the manual-timing shape. */
+function isManualYield(value: unknown): value is ManualYield {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "heap" in value &&
+    value.heap === false &&
+    "manual" in value &&
+    typeof value.manual === "function"
+  );
+}
+
+/**
+ * Takes a generator's first yield and returns its manual-timing body.
+ *
+ * @param gen - Generator benchmark to start.
+ * @returns The `manual` function of the first yield, which mitata calls once per sample.
+ * @throws Error when the first yield is not a manual-timing yield.
+ */
+export function firstTimedBody(gen: Generator<unknown, unknown, unknown>): () => number {
   const first: unknown = gen.next().value;
-  if (!isTimedYield(first)) {
-    throw new Error("the first yield is not a timedBench yield");
+  if (!isManualYield(first)) {
+    throw new Error("the first yield is not a manual-timing yield");
   }
-  return first.bench;
+  return first.manual;
 }
 
 /** Narrows a value to a storage. */

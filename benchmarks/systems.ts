@@ -15,7 +15,7 @@
  * `each` visits them.
  *
  * Every body accumulates `DT`, or a field it never writes times `DT`, into a
- * field it writes. mitata replays a batched body many thousands of times, and
+ * field it writes. A body runs many thousands of times over one world, and
  * that shape keeps every value finite and normal however long it runs, so
  * neither variant slows down on subnormal arithmetic.
  */

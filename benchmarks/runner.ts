@@ -353,7 +353,7 @@ const registry = new Set<string>();
  * @param name - Benchmark name, unique across every suite file; it becomes the mitata alias and
  * the string a parent filter is matched against.
  * @param body - Benchmark body passed to mitata unchanged; typed `unknown` so a generator — what
- * every suite passes, yielding a `TimedYield` or `ManualYield` — is accepted.
+ * every suite passes, yielding a manual-timing body — is accepted.
  * @throws Error when `name` is already registered — a duplicate would make the
  * parent spawn the same child twice and collide the report aliases.
  */
