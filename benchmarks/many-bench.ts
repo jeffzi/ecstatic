@@ -19,15 +19,16 @@ let sink = 0;
 /**
  * Accumulated batch sizes, kept live so V8 cannot elide the calls.
  *
- * @returns The running sum so far; meaningless as a number, it exists to be fed to
- * `do_not_optimize` after `run` returns.
+ * @returns The running sum so far; meaningless as a number, returned only so the accumulated work
+ * stays reachable.
  */
 export function sinkValue(): number {
   return sink;
 }
 
-registerBench("many/spawn_empty", function* () {
-  yield manualBench(
+registerBench(
+  "many/spawn_empty",
+  manualBench(
     () => {
       const ctx = benchCreateWorld();
       return { ...ctx, emptyStorage: register(ctx.world, emptyArch) };
@@ -35,11 +36,12 @@ registerBench("many/spawn_empty", function* () {
     ({ n, emptyStorage }) => {
       sink += spawnMany(emptyStorage, n).length;
     },
-  );
-});
+  ),
+);
 
-registerBench("many/spawn_with_data", function* () {
-  yield manualBench(
+registerBench(
+  "many/spawn_with_data",
+  manualBench(
     () => {
       const ctx = benchCreateWorld();
       return { ...ctx, spawnStorage: register(ctx.world, spawnArch) };
@@ -47,14 +49,15 @@ registerBench("many/spawn_with_data", function* () {
     ({ n, spawnStorage }) => {
       sink += spawnMany(spawnStorage, n, { Position: { x: 0, y: 0 } }).length;
     },
-  );
-});
+  ),
+);
 
 // Writes into a caller-owned array instead of returning a fresh one. Setup runs
 // a full spawn/despawn cycle first so the buffer is already grown to N and the
 // timed call measures reuse, not the growth it would otherwise pay for once.
-registerBench("many/spawn_out_reuse", function* () {
-  yield manualBench(
+registerBench(
+  "many/spawn_out_reuse",
+  manualBench(
     () => {
       const ctx = benchCreateWorld();
       const spawnStorage = register(ctx.world, spawnArch);
@@ -66,20 +69,19 @@ registerBench("many/spawn_out_reuse", function* () {
     ({ n, spawnStorage, out }) => {
       spawnMany(spawnStorage, n, { Position: { x: 0, y: 0 } }, out);
     },
-  );
-});
+  ),
+);
 
-registerBench("many/despawn", function* () {
-  yield manualBench(
-    () => benchCreateWorld(),
-    ({ trackedStorage, tracked }) => {
-      despawnMany(trackedStorage, tracked);
-    },
-  );
-});
+registerBench(
+  "many/despawn",
+  manualBench(benchCreateWorld, ({ trackedStorage, tracked }) => {
+    despawnMany(trackedStorage, tracked);
+  }),
+);
 
-registerBench("many/despawn_half", function* () {
-  yield manualBench(
+registerBench(
+  "many/despawn_half",
+  manualBench(
     () => {
       const ctx = benchCreateWorld();
       return { ...ctx, trackedHalf: ctx.tracked.slice(0, Math.floor(ctx.n / 2)) };
@@ -87,24 +89,23 @@ registerBench("many/despawn_half", function* () {
     ({ trackedStorage, trackedHalf }) => {
       despawnMany(trackedStorage, trackedHalf);
     },
-  );
-});
+  ),
+);
 
 // The all-entities overload: no ID list to walk, so the storage can clear its
 // rows wholesale instead of swap-and-popping each one.
-registerBench("many/despawn_all", function* () {
-  yield manualBench(
-    () => benchCreateWorld(),
-    ({ trackedStorage }) => {
-      despawnMany(trackedStorage);
-    },
-  );
-});
+registerBench(
+  "many/despawn_all",
+  manualBench(benchCreateWorld, ({ trackedStorage }) => {
+    despawnMany(trackedStorage);
+  }),
+);
 
 // IDs from two archetypes, shuffled together, despawned through the world
 // rather than a storage — each ID has to be routed to its own storage first.
-registerBench("many/despawn_world", function* () {
-  yield manualBench(
+registerBench(
+  "many/despawn_world",
+  manualBench(
     () => {
       const ctx = benchCreateWorld();
       const spawnStorage = register(ctx.world, spawnArch);
@@ -121,5 +122,5 @@ registerBench("many/despawn_world", function* () {
     ({ world, mixed }) => {
       despawnMany(world, mixed);
     },
-  );
-});
+  ),
+);

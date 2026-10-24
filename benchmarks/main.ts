@@ -6,7 +6,7 @@
  * spread reached 26x between a benchmark measured alone and the same benchmark
  * measured last. So the parent process measures nothing: it enumerates the
  * registered benchmarks, spawns a fresh child per benchmark, and concatenates
- * the children's mitata reports into the single JSON document it prints. Every
+ * the children's reports into the single JSON document it prints. Every
  * benchmark is therefore the first thing its process does.
  *
  * ```
@@ -25,16 +25,17 @@
  * consumer parsing it; diagnostics go to stderr.
  *
  * Importing a suite module registers its benchmarks as a side effect. Every
- * suite that accumulates results returns them from its `sinkValue`, which keeps
- * them reachable until after `run` returns; the reference suite accumulates
- * nothing, so it is imported for registration alone.
+ * suite that accumulates results returns them from its `sinkValue`; after
+ * measuring, the child stores their sum in `globalThis.benchSink`, so the
+ * results stay reachable and the engine cannot drop the work that made them.
+ * The reference suite accumulates nothing, so it is imported for registration
+ * alone.
  */
 
 import { spawn } from "node:child_process";
+import { cpus } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { do_not_optimize, run } from "mitata";
 
 import { errorMessage, isEnoent } from "../scripts/caught.js";
 import { sinkValue as accessSink } from "./access-bench.js";
@@ -43,8 +44,8 @@ import { sinkValue as iterationSink } from "./iteration-bench.js";
 import { sinkValue as manySink } from "./many-bench.js";
 // oxlint-disable-next-line import/no-unassigned-import -- importing the suite registers its benchmarks; it exports nothing
 import "./reference-bench.js";
+import { type Measurement, runningEngine } from "./measure.js";
 import {
-  anchoredFilter,
   type BenchReport,
   benchNames,
   type ChildSpawnSpec,
@@ -52,6 +53,7 @@ import {
   compileOptimized,
   describeAbnormalExit,
   type Engine,
+  measureBench,
   mergeReports,
   namespaceReport,
   parseArgs,
@@ -68,42 +70,77 @@ const OPTIMIZED_OUT_DIR = fileURLToPath(new URL("../.bench-optimized/", import.m
 
 const BENCHMARK_PROJECT = fileURLToPath(new URL("tsconfig.json", import.meta.url));
 
+/** The one layout collection (index 0, no argument types) every entry belongs to. */
+const SINGLE_LAYOUT = [{ name: 0, types: [] }];
+
+declare global {
+  /** The sum of every suite's sink after a child's measurement; unset until one finishes. */
+  var benchSink: number | undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Child mode
 // ---------------------------------------------------------------------------
 
+/** The machine and engine a child measured on, as the report's `context` names them. */
+interface RunContext {
+  readonly runtime: Engine;
+  readonly version: string;
+  readonly arch: string;
+  readonly cpu: { readonly name: string | undefined };
+}
+
 /**
- * Measure exactly one benchmark and print its mitata report to stdout.
+ * Describe what this child measures on.
  *
- * `throw: true` makes a failing benchmark body crash this child; mitata's
- * default records the exception in `runs[].error` and still exits 0, which would
- * hand the parent a report full of missing numbers that looks successful.
+ * @returns The running engine and its version, the processor architecture and platform, and the
+ * model of the first CPU core, `undefined` when the platform reports none.
+ */
+function runContext(): RunContext {
+  return {
+    runtime: runningEngine(),
+    version: process.versions["bun"] ?? process.versions.node,
+    arch: `${process.arch}-${process.platform}`,
+    cpu: { name: cpus()[0]?.model },
+  };
+}
+
+/**
+ * The report of one measured benchmark.
+ *
+ * @param benchName - Name the benchmark was registered under; becomes the entry's alias.
+ * @param measurement - The benchmark's statistics, in nanoseconds per body call.
+ * @returns A report whose one entry holds one run of the statistics, `mean` reported as `avg`,
+ * under the single layout collection every child reports.
+ */
+function childReport(benchName: string, measurement: Measurement): BenchReport {
+  const { min, p25, p50, p75, p99, max, mean, samples } = measurement;
+  return {
+    layout: SINGLE_LAYOUT,
+    context: runContext(),
+    benchmarks: [
+      {
+        alias: benchName,
+        runs: [{ stats: { min, p25, p50, p75, p99, max, avg: mean, samples } }],
+      },
+    ],
+  };
+}
+
+/**
+ * Measure exactly one benchmark and print its report to stdout, then store the sum of every
+ * suite's sink in `globalThis.benchSink`.
  *
  * @param benchName - Exact name of the benchmark to measure; must be in `benchNames()`.
- * @throws Error when `benchName` is not registered or no `gc` is exposed; a throwing benchmark
- * body also propagates, by way of `throw: true`.
+ * @throws Error when `benchName` is not registered, no `gc` is exposed, `bun:jsc` cannot be loaded
+ * under Bun, or the measurement itself fails (see `measure`'s `@throws`), before anything is
+ * printed; whatever the benchmark's build or body throws also propagates, so a failing benchmark
+ * exits non-zero rather than printing a report.
  */
 async function runChild(benchName: string): Promise<void> {
-  if (!benchNames().includes(benchName)) {
-    throw new Error(`unknown benchmark '${benchName}'`);
-  }
-
-  // Without an exposed gc, mitata substitutes a fallback that allocates a 1 GiB
-  // buffer once per benchmark to force a collection, and drops its gc
-  // accounting. That perturbs the timings rather than merely omitting a
-  // statistic, so refuse to produce numbers that would silently not be
-  // comparable.
-  if (globalThis.gc === undefined) {
-    throw new Error("benchmarks require an exposed gc: run node or bun with --expose-gc");
-  }
-
-  await run({
-    format: { json: { debug: false, samples: false } },
-    filter: new RegExp(anchoredFilter(benchName)),
-    throw: true,
-  });
-
-  do_not_optimize(accessSink() + entitySink() + iterationSink() + manySink());
+  const measurement = await measureBench(benchName);
+  globalThis.benchSink = accessSink() + entitySink() + iterationSink() + manySink();
+  process.stdout.write(`${JSON.stringify(childReport(benchName, measurement))}\n`);
 }
 
 // ---------------------------------------------------------------------------

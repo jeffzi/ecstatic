@@ -34,8 +34,8 @@ let sink = 0;
 /**
  * Accumulated field reads and entity counts, kept live so V8 cannot elide the passes.
  *
- * @returns The running sum so far; meaningless as a number, it exists to be fed to
- * `do_not_optimize` after `run` returns.
+ * @returns The running sum so far; meaningless as a number, returned only so the accumulated work
+ * stays reachable.
  */
 export function sinkValue(): number {
   return sink;
@@ -132,8 +132,9 @@ registerBench(
 
 // Despawns every second entity from inside the callback iterating it — the
 // swap-and-pop has to stay correct while the traversal is in flight.
-registerBench("iteration/each_with_despawn", function* () {
-  yield manualBench(
+registerBench(
+  "iteration/each_with_despawn",
+  manualBench(
     () => {
       const ctx = benchCreateWorld({ noBackground: true });
       each(ctx.trackedStorage, () => {});
@@ -149,8 +150,8 @@ registerBench("iteration/each_with_despawn", function* () {
       });
       sink += count;
     },
-  );
-});
+  ),
+);
 
 // The soa_* family varies only in how many fields of one component the pass
 // touches: 1, 2, 5, then 10. The spread is not monotonic in field count:
@@ -214,17 +215,18 @@ registerBench(
   ),
 );
 
+/**
+ * Reused across samples: the collect pass fills it and the flush empties it.
+ * Emptying is not optional — leaving the IDs in place would hand already-dead
+ * entities to `despawnMany` on every later sample.
+ */
+const deferredDead: EntityId[] = [];
+
 // The deferred alternative to each_with_despawn: collect the doomed IDs during
 // the pass, then flush them in one batch once iteration is over.
-registerBench("iteration/deferred_despawn", function* () {
-  /**
-   * Reused across iterations: the collect pass fills it and the flush empties
-   * it. Emptying is not optional — leaving the IDs in place would hand
-   * already-dead entities to `despawnMany` on every later iteration.
-   */
-  const deferredDead: EntityId[] = [];
-
-  yield manualBench(
+registerBench(
+  "iteration/deferred_despawn",
+  manualBench(
     () => {
       const ctx = benchCreateWorld({ noBackground: true });
       const storage = ctx.trackedStorage;
@@ -256,5 +258,5 @@ registerBench("iteration/deferred_despawn", function* () {
       despawnMany(storage, deferredDead);
       deferredDead.length = 0;
     },
-  );
-});
+  ),
+);

@@ -17,8 +17,8 @@ let sink = 0;
 /**
  * Accumulated result of every read, kept live so V8 cannot elide the loads.
  *
- * @returns The running sum so far; meaningless as a number, it exists to be fed to
- * `do_not_optimize` after `run` returns.
+ * @returns The running sum so far; meaningless as a number, returned only so the accumulated work
+ * stays reachable.
  */
 export function sinkValue(): number {
   return sink;

@@ -6,10 +6,9 @@ Shared constants (`N`, the 5x world, `DT`) are defined in [parameters](parameter
 accumulator is explained in [rationale](../rationale.md#conventions).
 
 Single-entity lifecycle calls, one at a time. `spawn_recycle` and `alive_check` leave the population
-as they found it, so they reuse one world across samples and run their operation once untimed as a
-warmup. The rest change it, so the suite's `manualBench` shim rebuilds their world before each
-iteration and destroys it after, both outside the clock, with no warmup pass. Every benchmark here
-ends with `destroyWorld()`.
+as they found it, so they reuse one world across samples, warmup included. The rest change it, so
+the suite's `manualBench` shim rebuilds their world before each sample, warmup samples included, and
+destroys it after, both outside the clock. Every benchmark here ends with `destroyWorld()`.
 
 - [spawn_empty](#spawn_empty)
 - [spawn_with_data](#spawn_with_data)
@@ -25,7 +24,7 @@ ends with `destroyWorld()`.
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register empty archetype |
-| Warmup   | None                                               |
+| Warmup   | 1000 untimed samples, each on a fresh world        |
 
 **Operation:**
 
@@ -47,7 +46,7 @@ cost. Regressions here indicate overhead in the sparse set or freelist path.
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register spawn archetype |
-| Warmup   | None                                               |
+| Warmup   | 1000 untimed samples, each on a fresh world        |
 
 **Operation:**
 
@@ -70,7 +69,7 @@ rather than rebuilt per call.
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register spawn archetype |
-| Warmup   | None                                               |
+| Warmup   | 1000 untimed samples, each on a fresh world        |
 
 **Operation:**
 
@@ -93,10 +92,10 @@ per sample, are still counted.
 
 **Purpose:** Measure entity removal cost via swap-and-pop deletion.
 
-| Property | Value                    |
-| -------- | ------------------------ |
-| Setup    | Pre-populated world (5x) |
-| Warmup   | None                     |
+| Property | Value                                       |
+| -------- | ------------------------------------------- |
+| Setup    | Pre-populated world (5x)                    |
+| Warmup   | 1000 untimed samples, each on a fresh world |
 
 **Operation:**
 
@@ -116,10 +115,10 @@ sequential access patterns.
 
 **Purpose:** Measure entity ID recycling through despawn-then-respawn.
 
-| Property | Value                         |
-| -------- | ----------------------------- |
-| Setup    | Pre-populated world (5x)      |
-| Warmup   | One despawn and respawn cycle |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Pre-populated world (5x)                                |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 
@@ -136,7 +135,7 @@ sink += tracked[N - 1]
 **Rationale:** Forces the freelist to fill and drain in sequence. The respawn phase reuses freed
 slots with incremented generations, exercising the last-in-first-out freelist pop path under
 pressure. The pair is net-neutral: it ends with the population it started with. So the tracked array
-is rewritten in place, and the next sample runs against the recycled IDs.
+is rewritten in place, and the next call runs against the recycled IDs.
 
 ---
 
@@ -147,7 +146,7 @@ is rewritten in place, and the next sample runs against the recycled IDs.
 | Property | Value                                                          |
 | -------- | -------------------------------------------------------------- |
 | Setup    | Pre-populated world (5x), create N extra entities then despawn |
-| Warmup   | One pass over the mixed IDs                                    |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms        |
 
 **Operation:**
 

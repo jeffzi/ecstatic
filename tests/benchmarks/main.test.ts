@@ -1,15 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { cpus } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { anchoredFilter } from "../../benchmarks/runner.js";
 import { packageBin } from "../package-bin.js";
 import { ROW_LOOP } from "../unit/optimizer/printed.js";
-import { createProject, REPO_ROOT, removeTempDirs } from "../unit/plugin/tsconfig-fixtures.js";
+import { REPO_ROOT, withTempProject } from "../unit/plugin/tsconfig-fixtures.js";
 import {
   advanceCall,
   benchmarkTreeWith,
@@ -17,7 +17,7 @@ import {
   COMPILE_TIMEOUT_MS,
   removeBenchmarkProjects,
 } from "./fixtures.js";
-import { requiresRealBun } from "./real-bun.js";
+import { realBunRequired } from "./real-bun.js";
 
 const MAIN = join(REPO_ROOT, "benchmarks", "main.ts");
 const TSX = packageBin("tsx", "tsx");
@@ -31,19 +31,20 @@ const COMPILED_MAIN = join(OUT_DIR, "benchmarks", "main.js");
 const BENCHES = ["iteration/helper_call", "iteration/throughput"] as const;
 const BENCHES_FILTER = "^iteration/(helper_call|throughput)$";
 const BENCH = "iteration/helper_call";
+const BENCH_FILTER = "^iteration/helper_call$";
 /**
  * Whether to start real Bun children: wherever Bun is installed, and always on CI, which installs it,
  * so a CI runner without Bun fails the case instead of skipping it.
  */
-const RUN_UNDER_BUN = requiresRealBun(
-  spawnSync("bun", ["--version"]).status === 0,
-  process.env["CI"],
-);
+const RUN_UNDER_BUN = realBunRequired();
 /** Both engines, so an optimized run shows it compiles once per run, not once per engine. */
 const ENGINES = ["node", "bun"] as const;
 
 /** Every call of `each` with arguments, so a comment naming `each()` does not match. */
 const EACH_CALLS = /\beach\((?!\))/gu;
+
+/** The status a child the probe fails exits with. */
+const FAILED_CHILD_EXIT = 3;
 
 /** The message every output write the probe refuses fails with. */
 const REFUSED_WRITE = "EACCES: permission denied";
@@ -56,7 +57,9 @@ const REFUSED_WRITE = "EACCES: permission denied";
  * writes: a write under `PROBE_OUT_DIR` is appended to the file `PROBE_WRITES` names, and when
  * `PROBE_REFUSE_WRITES` is set, it fails instead, as a write to a read-only directory does. Every
  * process the process spawns is appended to the file `PROBE_SPAWNS` names; a spawn of `bun` runs Node
- * instead, so a run under both engines needs no Bun install, unless `PROBE_REAL_BUN` is set.
+ * instead, so a run under both engines needs no Bun install, unless `PROBE_REAL_BUN` is set. A child
+ * given `--child` with the benchmark `PROBE_FAIL_CHILD` names exits with {@link FAILED_CHILD_EXIT}
+ * before measuring anything.
  */
 const PROBE_SOURCE = `
 import childProcess from "node:child_process";
@@ -65,9 +68,19 @@ import { syncBuiltinESMExports } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const { appendFileSync } = fs;
-const { PROBE_LOG, PROBE_WRITES, PROBE_SPAWNS, PROBE_OUT_DIR, PROBE_REFUSE_WRITES, PROBE_REAL_BUN } =
-  process.env;
+const {
+  PROBE_LOG,
+  PROBE_WRITES,
+  PROBE_SPAWNS,
+  PROBE_OUT_DIR,
+  PROBE_REFUSE_WRITES,
+  PROBE_REAL_BUN,
+  PROBE_FAIL_CHILD,
+} = process.env;
 appendFileSync(PROBE_LOG, JSON.stringify({ argv: process.argv, execArgv: process.execArgv }) + "\\n");
+if (process.argv.includes("--child") && process.argv.at(-1) === PROBE_FAIL_CHILD) {
+  process.exit(${String(FAILED_CHILD_EXIT)});
+}
 
 function refusal(file) {
   const path = file instanceof URL ? fileURLToPath(file) : String(file);
@@ -125,6 +138,7 @@ interface EntryRun {
   writes: string[];
 }
 
+/** Narrows a value to an array of strings. */
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
@@ -160,23 +174,16 @@ function readLines(file: string): string[] {
     .filter((line) => line !== "");
 }
 
-/** Parses the probe's log, one JSON process record per line. */
-function readProcessLog(log: string): ProcessRecord[] {
+/** Parses a probe log, one JSON record per line, failing with `rejection` on a line `isRecord` refuses. */
+function readRecords<T>(
+  log: string,
+  isRecord: (value: unknown) => value is T,
+  rejection: string,
+): T[] {
   return readLines(log).map((line) => {
     const record: unknown = JSON.parse(line);
-    if (!isProcessRecord(record)) {
-      throw new Error(`probe log line is not a process record: ${line}`);
-    }
-    return record;
-  });
-}
-
-/** Parses the probe's spawn log, one JSON spawn record per line. */
-function readSpawnLog(log: string): SpawnRecord[] {
-  return readLines(log).map((line) => {
-    const record: unknown = JSON.parse(line);
-    if (!isSpawnRecord(record)) {
-      throw new Error(`probe spawn line is not a spawn record: ${line}`);
+    if (!isRecord(record)) {
+      throw new Error(`${rejection}: ${line}`);
     }
     return record;
   });
@@ -187,56 +194,62 @@ function readSpawnLog(log: string): SpawnRecord[] {
  *
  * @param args - Command-line arguments for the entry.
  * @param options - `refuseWrites` makes every write under the output directory fail; `entry` runs
- * another copy of `benchmarks/main.ts`; `realBun` lets a spawn of `bun` run Bun instead of Node.
+ * another copy of `benchmarks/main.ts`; `realBun` lets a spawn of `bun` run Bun instead of Node;
+ * `failChild` makes the child that measures that benchmark fail.
  * @returns The entry's exit status and output, every Node process the run started, every process
  * those spawned, and every write under the output directory.
  * @throws Error when the probe or its logs cannot be written or read.
  */
 function runEntry(
   args: readonly string[],
-  options: { refuseWrites?: boolean; entry?: string; realBun?: boolean } = {},
+  options: { refuseWrites?: boolean; entry?: string; realBun?: boolean; failChild?: string } = {},
 ): EntryRun {
-  const dir = createProject({
+  const probeFiles = {
     "probe.mjs": PROBE_SOURCE,
     "processes.jsonl": "",
     "spawns.jsonl": "",
     "writes.log": "",
-  });
-  const log = join(dir, "processes.jsonl");
-  const spawns = join(dir, "spawns.jsonl");
-  const writes = join(dir, "writes.log");
-
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    NODE_OPTIONS: `${process.env["NODE_OPTIONS"] ?? ""} --import ${pathToFileURL(join(dir, "probe.mjs")).href}`,
-    PROBE_LOG: log,
-    PROBE_WRITES: writes,
-    PROBE_SPAWNS: spawns,
-    PROBE_OUT_DIR: OUT_DIR,
   };
-  if (options.refuseWrites === true) {
-    env["PROBE_REFUSE_WRITES"] = "1";
-  }
-  if (options.realBun === true) {
-    env["PROBE_REAL_BUN"] = "1";
-  }
+  return withTempProject(probeFiles, (dir) => {
+    const log = join(dir, "processes.jsonl");
+    const spawns = join(dir, "spawns.jsonl");
+    const writes = join(dir, "writes.log");
 
-  const result = spawnSync(process.execPath, [TSX, options.entry ?? MAIN, ...args], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-    env,
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      NODE_OPTIONS: `${process.env["NODE_OPTIONS"] ?? ""} --import ${pathToFileURL(join(dir, "probe.mjs")).href}`,
+      PROBE_LOG: log,
+      PROBE_WRITES: writes,
+      PROBE_SPAWNS: spawns,
+      PROBE_OUT_DIR: OUT_DIR,
+    };
+    if (options.refuseWrites === true) {
+      env["PROBE_REFUSE_WRITES"] = "1";
+    }
+    if (options.realBun === true) {
+      env["PROBE_REAL_BUN"] = "1";
+    }
+    if (options.failChild !== undefined) {
+      env["PROBE_FAIL_CHILD"] = options.failChild;
+    }
+
+    const result = spawnSync(process.execPath, [TSX, options.entry ?? MAIN, ...args], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env,
+    });
+    if (result.error !== undefined) {
+      throw result.error;
+    }
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      processes: readRecords(log, isProcessRecord, "probe log line is not a process record"),
+      spawns: readRecords(spawns, isSpawnRecord, "probe spawn line is not a spawn record"),
+      writes: readLines(writes),
+    };
   });
-  if (result.error !== undefined) {
-    throw result.error;
-  }
-  return {
-    status: result.status,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    processes: readProcessLog(log),
-    spawns: readSpawnLog(spawns),
-    writes: readLines(writes),
-  };
 }
 
 /** The report a successful run printed, parsed; throws with the run's stderr when it failed. */
@@ -342,12 +355,8 @@ describe("benchmarks/main.ts without --optimized", () => {
   let run: EntryRun;
 
   beforeAll(() => {
-    run = runEntry([anchoredFilter(BENCH)]);
+    run = runEntry([BENCH_FILTER]);
   }, COMPILE_TIMEOUT_MS);
-
-  afterAll(() => {
-    removeTempDirs();
-  });
 
   it("prints a report measuring the benchmark under its plain node/ alias", () => {
     const report = printedReport(run);
@@ -375,6 +384,304 @@ describe("benchmarks/main.ts without --optimized", () => {
   });
 });
 
+describe("benchmarks/main.ts when a child fails", () => {
+  /** The first of {@link BENCHES} in registration order, so the other would run after it. */
+  const FAILING = "iteration/throughput";
+  let run: EntryRun;
+
+  beforeAll(() => {
+    run = runEntry([BENCHES_FILTER], { failChild: FAILING });
+  }, COMPILE_TIMEOUT_MS);
+
+  it("exits 1 before starting another child, printing no report", () => {
+    expect({
+      status: run.status,
+      stdout: run.stdout,
+      started: children(run).map(({ argv }) => argv.at(-1)),
+    }).toStrictEqual({ status: 1, stdout: "", started: [FAILING] });
+  });
+
+  it("names the failed child's command and exit status on stderr", () => {
+    expect(run.stderr).toContain(
+      `--child ${FAILING} failed with exit code ${String(FAILED_CHILD_EXIT)}`,
+    );
+  });
+});
+
+/** A benchmark whose body adds to its suite's sink, so a run leaves the summed sink non-zero. */
+const SINKING_BENCH = "access/get_1field";
+
+/** The benchmark the child probe registers with a body that throws {@link THROWN}. */
+const THROWING_BENCH = "banana/throws";
+const THROWN = "banana peel";
+
+/**
+ * The benchmark the child probe registers with a body that busy-waits 0.1 ms on three calls in
+ * four and 2 ms on the fourth, so its median sample is near 100 000 ns and its mean near 575 000 ns.
+ */
+const TIMED_BENCH = "banana/waits";
+
+/** The suites that export a `sinkValue()`, as the child probe imports them. */
+const SINK_SUITES = ["access-bench.ts", "entity-bench.ts", "iteration-bench.ts", "many-bench.ts"];
+
+/**
+ * For each of {@link SINK_SUITES} after the first, in order, a benchmark whose body adds to that
+ * suite's sink. The first suite's benchmark is {@link SINKING_BENCH}, which the `--child` suite
+ * already runs.
+ */
+const SINKING_BENCHES = ["entity/alive_check", "iteration/each_with_despawn", "many/spawn_empty"];
+
+/** One child starting tsx, then measuring a benchmark for its 1.25 s of warmup and timing, on a slow CI runner. */
+const CHILD_TIMEOUT_MS = 60_000;
+
+/**
+ * A module preloaded into a child after tsx, through `--import`.
+ *
+ * It imports every suite that exports a `sinkValue()`; on exit it writes to the file
+ * `CHILD_PROBE_SINK` names what the run stored in `globalThis.benchSink` and each suite's sink
+ * value. When `CHILD_PROBE_THROWING` is set, it first registers a benchmark under that name whose
+ * body throws; when `CHILD_PROBE_TIMED` is set, one under that name whose body waits as
+ * {@link TIMED_BENCH} says.
+ */
+const CHILD_PROBE_SOURCE = `
+import { writeFileSync } from "node:fs";
+
+const base = ${JSON.stringify(pathToFileURL(join(REPO_ROOT, "benchmarks")).href)} + "/";
+const { CHILD_PROBE_SINK, CHILD_PROBE_THROWING, CHILD_PROBE_TIMED } = process.env;
+const suites = await Promise.all(${JSON.stringify(SINK_SUITES)}.map((file) => import(base + file)));
+const { registerBench } = await import(base + "runner.ts");
+const { makeThroughputWorld, warmedBench } = await import(base + "helpers.ts");
+if (CHILD_PROBE_THROWING !== undefined) {
+  registerBench(
+    CHILD_PROBE_THROWING,
+    warmedBench(makeThroughputWorld, () => {
+      throw new Error(${JSON.stringify(THROWN)});
+    }),
+  );
+}
+if (CHILD_PROBE_TIMED !== undefined) {
+  let calls = 0;
+  registerBench(
+    CHILD_PROBE_TIMED,
+    warmedBench(makeThroughputWorld, () => {
+      calls += 1;
+      const waitMs = calls % 4 === 0 ? 2 : 0.1;
+      const started = performance.now();
+      while (performance.now() - started < waitMs);
+    }),
+  );
+}
+process.on("exit", () => {
+  const sinks = suites.map((suite) => suite.sinkValue());
+  writeFileSync(CHILD_PROBE_SINK, JSON.stringify({ stored: globalThis.benchSink, sinks }));
+});
+`;
+
+/** What a child printed and the sink its probe read on exit. */
+interface ChildRun {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  sink: unknown;
+}
+
+/**
+ * Runs `benchmarks/main.ts --child benchName` as the parent spawns it under Node, the child probe
+ * preloaded after tsx.
+ *
+ * @param benchName - The benchmark the child measures.
+ * @param options - `exposeGc: false` leaves out `--expose-gc`; `throwing` has the probe register
+ * {@link THROWING_BENCH}, and `timed` {@link TIMED_BENCH}.
+ * @returns The child's exit status and output, and the sink its probe wrote on exit.
+ * @throws Error when the child cannot be started or the probe's files cannot be written or read.
+ */
+function runChild(
+  benchName: string,
+  options: { exposeGc?: boolean; throwing?: boolean; timed?: boolean } = {},
+): ChildRun {
+  return withTempProject({ "probe.mjs": CHILD_PROBE_SOURCE, "sink.json": "" }, (dir) => {
+    const sinkFile = join(dir, "sink.json");
+    const env: NodeJS.ProcessEnv = { ...process.env, CHILD_PROBE_SINK: sinkFile };
+    if (options.throwing === true) {
+      env["CHILD_PROBE_THROWING"] = THROWING_BENCH;
+    }
+    if (options.timed === true) {
+      env["CHILD_PROBE_TIMED"] = TIMED_BENCH;
+    }
+    const flags = options.exposeGc === false ? [] : ["--expose-gc"];
+    const probe = pathToFileURL(join(dir, "probe.mjs")).href;
+
+    const result = spawnSync(
+      process.execPath,
+      [...flags, "--import", "tsx", "--import", probe, MAIN, "--child", benchName],
+      { cwd: REPO_ROOT, encoding: "utf8", env },
+    );
+    if (result.error !== undefined) {
+      throw result.error;
+    }
+    const written = readFileSync(sinkFile, "utf8");
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      sink: written === "" ? undefined : JSON.parse(written),
+    };
+  });
+}
+
+/** The statistics a child reports, from the lowest-ranked to the highest. */
+const RANKS = ["min", "p25", "p50", "p75", "p99", "max"];
+
+/** The `key` property of `value`, or undefined when `value` is not an object. */
+function field(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
+}
+
+/** The stats object of the first run of the first benchmark in a child's report. */
+function reportedStats(stdout: string): unknown {
+  const report: unknown = JSON.parse(stdout);
+  return ["benchmarks", "0", "runs", "0", "stats"].reduce(field, report);
+}
+
+/** Asserts the probe stored the sum of all sink values and the sink of suite `suite` is non-zero. */
+function expectSinkStored(sink: unknown, suite: number): void {
+  const sinks = field(sink, "sinks");
+  const values = Array.isArray(sinks) ? sinks.map(Number) : [];
+  expect({
+    stored: field(sink, "stored"),
+    ownSinkNonZero: values[suite] !== 0,
+  }).toStrictEqual({
+    stored: values.reduce((total, value) => total + value, 0),
+    ownSinkNonZero: true,
+  });
+}
+
+describe("benchmarks/main.ts --child", () => {
+  let run: ChildRun;
+
+  beforeAll(() => {
+    run = runChild(SINKING_BENCH);
+  }, CHILD_TIMEOUT_MS);
+
+  it("prints one JSON report of the benchmark's statistics under its plain name, and nothing else", () => {
+    const report: unknown = JSON.parse(run.stdout);
+
+    expect({ status: run.status, report }).toStrictEqual({
+      status: 0,
+      report: {
+        layout: [{ name: 0, types: [] }],
+        context: {
+          runtime: "node",
+          version: process.versions.node,
+          arch: `${process.arch}-${process.platform}`,
+          cpu: { name: cpus()[0]?.model },
+        },
+        benchmarks: [
+          {
+            alias: SINKING_BENCH,
+            runs: [
+              {
+                stats: {
+                  min: expect.any(Number),
+                  p25: expect.any(Number),
+                  p50: expect.any(Number),
+                  p75: expect.any(Number),
+                  p99: expect.any(Number),
+                  max: expect.any(Number),
+                  avg: expect.any(Number),
+                  samples: expect.any(Number),
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
+  it("reports the statistics under the names of their rank, from min to max", () => {
+    const stats = reportedStats(run.stdout);
+
+    const ranked = RANKS.map((rank) => Number(field(stats, rank)));
+
+    expect(ranked).toStrictEqual(ranked.toSorted((a, b) => a - b));
+  });
+
+  it("stores the sum of every suite's sink value, its own suite's included, in globalThis.benchSink", () => {
+    expectSinkStored(run.sink, SINK_SUITES.indexOf("access-bench.ts"));
+  });
+});
+
+describe.each(SINKING_BENCHES.map((bench, index) => ({ bench, suite: index + 1 })))(
+  "benchmarks/main.ts --child $bench",
+  ({ bench, suite }) => {
+    it(
+      "stores the sum of every suite's sink value, its own suite's included, in globalThis.benchSink",
+      () => {
+        const { sink } = runChild(bench);
+
+        expectSinkStored(sink, suite);
+      },
+      CHILD_TIMEOUT_MS,
+    );
+  },
+);
+
+describe("benchmarks/main.ts --child reporting a body's times", () => {
+  it(
+    "reports nanoseconds per call, with avg the mean of the samples",
+    () => {
+      const { stdout } = runChild(TIMED_BENCH, { timed: true });
+
+      const stats = reportedStats(stdout);
+      const p50 = Number(field(stats, "p50"));
+      const avg = Number(field(stats, "avg"));
+      const max = Number(field(stats, "max"));
+      expect({
+        p50InNs: p50 >= 100_000 && p50 < 1_000_000,
+        avgAboveTwiceMedian: avg > 2 * p50,
+        avgBelowMax: avg < max,
+      }).toStrictEqual({ p50InNs: true, avgAboveTwiceMedian: true, avgBelowMax: true });
+    },
+    CHILD_TIMEOUT_MS,
+  );
+});
+
+describe.each([
+  {
+    label: "an unknown benchmark name",
+    bench: "banana/missing",
+    options: {},
+    cause: "banana/missing",
+  },
+  {
+    label: "no exposed gc",
+    bench: SINKING_BENCH,
+    options: { exposeGc: false },
+    cause: "--expose-gc",
+  },
+  {
+    label: "a body that throws",
+    bench: THROWING_BENCH,
+    options: { throwing: true },
+    cause: THROWN,
+  },
+])("benchmarks/main.ts --child with $label", ({ bench, options, cause }) => {
+  it(
+    "exits 1, printing the cause on stderr only",
+    () => {
+      const failed = runChild(bench, options);
+
+      expect({ status: failed.status, stdout: failed.stdout }).toStrictEqual({
+        status: 1,
+        stdout: "",
+      });
+      expect(failed.stderr).toContain(cause);
+    },
+    CHILD_TIMEOUT_MS,
+  );
+});
+
 describe("benchmarks/main.ts --optimized", () => {
   let run: EntryRun;
 
@@ -382,10 +689,6 @@ describe("benchmarks/main.ts --optimized", () => {
     buildRuntime();
     run = runEntry([BENCHES_FILTER, "--engine", "node,bun", "--optimized"]);
   }, COMPILE_TIMEOUT_MS);
-
-  afterAll(() => {
-    removeTempDirs();
-  });
 
   it("prints a report measuring each benchmark under each engine's optimized/ alias", () => {
     const report = printedReport(run);
@@ -486,12 +789,8 @@ describe.runIf(RUN_UNDER_BUN)("benchmarks/main.ts --optimized under Bun", () => 
 
   beforeAll(() => {
     buildRuntime();
-    run = runEntry([anchoredFilter(BENCH), "--engine", "bun", "--optimized"], { realBun: true });
+    run = runEntry([BENCH_FILTER, "--engine", "bun", "--optimized"], { realBun: true });
   }, COMPILE_TIMEOUT_MS);
-
-  afterAll(() => {
-    removeTempDirs();
-  });
 
   it("measures the benchmark in a Bun child running the compiled entry", () => {
     const report = printedReport(run);
@@ -514,12 +813,11 @@ describe.each(COMPILE_FAILURES)(
 
     beforeAll(() => {
       buildRuntime();
-      run = runEntry([anchoredFilter(BENCH), "--optimized"], { entry: benchmarkTreeWith(source) });
+      run = runEntry([BENCH_FILTER, "--optimized"], { entry: benchmarkTreeWith(source) });
     }, COMPILE_TIMEOUT_MS);
 
     afterAll(() => {
       removeBenchmarkProjects();
-      removeTempDirs();
     });
 
     it("exits 1 before starting a child, printing the cause on stderr only", () => {
@@ -538,10 +836,6 @@ describe.each(COMPILE_FAILURES)(
 );
 
 describe("benchmarks/main.ts with a repeated --optimized", () => {
-  afterEach(() => {
-    removeTempDirs();
-  });
-
   it(
     "exits 2 without compiling, printing the usage error on stderr only",
     () => {
@@ -560,14 +854,10 @@ describe("benchmarks/main.ts with a repeated --optimized", () => {
 });
 
 describe("benchmarks/main.ts --optimized when an output cannot be written", () => {
-  afterEach(() => {
-    removeTempDirs();
-  });
-
   it(
     "exits 1 before starting a child, printing the cause on stderr only",
     () => {
-      const failed = runEntry([anchoredFilter(BENCH), "--optimized"], { refuseWrites: true });
+      const failed = runEntry([BENCH_FILTER, "--optimized"], { refuseWrites: true });
 
       expect({
         status: failed.status,

@@ -16,8 +16,9 @@ storage.
 
 `each_with_despawn` and `deferred_despawn` consume the population they run against, so the suite's
 `manualBench` shim rebuilds their world before each iteration and destroys it after, both outside
-the clock. The rest are [net-neutral](../rationale.md#conventions) and reuse one world. Each sample
-times one call of the body, never a batch of replayed calls
+the clock. The rest are [net-neutral](../rationale.md#conventions) and reuse one world. A consuming
+benchmark's sample times one call of the body. A net-neutral benchmark's sample times a fixed batch
+of consecutive calls, sized so one timer step is at most 1 % of the sample
 ([timing lifecycle](../rationale.md#conventions)). Every benchmark here ends with `destroyWorld()`.
 The tracked archetype also declares the optional Alive tag, but no benchmark here enables it.
 
@@ -37,10 +38,10 @@ The tracked archetype also declares the optional Alive tag, but no benchmark her
 
 **Purpose:** Measure raw per-entity `each()` throughput with a minimal workload.
 
-| Property | Value                                           |
-| -------- | ----------------------------------------------- |
-| Setup    | Bare world with N entities (Position, Velocity) |
-| Warmup   | One `each()` pass                               |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Bare world with N entities (Position, Velocity)         |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 
@@ -62,10 +63,10 @@ rebinding. The inlined twin is [`inlined_throughput`](reference.md#inlined_throu
 **Purpose:** Measure `each()` throughput when the callback calls a function, which makes the body
 hazard-bearing.
 
-| Property | Value                                           |
-| -------- | ----------------------------------------------- |
-| Setup    | Bare world with N entities (Position, Velocity) |
-| Warmup   | One `each()` pass                               |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Bare world with N entities (Position, Velocity)         |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 
@@ -93,10 +94,10 @@ would make the body hazard-free again.
 
 **Purpose:** Measure `each()` iteration throughput on a world fragmented by sustained entity churn.
 
-| Property | Value                                           |
-| -------- | ----------------------------------------------- |
-| Setup    | Bare world with N entities (Position, Velocity) |
-| Warmup   | One `each()` pass, after the churn              |
+| Property | Value                                                    |
+| -------- | -------------------------------------------------------- |
+| Setup    | Bare world with N entities (Position, Velocity), churned |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms  |
 
 **Setup detail:** After the initial spawn, runs 5 churn rounds. Each round collects every 3rd entity
 via `each()`, despawns them, then respawns the same count. This scrambles dense array ordering via
@@ -125,7 +126,7 @@ churn. Inspired by the `IteratePathological` benchmark in EnTT, a C++ ECS librar
 | Property | Value                                                                    |
 | -------- | ------------------------------------------------------------------------ |
 | Setup    | Bare world, N default-valued entities in each of the nine storages below |
-| Warmup   | One frame                                                                |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms                  |
 
 **Setup detail:** The nine archetypes and the system run over each, in frame order:
 
@@ -165,10 +166,10 @@ The inlined twin is [`inlined_frame`](reference.md#inlined_frame).
 **Purpose:** Measure per-pass overhead when 4 sequential `each()` calls propagate values A → B → C →
 D → E.
 
-| Property | Value                                      |
-| -------- | ------------------------------------------ |
-| Setup    | Bare world, N entities with components A-E |
-| Warmup   | One full chain (A → B → C → D → E)         |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Bare world, N entities with components A-E              |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 
@@ -190,10 +191,10 @@ the pair brackets how view width affects per-entity cost.
 
 **Purpose:** Measure `each()` iteration cost when every other entity is despawned mid-iteration.
 
-| Property | Value                                           |
-| -------- | ----------------------------------------------- |
-| Setup    | Bare world with N entities (Position, Velocity) |
-| Warmup   | One read-only `each()` pass                     |
+| Property | Value                                                                             |
+| -------- | --------------------------------------------------------------------------------- |
+| Setup    | Bare world with N entities (Position, Velocity), then one read-only `each()` pass |
+| Warmup   | 1000 untimed samples, each on a fresh world                                       |
 
 **Operation:**
 
@@ -220,10 +221,10 @@ change. It measures only cost; the unit tests own the correctness of the travers
 **Purpose:** Measure the deferred-cleanup idiom — collect dead entities during `each()`, then flush
 them with one batch `despawnMany()` after the loop.
 
-| Property | Value                                               |
-| -------- | --------------------------------------------------- |
-| Setup    | Bare world with N entities (Position, Velocity)     |
-| Warmup   | One collect + flush cycle, then a respawn back to N |
+| Property | Value                                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------------------- |
+| Setup    | Bare world with N entities (Position, Velocity), then one collect + flush cycle and a respawn back to N |
+| Warmup   | 1000 untimed samples, each on a fresh world                                                             |
 
 **Operation:**
 
@@ -257,10 +258,10 @@ shape this idiom actually produces in a frame.
 
 **Purpose:** Measure field-read throughput for a 1-field component.
 
-| Property | Value                          |
-| -------- | ------------------------------ |
-| Setup    | Bare world, N entities with F1 |
-| Warmup   | One `each()` pass              |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Bare world, N entities with F1                          |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 
@@ -280,10 +281,10 @@ than reading the gap between neighbors as a per-field price.
 
 **Purpose:** Measure field-read throughput for a 2-field component.
 
-| Property | Value                          |
-| -------- | ------------------------------ |
-| Setup    | Bare world, N entities with F2 |
-| Warmup   | One `each()` pass              |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Bare world, N entities with F2                          |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 
@@ -299,10 +300,10 @@ each(storage, (e) => sink += e.F2.a + e.F2.b)
 
 **Purpose:** Measure field-read throughput for a 5-field component.
 
-| Property | Value                          |
-| -------- | ------------------------------ |
-| Setup    | Bare world, N entities with F5 |
-| Warmup   | One `each()` pass              |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Bare world, N entities with F5                          |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 
@@ -312,16 +313,21 @@ each(storage, (e) => sink += e.F5.a + e.F5.b + e.F5.c + e.F5.d + e.F5.e)
 
 **Rationale:** Five array reads per entity.
 
+**Placement:** On Bun, this body reads 1.5 % faster in `iteration-bench.ts` than alone in a module
+of its own. Both the median of ten processes per placement and a rerun of ten more show this. Timed
+one call per sample it also reads 1.5 % faster, so batching does not cause it. Compare Bun readings
+of this benchmark with each other, not with a copy of its body measured elsewhere.
+
 ---
 
 ## soa_10field
 
 **Purpose:** Measure field-read throughput for a 10-field component.
 
-| Property | Value                           |
-| -------- | ------------------------------- |
-| Setup    | Bare world, N entities with F10 |
-| Warmup   | One `each()` pass               |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Bare world, N entities with F10                         |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 

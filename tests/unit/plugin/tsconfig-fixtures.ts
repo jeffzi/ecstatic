@@ -15,12 +15,17 @@ export function removeTempDirs(): void {
 }
 
 /**
- * Creates an empty temp directory, by its real path, that `removeTempDirs` deletes. The native
- * real path expands a Windows 8.3 short name such as `RUNNER~1`, as Vite does with its root, so a
- * module id built from the directory matches the ids Vite gives.
+ * Creates an empty temp directory and returns its real path. The native real path expands a
+ * Windows 8.3 short name such as `RUNNER~1`, as Vite does with its root, so a module id built from
+ * the directory matches the ids Vite gives.
  */
+function makeTempDir(): string {
+  return mkdtempSync(join(realpathSync.native(tmpdir()), "ecstatic-plugin-"));
+}
+
+/** Creates an empty temp directory, by its real path, that `removeTempDirs` deletes. */
 function createTempDir(): string {
-  const dir = mkdtempSync(join(realpathSync.native(tmpdir()), "ecstatic-plugin-"));
+  const dir = makeTempDir();
   createdDirectories.push(dir);
   return dir;
 }
@@ -49,4 +54,24 @@ export function createProject(files: Record<string, unknown>): string {
   const dir = createTempDir();
   writeFixtures(dir, files);
   return dir;
+}
+
+/**
+ * Creates a temp directory holding `files` (see `writeFixtures`) for the duration of `use`, and
+ * deletes it once `use` returns or throws, so no hook has to remember to.
+ *
+ * @param files - Relative path → content pairs to write under the directory.
+ * @param use - Receives the directory's real path; everything it needs from the directory must be
+ * read before it returns.
+ * @returns What `use` returns.
+ * @throws Error when a file cannot be written, and whatever `use` throws.
+ */
+export function withTempProject<T>(files: Record<string, unknown>, use: (dir: string) => T): T {
+  const dir = makeTempDir();
+  try {
+    writeFixtures(dir, files);
+    return use(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }

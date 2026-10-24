@@ -1,9 +1,9 @@
 import { join } from "node:path";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 
+import type { BenchLifecycle } from "../../benchmarks/measure.js";
 import {
-  anchoredFilter,
   type BenchEntry,
   type BenchReport,
   benchNames,
@@ -14,6 +14,7 @@ import {
   compileOptimized,
   type Engine,
   isDefaultEngines,
+  measureBench,
   mergeReports,
   namespaceReport,
   type ParsedArgs,
@@ -27,8 +28,10 @@ import {
 import { openSession, type Session } from "../../src/plugin/optimizer/session.js";
 import { createProject, removeTempDirs } from "../unit/plugin/tsconfig-fixtures.js";
 import {
+  type BareWorldCtx,
   BENCHMARK_CONFIG,
   benchmarkConfigProject,
+  buildBareWorld,
   COMPILE_FAILURES,
   COMPILE_TIMEOUT_MS,
   removeBenchmarkProjects,
@@ -282,12 +285,16 @@ describe("childSpawnSpec", () => {
 describe("registerBench", () => {
   // The registry is module-level state shared by the whole file, so each test
   // owns a private name prefix and only asserts on its own entries.
-  const body = (): number => 1;
+  const description: BenchLifecycle<BareWorldCtx> = {
+    kind: "warmed",
+    build: buildBareWorld,
+    body: () => {},
+  };
 
   it("records names in registration order", () => {
-    registerBench("order.first", body);
-    registerBench("order.second", body);
-    registerBench("order.third", body);
+    registerBench("order.first", description);
+    registerBench("order.second", description);
+    registerBench("order.third", description);
 
     const recorded = benchNames().filter((name) => name.startsWith("order."));
 
@@ -295,31 +302,45 @@ describe("registerBench", () => {
   });
 
   it("rejects a name that is already registered", () => {
-    registerBench("duplicate.only", body);
+    registerBench("duplicate.only", description);
 
     expect(() => {
-      registerBench("duplicate.only", body);
+      registerBench("duplicate.only", description);
     }).toThrow(/duplicate\.only/);
   });
 });
 
-describe("anchoredFilter", () => {
-  const matchCases: { candidate: string; matches: boolean }[] = [
-    { candidate: BENCH, matches: true },
-    { candidate: `${BENCH}_extra`, matches: false },
-    { candidate: "access.get", matches: false },
-    // The `.` in the name must be escaped, or it would match any character.
-    { candidate: "access:get_1field", matches: false },
-  ];
+describe("measureBench", () => {
+  /** A description whose body fails at once with `error`, so measuring it settles fast. */
+  function failingWith(error: Error): BenchLifecycle<BareWorldCtx> {
+    return {
+      kind: "warmed",
+      build: buildBareWorld,
+      body: () => {
+        throw error;
+      },
+    };
+  }
 
-  it.each(matchCases)(
-    "built from the name matches $candidate → $matches",
-    ({ candidate, matches }) => {
-      const pattern = new RegExp(anchoredFilter(BENCH));
+  it("measures the description registered under the name it is given", async () => {
+    vi.stubGlobal("gc", () => {});
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const second = new Error("the second body ran");
+    registerBench("bound.first", failingWith(new Error("the first body ran")));
+    registerBench("bound.second", failingWith(second));
 
-      expect(pattern.test(candidate)).toBe(matches);
-    },
-  );
+    const measured = measureBench("bound.second");
+
+    await expect(measured).rejects.toBe(second);
+  });
+
+  it("rejects a name that is not registered, naming it", async () => {
+    const measured = measureBench("banana.missing");
+
+    await expect(measured).rejects.toThrow("banana.missing");
+  });
 });
 
 describe("selectBenchmarks", () => {
@@ -366,19 +387,19 @@ const LAYOUT: unknown = [{ name: 0, types: [] }];
 const CONTEXT: unknown = { cpu: { freq: 3.2 }, runtime: "node" };
 
 /**
- * One benchmark entry as mitata's json format writes it.
+ * One benchmark entry as a child's report writes it.
  *
  * `stats`, `args` and `kind` are fields the runner never reads — they are here
  * so the tests can prove they survive parsing and merging.
  *
  * @param alias - The benchmark name.
  * @param overrides - Fields replacing the defaults.
- * @returns A BenchEntry shaped like one mitata json entry.
+ * @returns A BenchEntry shaped like one entry of a child's report.
  */
 function benchEntry(alias: string, overrides: Partial<BenchEntry> = {}): BenchEntry {
   return {
     alias,
-    runs: [{ stats: { p50: 1234.5, heap: { avg: 64 } }, args: { size: 1000 }, error: null }],
+    runs: [{ stats: { p50: 1234.5, heap: { avg: 64 } }, args: { size: 1000 } }],
     kind: "iter",
     ...overrides,
   };
@@ -415,8 +436,6 @@ describe("parseChildReport", () => {
   });
 
   describe("when stdout is not a usable report", () => {
-    const failingRun = { stats: { p50: 0 }, error: "field 'hp' is not defined" };
-
     const invalidCases: { label: string; stdout: string }[] = [
       { label: "output holding no JSON at all", stdout: "bun: command not found\n" },
       { label: "an empty benchmarks array", stdout: JSON.stringify(report({ benchmarks: [] })) },
@@ -425,10 +444,6 @@ describe("parseChildReport", () => {
         stdout: JSON.stringify(
           report({ benchmarks: [benchEntry(BENCH), benchEntry("access.get_3fields")] }),
         ),
-      },
-      {
-        label: "a run recording an error",
-        stdout: JSON.stringify(report({ benchmarks: [benchEntry(BENCH, { runs: [failingRun] })] })),
       },
       {
         label: "a document without layout",
@@ -474,9 +489,7 @@ describe("namespaceReport", () => {
   });
 
   it("preserves runs, layout, and context unchanged", () => {
-    const customRuns = [
-      { stats: { p50: 9999, heap: { avg: 128 } }, args: { size: 500 }, error: null },
-    ];
+    const customRuns = [{ stats: { p50: 9999, heap: { avg: 128 } }, args: { size: 500 } }];
     const input = report({
       benchmarks: [benchEntry("access.get_1field", { runs: customRuns })],
     });

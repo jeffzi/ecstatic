@@ -1,13 +1,20 @@
 {
   "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
-  "entry": ["tests/types/*.test-d.ts", "tests/types/_fixtures.ts", "benchmarks/main.ts"],
+  "entry": ["tests/types/*.test-d.ts", "tests/types/_fixtures.ts"],
+  "framework": [
+    {
+      "name": "bench-suite",
+      "enablers": ["tinybench"],
+      "entryPoints": ["benchmarks/main.ts"],
+      "entryPointRole": "support"
+    }
+  ],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
     "cspell",
     "fallow",
     "lefthook",
     "markdownlint-cli2",
-    "mitata",
     "oxfmt",
     "oxlint",
     "oxlint-tsgolint"

@@ -10,8 +10,8 @@ states its teardown once in its intro.
 
 This is a **regression-detection benchmark suite** for ecstatic, an entity component system (ECS).
 It runs on Node (V8) by default, and optionally under Bun (JavaScriptCore) via `--engine`, timed
-with [mitata](https://github.com/evanwashere/mitata). The goal is catching performance regressions
-between ecstatic releases, not comparing ecstatic against other ECS frameworks.
+with [tinybench](https://github.com/tinylibs/tinybench). The goal is catching performance
+regressions between ecstatic releases, not comparing ecstatic against other ECS frameworks.
 
 Each benchmark targets a specific ecstatic code path. A regression rarely moves a single number (a
 slowdown in `each()` moves all ten iteration benchmarks), but the set that moves narrows where it
@@ -45,50 +45,66 @@ out the idle background population to isolate per-entity throughput from world-s
 entity in an iteration world belongs to a storage its benchmark iterates. The frame benchmark
 iterates the background storage as one of its nine storages.
 
-**Warmup.** Priming passes run during setup and are not timed, so the measured body reflects V8's
-steady state rather than one-time optimization and inline-cache warmup costs. mitata additionally
-runs its own warmup samples before it starts recording.
+**Warmup.** tinybench runs untimed warmup samples before it records any, so the measured body
+reflects the engine's steady state rather than one-time optimization and inline-cache warmup costs.
+A net-neutral benchmark warms up on its one world for at least 16 samples and 250 ms. Warmup doubles
+the calls per sample until one sample spans at least 100 timer steps, and every timed sample reuses
+that count. A world-consuming benchmark warms up for 1000 samples, each on a fresh world.
 
-**Sink pattern.** A module-level `sink` variable accumulates values from read-only benchmarks, and
-the entry point feeds the total to mitata's `do_not_optimize` once every suite has run. Without it,
-V8 may prove the loop body's results unobservable and delete it.
+**Sink pattern.** A module-level `sink` variable accumulates values from read-only benchmarks. Once
+the benchmark has run, the entry point adds every suite's sink and stores the total in
+`globalThis.benchSink`, where it stays readable. tinybench keeps no sink of its own, so the suite
+owns this one. Without it, V8 may prove the loop body's results unobservable and delete it.
 
 **Shuffle.** A Fisher-Yates shuffle on tracked entity arrays defeats insertion-order bias. Real
 workloads access entities in unpredictable order; sequential access would give unrealistically
 favorable cache behavior. The shuffle is driven by a seeded generator, so a given entity layout is
 reproducible across runs.
 
-**Timing lifecycle.** Only the benchmark body is timed, one call per sample, under mitata's
-manual-timing mode. How the world around it is managed depends on what the body does:
+**Timing lifecycle.** The driver (`benchmarks/measure.ts`) times only the benchmark body, through
+tinybench's synchronous sampler, so no sampling loop wraps the timed code in an `async` function.
+How the world around it is managed depends on what the body does:
 
-- **Net-neutral bodies** — reads, overwrites, or a despawn-then-respawn pair that restores the
-  population — build one world during setup, run the body once untimed, and reuse that world for
-  every sample. Each sample times a single call of the body. The world is destroyed once timing
-  ends.
+- **Net-neutral bodies** leave the population as they found it: reads, overwrites, or a
+  despawn-then-respawn pair. They build one world during setup, run the body untimed during warmup,
+  and reuse that world for every sample. Each sample times a fixed number of consecutive calls of
+  the body and reports the sample's span divided by that count. The driver destroys the world once
+  timing ends.
 - **World-consuming bodies** — anything that leaves the population changed — get a fresh world per
-  sample. The suite's own `manualBench` helper builds the world before each call and destroys it
-  after, both outside the clock and even when the body throws, so each call starts from identical
-  state.
+  sample, and each sample times exactly one call. The suite's own `manualBench` helper builds the
+  world before each call and destroys it after. Both happen outside the clock, even when the body
+  throws, so each call starts from identical state. These benchmarks run fixed sample counts, 1000
+  warmup and 2000 timed, instead of a time budget. tinybench counts only the clocked span toward its
+  time budget, so the untimed world build in every sample would otherwise multiply a benchmark's
+  wall time.
 
-mitata's default mode batches a short body instead, replaying it thousands of times per sample
-inside its own loop. On V8, that loop is the code the optimizing compiler works on, so a batched
-reading depends on how the loop compiles around the body rather than on the body alone: the same
-function read differently in its own module than copied into another. One call per sample times the
-body the way a program calls a system, once, with other work between calls.
+The driver collects garbage once, after warmup and before the first timed sample, never inside a
+sample. Under Bun it passes the sample function, never the body, to `noInline` from `bun:jsc`, so
+JavaScriptCore keeps the sample function out of the sampling loop it compiles.
 
-The price is resolution. `performance.now()` advances in steps, about 41.7 ns under both Node and
-Bun on the Apple M2 Max the suite was measured on, so a one-call sample is a whole number of steps.
-A body that runs in about 1.1 µs has its median resolved to about 3.7 %, a 375 ns body to about 11
-%, and two readings less than one step apart are not different. A body never repeats its own work
-inside one timed call to rise above the step: that is a replay loop under another name, and it
-brings back what one call per sample removes.
+Batching a net-neutral body is sound only while the loop that repeats it times like a plain loop. A
+benchmark library's own batching loop can be the code the optimizing compiler works on. A batched
+reading then depends on how that loop compiles around the body, not on the body alone. The same
+function reads differently in its own module than copied into another. The driver therefore repeats
+the body inside the sample function, a loop that times like a plain loop on both engines. Measured
+over 15 to 20 processes, the [`throughput`](specifications/iteration.md#throughput) body batched
+this way read 1139 ns against a plain loop's 1110 ns on Node, and 605 ns against 602 ns on Bun. A
+change that loses that match brings back the placement effect that the placement rule rejects.
 
-A change to how bodies are timed must not make placement matter. Identical code timed in its home
-module and alone in a module of its own must not read further apart than process-to-process
-variation allows. Judge it over ten processes per placement, running each home process and its
-minimal counterpart back to back and testing the paired differences, on every engine the suite runs.
-A change that adds such a placement effect is rejected; one that leaves an existing effect in place
-is not, and the benchmark's specification records the effect.
+Batching is what buys resolution. `performance.now()` advances in steps, about 41.7 ns under both
+Node and Bun on the Apple M2 Max the suite was measured on. The driver measures the step at startup
+rather than assuming it, and batches a net-neutral body until one step is at most 1 % of a sample's
+span. A body that already spans 100 steps runs once per sample. A world-consuming body still runs
+once per sample, so its sample is a whole number of steps. The clock resolves a body near 375 ns to
+about 11 %. Two of its readings less than one step apart are equal within the clock's resolution.
+
+**Placement rule.** A change to how bodies are timed must not make placement matter. Identical code
+timed in its home module and alone in a module of its own must not read further apart than
+process-to-process variation allows. Judge it over ten processes per placement, running each home
+process and its minimal counterpart back to back and testing the paired differences, on every engine
+the suite runs. Reject a change that adds such a placement effect unless it removes more effects
+across the suite than it adds. A change may leave an existing effect in place. Record every
+remaining effect in its benchmark's specification.
 
 Consuming benchmarks report no heap statistic: the per-iteration world construction would dominate
 the delta rather than reporting what the body itself allocated.
@@ -104,12 +120,15 @@ residue from whatever ran before it and reading one benchmark against another is
 **Entity-by-id get/set vs iteration-view access.** Inside `each()` callbacks, field access goes
 through a view bound once per row, so a read or write costs a column lookup and an index — no entity
 resolution. The field-count scaling benchmarks
-([`soa_1field`](specifications/iteration.md#soa_1field)..[`soa_10field`](specifications/iteration.md#soa_10field))
-cover the only variable there: how many fields the callback touches per entity. The `get()`/`set()`
-functions are a different path: they unpack an entity ID to its index, validate liveness under debug
-builds, and resolve the component column with its error checks, on every call. The
-[access benchmarks](specifications/access.md) cover this resolve-and-read/write path with scaling
-from 1 to 4 fields and both the field-descriptor and component-record `set` overloads.
+([`soa_1field`][soa-1field]..[`soa_10field`][soa-10field]) cover the only variable there: how many
+fields the callback touches per entity. The `get()`/`set()` functions are a different path: they
+unpack an entity ID to its index, validate liveness under debug builds, and resolve the component
+column with its error checks, on every call. The [access benchmarks](specifications/access.md) cover
+this resolve-and-read/write path with scaling from 1 to 4 fields and both the field-descriptor and
+component-record `set` overloads.
+
+[soa-1field]: specifications/iteration.md#soa_1field
+[soa-10field]: specifications/iteration.md#soa_10field
 
 **No add/remove component benchmarks.** ecstatic archetypes are static — component lists are fixed
 at definition time. There are no archetype transitions and no runtime component mutation. This

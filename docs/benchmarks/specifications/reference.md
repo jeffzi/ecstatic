@@ -6,10 +6,11 @@ bodies in [`benchmarks/systems.ts`](../../../benchmarks/systems.ts)
 Shared constants (`N`, `DT`) are defined in [parameters](parameters.md). Why this group exists, and
 why its numbers are not regression targets, is in [rationale](../rationale.md#design-decisions).
 
-Each benchmark here is the twin of an [iteration benchmark](iteration.md): the same world builder,
-the same warmup, and the same timing, one call per sample, through one shared helper. Only the timed
-body differs. Where the iteration benchmark calls `each()`, the reference benchmark runs the inlined
-loop a build-time optimizer would emit for that call:
+Each benchmark here is the twin of an [iteration benchmark](iteration.md). The twins share one
+helper, so they use the same world builder, the same warmup, and the same timing: a batch of
+consecutive calls per sample. Only the timed body differs. Where the iteration benchmark calls
+`each()`, the reference benchmark runs the inlined loop a build-time optimizer would emit for that
+call:
 
 - It reads the column arrays it needs from the storage once per call, never caching them across
   calls, because storage growth replaces typed-array columns.
@@ -27,10 +28,10 @@ identical, so an inlined loop cannot win by doing less work. Both reference benc
 
 **Purpose:** Measure the inlined-loop ceiling for [`throughput`](iteration.md#throughput).
 
-| Property | Value                                           |
-| -------- | ----------------------------------------------- |
-| Setup    | Bare world with N entities (Position, Velocity) |
-| Warmup   | One pass                                        |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Bare world with N entities (Position, Velocity)         |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 
@@ -54,7 +55,7 @@ with a single callback buys: the per-entity cost of `each()` dispatch and view r
 | Property | Value                                                                    |
 | -------- | ------------------------------------------------------------------------ |
 | Setup    | Bare world, N default-valued entities in each of the nine frame storages |
-| Warmup   | One frame                                                                |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms                  |
 
 **Operation:**
 

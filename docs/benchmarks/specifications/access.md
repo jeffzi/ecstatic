@@ -19,10 +19,10 @@ overwrite fields without changing the population. Every benchmark ends with `des
 
 **Purpose:** Measure single-field read cost via `get(storage, id, field)`.
 
-| Property | Value                    |
-| -------- | ------------------------ |
-| Setup    | Pre-populated world (5x) |
-| Warmup   | One untimed pass         |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Pre-populated world (5x)                                |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 
@@ -37,23 +37,16 @@ chain: unpack the entity index from the ID, resolve the owning storage, and read
 from the sparse map. Then it resolves the component's column and indexes it. Regressions in entity
 resolution or column resolution show up here.
 
-**Placement:** On Bun, this body reads 5.2 % slower in `access-bench.ts` than the same body alone in
-a module of its own (median of ten processes per placement). Batched timing shows the same
-direction, so the timing mode does not cause it. Its batched size is not a figure to quote: its
-batched readings are bimodal across processes, so the batched gap mostly counts which mode each
-process landed in. Compare Bun readings of this benchmark with each other, not with a copy of its
-body measured elsewhere.
-
 ---
 
 ## get_2field
 
 **Purpose:** Measure the cost of reading two fields of one component from the same entity.
 
-| Property | Value                    |
-| -------- | ------------------------ |
-| Setup    | Pre-populated world (5x) |
-| Warmup   | One untimed pass         |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Pre-populated world (5x)                                |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 
@@ -71,10 +64,10 @@ k fields means k full resolve chains — the entity is resolved k times, not onc
 `get_1field` is therefore a second complete resolve plus a second column read. Both fields belong to
 the same component (Position), so the two calls resolve the same column map entry.
 
-**Placement:** On Bun, this body reads 9.2 % slower in `access-bench.ts` than the same body alone in
-a module of its own (median of ten processes per placement). Batched timing shows the same
-direction, 12.2 %, so the timing mode does not cause it. Compare Bun readings of this benchmark with
-each other, not with a copy of its body measured elsewhere.
+**Placement:** On Bun, this body reads 5.2 % faster in `access-bench.ts` than alone in a module of
+its own (median of ten processes per placement). A rerun of ten more reads 2.4 % faster. Timed one
+call per sample it reads 1.0 % faster, so batching does not cause it. Compare Bun readings of this
+benchmark with each other, not with a copy of its body measured elsewhere.
 
 ---
 
@@ -82,10 +75,10 @@ each other, not with a copy of its body measured elsewhere.
 
 **Purpose:** Measure the cost of reading four fields spanning two components from the same entity.
 
-| Property | Value                    |
-| -------- | ------------------------ |
-| Setup    | Pre-populated world (5x) |
-| Warmup   | One untimed pass         |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Pre-populated world (5x)                                |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 
@@ -105,21 +98,16 @@ carries its own component reference, so the column lookup runs per call against 
 components. The delta from `get_2field` reveals whether crossing components adds overhead beyond the
 per-call baseline — separate entries in the storage's column map, separate backing arrays.
 
-**Placement:** On Bun, this body reads 5.2 % slower in `access-bench.ts` than the same body alone in
-a module of its own (median of ten processes per placement). Batched timing shows the same
-direction, 7.2 %, so the timing mode does not cause it. Compare Bun readings of this benchmark with
-each other, not with a copy of its body measured elsewhere.
-
 ---
 
 ## set_1field
 
 **Purpose:** Measure single-field write cost via `set(storage, id, field, value)`.
 
-| Property | Value                    |
-| -------- | ------------------------ |
-| Setup    | Pre-populated world (5x) |
-| Warmup   | One untimed pass         |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Pre-populated world (5x)                                |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 
@@ -134,21 +122,16 @@ write, including the per-write check of whether the field's declared default is 
 are stored as 0/1). The delta from `get_1field` isolates the write-side cost. `set` stores values by
 reference: no component write path clones them.
 
-**Placement:** On Bun, this body reads 3.3 % slower in `access-bench.ts` than the same body alone in
-a module of its own (median of ten processes per placement). Batched timing shows the same
-direction, 2.0 %, so the timing mode does not cause it. Compare Bun readings of this benchmark with
-each other, not with a copy of its body measured elsewhere.
-
 ---
 
 ## set_record
 
 **Purpose:** Measure component-record write cost via `set(storage, id, Component, { fields })`.
 
-| Property | Value                    |
-| -------- | ------------------------ |
-| Setup    | Pre-populated world (5x) |
-| Warmup   | One untimed pass         |
+| Property | Value                                                   |
+| -------- | ------------------------------------------------------- |
+| Setup    | Pre-populated world (5x)                                |
+| Warmup   | Untimed batched samples, at least 16 samples and 250 ms |
 
 **Operation:**
 

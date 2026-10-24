@@ -1,7 +1,6 @@
 import {
   createWorld,
   despawnMany,
-  destroyWorld,
   type EntityId,
   register,
   type Storage,
@@ -21,6 +20,7 @@ import {
   tagArch,
   trackedArch,
 } from "./archetypes.js";
+import type { BenchLifecycle } from "./measure.js";
 import { mulberry32, shuffle } from "./random.js";
 import { parseGeneration } from "./runner.js";
 
@@ -38,8 +38,6 @@ export const DEFAULT_N = 1000;
 
 /** Seed for every world build — benchmarks must lay entities out identically on every run. */
 const SEED = 42;
-
-const NS_PER_MS = 1e6;
 
 // ---------------------------------------------------------------------------
 // World creation
@@ -242,108 +240,41 @@ function registerDefaults<A extends AnyArchetype>(world: World, arch: A): Storag
 }
 
 // ---------------------------------------------------------------------------
-// Timing shims
+// Benchmark descriptions
 // ---------------------------------------------------------------------------
 
 /**
- * The generator yield shape that puts mitata into manual-timing mode with no heap statistic.
+ * Describe a benchmark whose body leaves its world as it found it: one build, then every warmup
+ * and timed call over the same context.
  *
- * mitata calls `manual` once per sample and records the number it returns as that sample's time,
- * in nanoseconds, so nothing it does around the call reaches the reading. `heap: false` because
- * the suite owns time and nothing else: memory is gated separately by the allocation gate.
- */
-interface ManualYield {
-  heap: false;
-  manual: () => number;
-}
-
-/** A mitata generator benchmark that times one body call per sample. */
-export type TimedBenchmark = () => Generator<ManualYield, void, unknown>;
-
-/**
- * Time one call of `run`.
+ * Benchmarks that must match, such as an `each()` benchmark and its inlined twin, pass the same
+ * `build`, so they can differ only in the body they time.
  *
- * @param run - Work to time; called exactly once.
- * @returns The wall time the call took, in nanoseconds.
- * @throws Whatever `run` throws, unchanged.
- */
-function elapsedNs(run: () => void): number {
-  const started = performance.now();
-  run();
-  return (performance.now() - started) * NS_PER_MS;
-}
-
-/**
- * The lifecycle every net-neutral benchmark shares: build, one untimed pass, time, release.
- *
- * Any benchmark whose body leaves its world as it found it goes through here. Benchmarks that
- * must match, such as an `each()` benchmark and its inlined twin, pass the same `build`, so they
- * can differ only in the body they time.
- *
- * Each sample is one call of `body`, never a batch: a body replayed inside mitata's loop is timed
- * by how that loop compiles around it rather than by the body alone.
- *
- * @param build - Builds the context the body runs over; called once per run, outside the clock.
+ * @param build - Builds the context the body runs over; called once per measurement, outside the
+ * clock.
  * @param body - The pass to time; it receives the same context for the warmup and every sample,
  * so it must leave that context as it found it.
- * @returns A generator benchmark that runs the body once untimed, yields a manual-timing body
- * whose every call runs `body` once and reports that call's elapsed nanoseconds, and destroys the
- * context's world when mitata resumes it after timing.
- * @throws Whatever `build` or the untimed pass of `body` throws, when the generator starts.
+ * @returns A warmed description carrying `build` and `body`; neither runs until it is measured.
  */
 export function warmedBench<C extends { world: World }>(
   build: () => C,
   body: (ctx: C) => void,
-): TimedBenchmark {
-  return function* () {
-    const ctx = build();
-    const pass = (): void => {
-      body(ctx);
-    };
-    pass();
-
-    yield { heap: false, manual: () => elapsedNs(pass) };
-
-    destroyWorld(ctx.world);
-  };
+): BenchLifecycle<C> {
+  return { kind: "warmed", build, body };
 }
 
 /**
- * Time a body against a world built fresh for every iteration.
+ * Describe a benchmark whose body consumes the world it runs against — spawning, despawning,
+ * anything that leaves the population changed — so every sample builds its own.
  *
- * Benches whose body consumes the world it runs against — spawning, despawning,
- * anything that leaves the population changed — cannot reuse one world across
- * samples, so every sample builds its own.
- *
- * `heap: false` because the heap delta would otherwise be swamped by the
- * per-iteration world construction rather than reporting what `body` allocated.
- *
- * @param build - Produces a fresh context per iteration; its cost falls outside the clock.
- * @param body - Work to time, run once per iteration against the context `build` just made; it
- * may consume the world freely.
- * @returns The object to `yield` from a mitata generator benchmark; its `manual` reports the
- * elapsed nanoseconds of `body` alone, and destroys the context's world after every call,
- * whether or not `body` threw.
- * @throws Whatever `build` or `body` throws, from `manual`.
+ * @param build - Produces a fresh context per sample; its cost falls outside the clock.
+ * @param body - Work to time, run once per sample against the context `build` just made; it may
+ * consume the world freely.
+ * @returns A manual description carrying `build` and `body`; neither runs until it is measured.
  */
 export function manualBench<C extends { world: World }>(
   build: () => C,
   body: (ctx: C) => void,
-): ManualYield {
-  return {
-    heap: false,
-    manual(): number {
-      const ctx = build();
-
-      // The world is released in a `finally` so a throwing body does not leak
-      // it.
-      try {
-        return elapsedNs(() => {
-          body(ctx);
-        });
-      } finally {
-        destroyWorld(ctx.world);
-      }
-    },
-  };
+): BenchLifecycle<C> {
+  return { kind: "manual", build, body };
 }

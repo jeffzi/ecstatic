@@ -1,24 +1,26 @@
 /**
  * Logic of the benchmark runner: command-line parsing, the registry of
- * benchmark names, name-to-filter selection, the shape of the child process
- * each engine is launched with, and the optimized compile.
+ * benchmarks, name-to-filter selection, the shape of the child process each
+ * engine is launched with, and the optimized compile.
  *
- * The optimized compile is the one piece here that writes files and drives a
- * compiler. Everything else touches neither the process, the filesystem, nor
- * `node:child_process` — that shell lives in `main.ts`. Keeping the decisions
- * separate from the I/O is what makes them testable.
+ * The optimized compile and `measureBench` are the pieces here that do real
+ * work: one writes files and drives a compiler, the other runs a benchmark
+ * through `measure`. Everything else touches neither the process, the
+ * filesystem, nor `node:child_process` — that shell lives in `main.ts`. Keeping
+ * the decisions separate from the I/O is what makes them testable.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { bench } from "mitata";
+import type { World } from "ecstatic";
 
 import { errorMessage } from "../scripts/caught.js";
 import type { BailDiagnostic, FileBail } from "../src/plugin/optimizer/diagnostics.js";
 import type { Bail } from "../src/plugin/optimizer/plan.js";
 import type { Session } from "../src/plugin/optimizer/session.js";
+import { type BenchLifecycle, measure, type Measurement, type MeasureOptions } from "./measure.js";
 
 // ---------------------------------------------------------------------------
 // Engines and argument parsing
@@ -338,31 +340,29 @@ export function childSpawnSpec(
 // ---------------------------------------------------------------------------
 
 /**
- * Names registered through `registerBench`, in registration order.
- *
- * A `Set` both rejects duplicates and preserves insertion order. The parent
- * needs this list to know which children to spawn, and mitata cannot supply it:
- * its own trial registry is module-private and `run()` clears it.
+ * Every benchmark registered through `registerBench`, by name, in registration order, each bound
+ * to a measurement of its description.
  */
-const registry = new Set<string>();
+const registry = new Map<string, (options?: MeasureOptions) => Promise<Measurement>>();
 
 /**
- * Register a benchmark with mitata and record its name for the parent runner.
- * Suite files call this instead of mitata's `bench`.
+ * Register a benchmark under its name, for the parent to spawn and a child to measure.
  *
- * @param name - Benchmark name, unique across every suite file; it becomes the mitata alias and
+ * @param name - Benchmark name, unique across every suite file; it becomes the report alias and
  * the string a parent filter is matched against.
- * @param body - Benchmark body passed to mitata unchanged; typed `unknown` so a generator — what
- * every suite passes, yielding a manual-timing body — is accepted.
+ * @param lifecycle - How the benchmark builds its context and what it times, as `warmedBench`
+ * or `manualBench` make it; nothing runs until the benchmark is measured.
  * @throws Error when `name` is already registered — a duplicate would make the
  * parent spawn the same child twice and collide the report aliases.
  */
-export function registerBench(name: string, body: () => unknown): void {
+export function registerBench<C extends { world: World }>(
+  name: string,
+  lifecycle: BenchLifecycle<C>,
+): void {
   if (registry.has(name)) {
     throw new Error(`duplicate benchmark name '${name}': every benchmark needs its own name`);
   }
-  registry.add(name);
-  bench(name, body);
+  registry.set(name, (options) => measure(lifecycle, options));
 }
 
 /**
@@ -371,32 +371,34 @@ export function registerBench(name: string, body: () => unknown): void {
  * @returns A fresh array in registration order; mutating it does not touch the registry.
  */
 export function benchNames(): readonly string[] {
-  return [...registry];
+  return [...registry.keys()];
 }
 
-const REGEX_METACHARACTERS = /[\\^$.*+?()[\]{}|]/g;
-
 /**
- * Build a regex source matching exactly one benchmark name and nothing else.
+ * Measure the benchmark registered as `name`.
  *
- * The name is escaped as well as anchored — keep the escape even though
- * current names carry no regex metacharacters: a future name that does must
- * still select only itself.
- *
- * @param name - Benchmark name as registered; taken literally, so any character that is special in a
- * regex is escaped rather than interpreted.
- * @returns Pattern source of the form `^<escaped name>$`, for `new RegExp` with no flags.
+ * @param name - Exact name the benchmark was registered under.
+ * @param options - Overrides for what the engine provides, passed to `measure` unchanged.
+ * @returns The benchmark's statistics, in nanoseconds per body call.
+ * @throws Error (as a rejection) when no benchmark is registered as `name`, naming it, and
+ * whatever `measure` rejects with: a missing exposed `gc`, a `bun:jsc` that cannot be loaded under
+ * Bun, an internal measurement error (see `measure`'s `@throws`), or what the benchmark's build or
+ * body throws.
  */
-export function anchoredFilter(name: string): string {
-  return `^${name.replace(REGEX_METACHARACTERS, String.raw`\$&`)}$`;
+export function measureBench(name: string, options?: MeasureOptions): Promise<Measurement> {
+  const measureRegistered = registry.get(name);
+  if (measureRegistered === undefined) {
+    return Promise.reject(new Error(`unknown benchmark '${name}'`));
+  }
+  return measureRegistered(options);
 }
 
 /**
  * Select the benchmarks a parent-mode filter picks out.
  *
  * @param names - Candidate benchmark names, typically `benchNames()`; never mutated.
- * @param filter - Regex source applied unanchored, matching mitata's own `filter.test(name)`
- * semantics: `soa` selects every name containing it. `undefined` selects everything.
+ * @param filter - Regex source tested unanchored against each name: `soa` selects every name
+ * containing it. `undefined` selects everything.
  * @returns A fresh array of the selected names in their original order; empty when nothing
  * matched, which the caller decides how to treat.
  * @throws UsageError when `filter` is not a valid regular expression.
@@ -421,18 +423,11 @@ export function selectBenchmarks(names: readonly string[], filter?: string): rea
 // Child report handling
 // ---------------------------------------------------------------------------
 
-/** Thrown when a child's stdout is not a usable mitata report. */
+/** Thrown when a child's stdout is not a usable report. */
 export class ChildReportError extends Error {}
 
-/**
- * One measured run of a benchmark.
- *
- * `error` is the only field the runner itself reads — mitata records a throwing
- * benchmark body there. Everything else (`stats`, `args`, …) is carried through
- * to the merged report untouched.
- */
+/** One measured run of a benchmark; its fields (`stats`, …) are carried through untouched. */
 interface BenchRun {
-  readonly error?: unknown;
   readonly [field: string]: unknown;
 }
 
@@ -443,7 +438,10 @@ export interface BenchEntry {
   readonly [field: string]: unknown;
 }
 
-/** A mitata json-format report document. */
+/**
+ * A benchmark report document, in the shape the comparison tool reads: `benchmarks[].alias`, and
+ * `runs[].stats` in nanoseconds.
+ */
 export interface BenchReport {
   readonly layout: unknown;
   readonly benchmarks: readonly BenchEntry[];
@@ -465,29 +463,6 @@ function isBenchEntry(value: unknown): value is BenchEntry {
     isUnknownArray(value["runs"]) &&
     value["runs"].every(isRecord)
   );
-}
-
-/**
- * Describe a `runs[].error` for a diagnostic.
- *
- * mitata serializes a thrown error to `{ message, stack }` rather than an Error
- * instance, and a benchmark body may throw a non-Error, so neither a `message`
- * property nor a useful `toString` can be assumed.
- *
- * @param error - The `error` field of a mitata run after its JSON round-trip; any shape.
- * @returns Its `message` when it carries a string one; `a thrown function` or `a thrown symbol`
- * for the two values `JSON.stringify` cannot encode; otherwise `JSON.stringify(error)`.
- */
-function describeRunError(error: unknown): string {
-  if (isRecord(error) && typeof error["message"] === "string") {
-    return error["message"];
-  }
-  // JSON.stringify returns undefined for these two, which its `string` return
-  // type does not admit, so they are ruled out before the call.
-  if (typeof error === "function" || typeof error === "symbol") {
-    return `a thrown ${typeof error}`;
-  }
-  return JSON.stringify(error);
 }
 
 /**
@@ -548,19 +523,18 @@ function soleBenchmark(benchmarks: unknown): BenchEntry {
 }
 
 /**
- * Read the mitata report a child printed to stdout.
+ * Read the report a child printed to stdout.
  *
  * Validation is structural and shallow: everything the report carries is
  * preserved, because the parent re-serializes it and the comparison tool reads
- * fields — nested `stats`, `args` — that the runner never looks at.
+ * fields — nested `stats` — that the runner never looks at.
  *
  * @param stdout - Everything the child wrote to stdout; only the slice from the first `{` to the
  * last `}` is parsed, so a stray progress line around the document does not break the run.
  * @returns A report holding exactly one benchmark entry, with `layout` and `context` passed
  * through as the child printed them.
  * @throws ChildReportError when stdout holds no report, the document is
- * malformed, the child ran anything other than exactly one benchmark, or a run
- * recorded an error.
+ * malformed, or the child ran anything other than exactly one benchmark.
  */
 export function parseChildReport(stdout: string): BenchReport {
   const document = parseReportDocument(stdout);
@@ -571,13 +545,6 @@ export function parseChildReport(stdout: string): BenchReport {
   }
 
   const entry = soleBenchmark(document["benchmarks"]);
-  for (const run of entry.runs) {
-    if (run.error !== null && run.error !== undefined) {
-      throw new ChildReportError(
-        `benchmark '${entry.alias}' failed: ${describeRunError(run.error)}`,
-      );
-    }
-  }
   return { layout: document["layout"], benchmarks: [entry], context: document["context"] };
 }
 
@@ -616,8 +583,8 @@ export function namespaceReport(
  * @param reports - One parsed, namespaced report per child, in the order the children ran; not
  * mutated.
  * @returns A single report whose `benchmarks` concatenates every input's entries in that order.
- * `layout` and `context` come from the first report: the suite declares no mitata groups, so
- * every entry belongs to the same layout collection and the children share one machine.
+ * `layout` and `context` come from the first report: every child reports the same single
+ * layout collection, and the children share one machine.
  * @throws ChildReportError when there is nothing to merge, or when two reports
  * carry the same alias — the comparison tool silently keeps the last of a
  * collision.
