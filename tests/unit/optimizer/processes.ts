@@ -6,6 +6,16 @@ import { expect, vi } from "vitest";
 
 const execFileAsync = promisify(execFile);
 
+/** DIAG: last seen description of each child process. */
+export const DIAG = new Map<number, string>();
+
+/** DIAG: describes `ids`. */
+export function describeChildren(ids: Iterable<number>): string {
+  return [...ids]
+    .map((pid) => `${pid} alive=${isAlive(pid)} :: ${DIAG.get(pid) ?? "?"}`)
+    .join(" || ");
+}
+
 /** The process IDs of this process's live children. */
 export async function childProcessIds(): Promise<number[]> {
   const { stdout } =
@@ -13,9 +23,13 @@ export async function childProcessIds(): Promise<number[]> {
       ? await execFileAsync("powershell.exe", [
           "-NoProfile",
           "-Command",
-          `Get-CimInstance Win32_Process -Filter "ParentProcessId=${process.pid}" | ForEach-Object { "$($_.ProcessId) ${process.pid}" }`,
+          `Get-CimInstance Win32_Process -Filter "ParentProcessId=${process.pid}" | ForEach-Object { "$($_.ProcessId) ${process.pid} $($_.Name) $($_.CreationDate.ToString('HH:mm:ss.fff')) $($_.CommandLine)" }`,
         ])
       : await execFileAsync("ps", ["-A", "-o", "pid=,ppid="]);
+  for (const line of stdout.split(/\r?\n/)) {
+    const [pid] = line.trim().split(/\s+/);
+    if (pid !== undefined && pid !== "") DIAG.set(Number(pid), line.trim());
+  }
   return stdout
     .split(/\r?\n/)
     .map((line) => line.trim().split(/\s+/).map(Number))

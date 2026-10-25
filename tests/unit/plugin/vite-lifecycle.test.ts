@@ -23,7 +23,12 @@ import {
   mainProject,
   STATUES_CALL,
 } from "../optimizer/main-project.js";
-import { processesStartedSince, runningProcesses, waitUntilDead } from "../optimizer/processes.js";
+import {
+  describeChildren,
+  processesStartedSince,
+  runningProcesses,
+  waitUntilDead,
+} from "../optimizer/processes.js";
 import { projectPath, SPAWN_TIMEOUT_MS } from "../optimizer/project.js";
 import { createProject, removeTempDirs, writeFixture } from "./tsconfig-fixtures.js";
 import { startPlugin, transformCollecting } from "./vite-host.js";
@@ -316,7 +321,11 @@ describe("ecstatic() for Vite", () => {
       );
 
       expect(failure).toBeInstanceOf(Error);
-      expect(probe.processes.size).toBe(1);
+      (await import("node:fs")).appendFileSync(
+        join((await import("node:os")).tmpdir(), "ecstatic-diag.log"),
+        `DIAG strict ${describeChildren(probe.processes)}\n`,
+      );
+      expect(probe.processes.size, `DIAG ${describeChildren(probe.processes)}`).toBe(1);
       await expect(waitUntilAllDead(probe.processes)).resolves.toBeUndefined();
     },
     SPAWN_TIMEOUT_MS,
@@ -351,9 +360,14 @@ describe("ecstatic() for Vite", () => {
     });
 
     it("ends the compiler process when the watcher closes", async () => {
+      const started = Date.now();
       const closing = watcher?.close();
       watcher = undefined;
       await closing;
+      (await import("node:fs")).appendFileSync(
+        join((await import("node:os")).tmpdir(), "ecstatic-diag.log"),
+        `DIAG watcher close took ${Date.now() - started} ms; ${describeChildren(probe.processes)}\n`,
+      );
 
       await expect(waitUntilAllDead(probe.processes)).resolves.toBeUndefined();
     });
