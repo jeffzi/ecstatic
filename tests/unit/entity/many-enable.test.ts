@@ -178,6 +178,26 @@ describe("enableMany values reads", () => {
     expect(reads).toBe(2);
   });
 
+  it("writes a getter value that grows the storage to every existing row in the all-rows form", () => {
+    const { storage } = createStorage();
+    const idA = spawn(storage);
+    const idB = spawn(storage);
+    let reads = 0;
+    const values = {
+      get hp(): number {
+        reads += 1;
+        spawnMany(storage, 16);
+        return 75;
+      },
+    };
+
+    enableMany(storage, { ManyShield: values });
+
+    expect(get(storage, idA, Shield.hp)).toBe(75);
+    expect(get(storage, idB, Shield.hp)).toBe(75);
+    expect(reads).toBe(2);
+  });
+
   it("keeps the current value of an absent or undefined field", () => {
     const { storage } = createStorage();
     const id = spawn(storage);
