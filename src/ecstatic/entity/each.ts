@@ -188,6 +188,12 @@ function newAccessorHost(): Record<string, unknown> {
  * through the storage's field columns (not captured arrays) so they survive
  * column growth — growth points the same field columns at the new arrays.
  *
+ * Every accessor is enumerable, so `Object.keys`, spread, and `JSON.stringify`
+ * see `id`, each component slot, and each data component's fields. Spreading
+ * or serializing runs the getters, so the result is a snapshot of the bound
+ * row: boolean fields come out as `true`/`false`, and a disabled optional
+ * reads `undefined`, which `JSON.stringify` omits.
+ *
  * All accessor objects are built eagerly here; the per-row bind swaps only
  * the closed-over row index, so binding allocates nothing.
  *
@@ -203,6 +209,7 @@ function buildView(storage: Storage): BoundView {
   const view = newAccessorHost();
 
   Object.defineProperty(view, "id", {
+    enumerable: true,
     get() {
       return storage.entities[row];
     },
@@ -228,6 +235,7 @@ function buildView(storage: Storage): BoundView {
       // Boolean fields live in Uint8Array columns: encode 1/0, decode !== 0
       const isBoolean = typeof comp.__ecstatic_defaults[column.field] === "boolean";
       Object.defineProperty(fieldAccessors, column.field, {
+        enumerable: true,
         get: isBoolean ? () => column.array[row] !== 0 : () => column.array[row],
         set: isBoolean
           ? (value: unknown) => {
@@ -266,6 +274,7 @@ function buildView(storage: Storage): BoundView {
         ? true
         : fieldAccessorsFor(comp, optColumns);
     Object.defineProperty(view, comp.__ecstatic_name, {
+      enumerable: true,
       // oxlint-disable-next-line typescript/no-non-null-assertion -- mask[row] is guaranteed present: row is always a valid dense index maintained by acquireView/bind
       get: () => ((storage.mask[row]! & bit) !== 0 ? enabledValue : undefined),
     });

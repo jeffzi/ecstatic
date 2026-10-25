@@ -8,6 +8,7 @@ import {
   each,
   enable,
   get,
+  query,
   ref,
   register,
   set,
@@ -345,5 +346,162 @@ describe("view — optional accessors", () => {
       }
     });
     expect(hpOfFirst).toBe(7);
+  });
+});
+
+describe("view — enumerable accessors", () => {
+  const { ViewEnumPlace: Place } = components({ ViewEnumPlace: { x: 0, y: 0 } });
+  const { ViewEnumFlag: Flag } = components({ ViewEnumFlag: { active: false, count: 0 } });
+  const { ViewEnumShield: Shield } = components({ ViewEnumShield: { hp: 50, defense: 10 } });
+  const { ViewEnumBurning: Burning } = components({ ViewEnumBurning: {} });
+  const { ViewEnumStunned: Stunned } = components({ ViewEnumStunned: {} });
+
+  /** Serializes a view to JSON and parses it back, as a consumer of the JSON would see it. */
+  function roundTrip(view: object): unknown {
+    return JSON.parse(JSON.stringify(view));
+  }
+
+  it.each([
+    {
+      label: "Object.keys",
+      read: (place: object): unknown => Object.keys(place),
+      expected: ["x", "y"],
+    },
+    {
+      label: "JSON.stringify",
+      read: (place: object): unknown => JSON.stringify(place),
+      expected: '{"x":1,"y":2}',
+    },
+    { label: "spread", read: (place: object): unknown => ({ ...place }), expected: { x: 1, y: 2 } },
+  ])("exposes a data component's fields to $label", ({ read, expected }) => {
+    const storage = register(createWorld(), archetype([Place]));
+    spawn(storage, { ViewEnumPlace: { x: 1, y: 2 } });
+
+    const seen: unknown[] = [];
+    each(storage, (e) => {
+      seen.push(read(e.ViewEnumPlace));
+    });
+
+    expect(seen).toStrictEqual([expected]);
+  });
+
+  it("keeps a spread unchanged by a later write through the view", () => {
+    const storage = register(createWorld(), archetype([Place]));
+    spawn(storage, { ViewEnumPlace: { x: 1, y: 2 } });
+
+    const snapshots: object[] = [];
+    each(storage, (e) => {
+      snapshots.push({ ...e.ViewEnumPlace });
+      e.ViewEnumPlace.x = 5;
+    });
+
+    expect(snapshots).toStrictEqual([{ x: 1, y: 2 }]);
+  });
+
+  it("keeps a spread unchanged when the view rebinds to another row", () => {
+    const storage = register(createWorld(), archetype([Place]));
+    const first = spawn(storage, { ViewEnumPlace: { x: 1, y: 2 } });
+    const second = spawn(storage, { ViewEnumPlace: { x: 3, y: 4 } });
+
+    const snapshots = new Map<number, object>();
+    each(storage, (e) => {
+      snapshots.set(e.id, { ...e.ViewEnumPlace });
+    });
+
+    expect(snapshots).toStrictEqual(
+      new Map<number, object>([
+        [second, { x: 3, y: 4 }],
+        [first, { x: 1, y: 2 }],
+      ]),
+    );
+  });
+
+  it.each([{ active: true }, { active: false }])(
+    "spreads and serializes boolean field $active as a boolean",
+    ({ active }) => {
+      const storage = register(createWorld(), archetype([Flag]));
+      spawn(storage, { ViewEnumFlag: { active } });
+
+      const seen: unknown[] = [];
+      each(storage, (e) => {
+        seen.push([{ ...e.ViewEnumFlag }, JSON.stringify(e.ViewEnumFlag)]);
+      });
+
+      expect(seen).toStrictEqual([
+        [{ active, count: 0 }, `{"active":${String(active)},"count":0}`],
+      ]);
+    },
+  );
+
+  it("exposes an enabled optional data component's fields through its slot", () => {
+    const storage = register(createWorld(), archetype([Place], [Shield]));
+    spawn(storage, { ViewEnumShield: { hp: 75 } });
+
+    const seen: unknown[] = [];
+    each(storage, (e) => {
+      seen.push([Object.keys(e.ViewEnumShield ?? {}), { ...e.ViewEnumShield }]);
+    });
+
+    expect(seen).toStrictEqual([[["defense", "hp"], { hp: 75, defense: 10 }]]);
+  });
+
+  it("lists id and every required and optional slot as keys of the view", () => {
+    const storage = register(createWorld(), archetype([Place, Burning], [Shield, Stunned]));
+    spawn(storage);
+
+    const seen: string[][] = [];
+    each(storage, (e) => {
+      seen.push(Object.keys(e).toSorted());
+    });
+
+    expect(seen).toStrictEqual([
+      ["ViewEnumBurning", "ViewEnumPlace", "ViewEnumShield", "ViewEnumStunned", "id"],
+    ]);
+  });
+
+  it("serializes id, data fields, and enabled tags, omitting disabled optionals", () => {
+    const storage = register(createWorld(), archetype([Place, Burning], [Shield, Stunned]));
+    const shielded = spawn(storage, { ViewEnumPlace: { x: 1, y: 2 }, ViewEnumShield: { hp: 75 } });
+    const stunned = spawn(storage, { ViewEnumStunned: true });
+
+    const serialized = new Map<number, unknown>();
+    each(storage, (e) => {
+      serialized.set(e.id, roundTrip(e));
+    });
+
+    expect(serialized).toStrictEqual(
+      new Map<number, unknown>([
+        [
+          stunned,
+          {
+            id: stunned,
+            ViewEnumPlace: { x: 0, y: 0 },
+            ViewEnumBurning: true,
+            ViewEnumStunned: true,
+          },
+        ],
+        [
+          shielded,
+          {
+            id: shielded,
+            ViewEnumPlace: { x: 1, y: 2 },
+            ViewEnumBurning: true,
+            ViewEnumShield: { hp: 75, defense: 10 },
+          },
+        ],
+      ]),
+    );
+  });
+
+  it("serializes views handed out by query the same way", () => {
+    const world = createWorld();
+    const id = spawn(register(world, archetype([Place])), { ViewEnumPlace: { x: 1, y: 2 } });
+
+    const seen: unknown[] = [];
+    query(world, [Place], (e) => {
+      seen.push(roundTrip(e));
+    });
+
+    expect(seen).toStrictEqual([{ id, ViewEnumPlace: { x: 1, y: 2 } }]);
   });
 });

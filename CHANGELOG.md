@@ -19,6 +19,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   on archetypes
 - Reject two distinct component descriptors that share a name in `archetype()` and `Archetype()`,
   as when two installed copies of the package each declare it; the second used to replace the first
+- Make a view's `id`, field, and optional-slot accessors enumerable, so `Object.keys`,
+  `JSON.stringify`, and spread see a view's fields and slots as they see its required components
 
 ### Fixed
 
