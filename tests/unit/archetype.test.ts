@@ -183,6 +183,23 @@ describe("archetype", () => {
     }
 
     it.each([
+      { group: "storage", name: "n" },
+      { group: "storage", name: "mask" },
+      { group: "storage", name: "columns" },
+      { group: "storage", name: "flatColumns" },
+      { group: "storage", name: "fieldColumns" },
+      { group: "storage", name: "world" },
+      { group: "descriptor", name: "id" },
+      { group: "descriptor", name: "components" },
+      { group: "descriptor", name: "optionals" },
+      { group: "descriptor", name: "componentByName" },
+      { group: "descriptor", name: "componentLookup" },
+      { group: "descriptor", name: "optionalBits" },
+      { group: "descriptor", name: "optionalNotBits" },
+      { group: "descriptor", name: "optionalBitLookup" },
+      { group: "descriptor", name: "optionalNotBitLookup" },
+      { group: "runtime", name: "generation" },
+      { group: "runtime", name: "despawnClear" },
       { group: "matcher/optional", name: "matchers" },
       { group: "matcher/optional", name: "matcherMatched" },
       { group: "matcher/optional", name: "hasOptionalData" },
@@ -196,17 +213,29 @@ describe("archetype", () => {
       expectReservedNameRejected(name);
     });
 
-    it.each([
-      { form: "archetype([C])", declare: (c: ComponentDescriptor) => archetype([c]) },
-      { form: "archetype([], [C])", declare: (c: ComponentDescriptor) => archetype([], [c]) },
+    const declarationForms = [
+      { form: "archetype([C])", key: "Req", declare: (c: ComponentDescriptor) => archetype([c]) },
+      {
+        form: "archetype([], [C])",
+        key: "Opt",
+        declare: (c: ComponentDescriptor) => archetype([], [c]),
+      },
       {
         form: "class extends Archetype([C])",
+        key: "Class",
         declare: (c: ComponentDescriptor) => class extends Archetype([c]) {},
       },
-    ])("rejects a component named __proto__ in $form", ({ declare }) => {
-      const Proto = component("__proto__", { x: 0 });
+    ];
 
-      expect(() => declare(Proto)).toThrow("component name __proto__ is reserved on archetypes");
+    it.each(
+      Object.getOwnPropertyNames(Object.prototype).flatMap((name) =>
+        declarationForms.map(({ form, key, declare }) => ({ name, form, key, declare })),
+      ),
+    )("rejects the Object.prototype name $name in $form", ({ name, key, declare }) => {
+      const Comp = component(`ReservedProto_${key}_${name}`, { x: 0 });
+      asMutableDescriptor(Comp).__ecstatic_name = name;
+
+      expect(() => declare(Comp)).toThrow(`component name ${name} is reserved on archetypes`);
     });
 
     it("rejects reserved name 'archetype'", () => {
@@ -222,37 +251,46 @@ describe("archetype", () => {
   });
 
   describe("duplicate component detection", () => {
-    it("errors when same component appears in both required and optional", () => {
-      const { ArchTestDupBoth: A } = components({
-        ArchTestDupBoth: { x: 0 },
-      });
+    const listPositions = [
+      {
+        position: "twice in the required list",
+        key: "Req",
+        declare: (a: ComponentDescriptor, b: ComponentDescriptor) => archetype([a, b]),
+      },
+      {
+        position: "twice in the optional list",
+        key: "Opt",
+        declare: (a: ComponentDescriptor, b: ComponentDescriptor) => archetype([], [a, b]),
+      },
+      {
+        position: "in both the required and optional lists",
+        key: "Both",
+        declare: (a: ComponentDescriptor, b: ComponentDescriptor) => archetype([a], [b]),
+      },
+    ];
 
-      expect(() => {
-        archetype([A], [A]);
-      }).toThrow(/duplicate component/);
+    it.each(listPositions)("rejects the same descriptor listed $position", ({ key, declare }) => {
+      const name = `ArchTestDupSame_${key}`;
+      const A = component(name, { x: 0 });
+
+      expect(() => declare(A, A)).toThrow(`duplicate component ${name} in archetype`);
     });
 
-    it("errors when same component appears twice in required list", () => {
-      const { ArchTestDupReq: A } = components({
-        ArchTestDupReq: { x: 0 },
-      });
+    it.each([
+      ...listPositions,
+      {
+        position: "twice in the class form",
+        key: "Class",
+        declare: (a: ComponentDescriptor, b: ComponentDescriptor) =>
+          class extends Archetype([a, b]) {},
+      },
+    ])("rejects two distinct descriptors sharing a name $position", ({ key, declare }) => {
+      const name = `ArchTestDupName_${key}`;
+      const first = component(name, { x: 0 });
+      const second = component(`${name}_Twin`, { x: 0 });
+      asMutableDescriptor(second).__ecstatic_name = name;
 
-      expect(() => {
-        archetype([A, A]);
-      }).toThrow(/duplicate component/);
-    });
-
-    it("errors when same component appears twice in optional list", () => {
-      const { ArchTestDupOpt: A } = components({
-        ArchTestDupOpt: { x: 0 },
-      });
-      const { ArchTestDupOptReq: Req } = components({
-        ArchTestDupOptReq: { y: 0 },
-      });
-
-      expect(() => {
-        archetype([Req], [A, A]);
-      }).toThrow(/duplicate component/);
+      expect(() => declare(first, second)).toThrow(`duplicate component ${name} in archetype`);
     });
   });
 

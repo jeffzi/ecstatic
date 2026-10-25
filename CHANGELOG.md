@@ -14,8 +14,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Reject `__proto__` as a component name in `archetype()` and `Archetype()`, alongside the other
-  names reserved on archetypes
+- Reject every `Object.prototype` member name (`__proto__`, `constructor`, `toString`, and the
+  rest) as a component name in `archetype()` and `Archetype()`, alongside the other names reserved
+  on archetypes
+- Reject two distinct component descriptors that share a name in `archetype()` and `Archetype()`,
+  as when two installed copies of the package each declare it; the second used to replace the first
 
 ### Fixed
 

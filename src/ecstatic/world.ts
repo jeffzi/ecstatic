@@ -525,8 +525,9 @@ function buildColumns(arch: ArchetypeDescriptor): {
  *
  * - **The per-component alias.** `storage[name]` is the same object as
  *   `storage.columns.get(component)` for every component that has a record. No runtime code
- *   reads it; generated code does. `__proto__` is a reserved component name so this write
- *   cannot replace the storage's prototype.
+ *   reads it; generated code does. Every own property of `Object.prototype` is a reserved
+ *   component name, so this write cannot replace the storage's prototype through `__proto__`
+ *   or shadow an inherited method.
  * - **Filter resolution inputs are fixed.** `componentByName`, `componentLookup`,
  *   `optionalBitLookup`, and `optionalNotBitLookup` are set here and never change, so a filter
  *   resolves the same way for the storage's whole life.
