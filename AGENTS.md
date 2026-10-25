@@ -13,13 +13,28 @@ This project is a ground-up TypeScript port of **ecstatic**, a TypeScript→Lua 
 lineage, different runtime premises — V8 instead of Lua interpreters). `docs/` is standalone by
 design — never add references to Lua, TSTL, or "the port" there.
 
+## Layout
+
+- `src/ecstatic/` — the runtime, the package's main entry.
+- `src/plugin/` — the Vite plugin, which runs the build-time optimizer.
+- `src/plugin/optimizer/` — the optimizer pipeline: analysis (`analysis/`) reports each call site as
+  facts, `plan.ts` decides what to do with each site, and `emit/` splices in the rewritten loops.
+  Only `src/plugin/optimizer/compiler.ts` makes calls that reach the TypeScript compiler process,
+  `facts.ts` and `plan.ts` import nothing from `typescript`, `emit/` imports nothing from
+  `analysis/`, and `syntax.ts`, which both share, imports nothing from `emit/`;
+  `tests/unit/optimizer/boundary.test.ts` enforces all four rules.
+
 ## Commands
 
 Package manager is **npm** (`package-lock.json`).
 
-- `npm run build` — compile with `tsc -p tsconfig.build.json`
-- `npm test` — `vitest run --coverage` (types + unit projects); coverage thresholds fail the run,
-  and untested `src/` files count against them
+- `npm run build` — compile the runtime (`src/ecstatic/`) to `dist/` with `tsconfig.build.json`,
+  then the plugin (`src/plugin/`) to `dist/plugin/` with `tsconfig.build-plugin.json`
+- `npm test` — `vitest run --coverage` over the `types`, `unit`, `unit-optimized`, `unit-ndebug`,
+  `integration`, and `integration-ndebug` projects; coverage thresholds fail the run, and untested
+  `src/` files count against them
+- `npx vitest run --project integration -u` — regenerate the fixture golden files after an intended
+  change to the optimizer's output
 - `npm run test:types` — type-only tests (`tests/types/*.test-d.ts`)
 - `npm run examples` — build, then run each `examples/*.ts` with tsx
 - `npm run check` — every pre-commit hook over all tracked and untracked files (lint, markdown,
@@ -31,13 +46,19 @@ Package manager is **npm** (`package-lock.json`).
   after editing `src/`. It runs in `check` and `pre-push` (right after `npm test`), never at
   pre-commit. Run before committing.
 - `npm run check:type` — type-check the build, examples, and benchmarks tsconfigs
-- `npm run check:version` — fail when `src/version.ts` is out of sync with `package.json`
+- `npm run check:version` — fail when `src/ecstatic/version.ts` is out of sync with `package.json`
 - `npm run check:alloc` — build, then run the allocation gate (`benchmarks/alloc/gate.ts`)
 - `npm run fix` — auto-fix lint, markdown, and formatting, then remove unused exports, dependencies,
   and enum members (`fallow fix`). Deletes code — review the diff before committing.
 - `npm run check:security` — surface security candidates (`fallow security`). Candidates need
   verification; they are not confirmed vulnerabilities. Not part of `check`.
 - `npm run check:package` — publish hygiene alone (`publint` + `@arethetypeswrong/cli`).
+- `npm run check:mutation` — mutation-test the optimizer's hazard analysis
+  (`src/plugin/optimizer/analysis/hazard.ts`, the only file it mutates) with StrykerJS against every
+  test, in any project, whose imports reach that file; prints the score and every surviving mutant,
+  and exits non-zero when the score falls below the `break` threshold in `stryker.config.ts`. Slow:
+  each mutant reruns tests that start the TypeScript compiler. Not part of `check`, `npm test`, the
+  hooks, or CI.
 
 ## Git hygiene
 

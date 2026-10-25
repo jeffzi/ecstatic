@@ -1,6 +1,6 @@
 import { describe, it } from "vitest";
 
-import type { Storage } from "../../../src/index.js";
+import type { Storage } from "../../../src/ecstatic/index.js";
 import {
   archetype,
   createWorld,
@@ -12,7 +12,7 @@ import {
   register,
   relation,
   spawn,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 import { Health, Position, Shield, Stunned } from "../_fixtures.js";
 
 describe("enable/disable typing", () => {

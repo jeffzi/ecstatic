@@ -1,6 +1,6 @@
 import { assert, describe, expect, it } from "vitest";
 
-import { entityIndex } from "../../src/entity-id.js";
+import { entityIndex } from "../../src/ecstatic/entity-id.js";
 import {
   alive,
   archetype,
@@ -24,7 +24,7 @@ import {
   spawn,
   spawnMany,
   unlink,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 import { rowOf } from "./fixtures.js";
 
 function mulberry32(seed: number): () => number {

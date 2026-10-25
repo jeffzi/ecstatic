@@ -1,0 +1,33 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: callback-function
+// rewrite-applies: return-void
+import { archetype, component, createWorld, each, get, register, spawn } from "ecstatic";
+
+const Coil = component("SpringCoil", { x: 0 });
+
+/**
+ * Moves every row through a function-expression callback that neither reads `this` nor `arguments`.
+ *
+ * @returns Each row's `x` after the loop.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Coil]));
+  const ids = [spawn(storage, { SpringCoil: { x: 1 } }), spawn(storage, { SpringCoil: { x: 2 } })];
+
+  {
+      const storage_1 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:SpringCoil{1:x=n}|");
+      const n = storage_1.n;
+      if (n > 0) {
+          const SpringCoilRecord = storage_1.SpringCoil;
+          const xColumn = SpringCoilRecord.x;
+          for (let i = n - 1; i >= 0; i--) {
+              if (xColumn[i] === 1)
+                  continue;
+              xColumn[i] *= 7;
+          }
+      }
+  }
+
+  return ids.map((id) => get(storage, id, Coil.x));
+}

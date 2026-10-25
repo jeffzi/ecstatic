@@ -1,0 +1,40 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: var-to-let
+import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
+
+const Wick = component("CandleWick", { x: 0 });
+
+/**
+ * Declares `var` bindings in the body, which are fresh on every row and never hoist into the enclosing function.
+ *
+ * @returns What the body read of its `var` bindings, row by row, then the enclosing function's bindings of the
+ * same names after the loop.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Wick]));
+  for (const x of [1, 2, 3]) {
+    spawn(storage, { CandleWick: { x } });
+  }
+  const marker = "outer";
+  const seen: unknown[] = [];
+
+  {
+      const storage_1 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:CandleWick{1:x=n}|");
+      const n = storage_1.n;
+      if (n > 0) {
+          const CandleWickRecord = storage_1.CandleWick;
+          for (let i = n - 1; i >= 0; i--) {
+              let carried, unset, marker;
+              seen.push(typeof carried);
+              carried = CandleWickRecord.x[i];
+              seen.push(unset ?? "fresh", carried);
+              unset = carried;
+              marker = CandleWickRecord.x[i];
+              seen.push(marker, unset);
+          }
+      }
+  }
+
+  return { seen, marker };
+}

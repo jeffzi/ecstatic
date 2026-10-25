@@ -12,7 +12,7 @@ import {
   relation,
   spawn,
   spawnMany,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 
 const { GSSpec_Comp, GSSpec_Comp2 } = components({
   GSSpec_Comp: { val: 0 },

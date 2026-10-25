@@ -16,7 +16,7 @@ import {
   relation,
   spawn,
   unlink,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 
 const { DRSpec_Comp, DRSpec_Comp2 } = components({
   DRSpec_Comp: { x: 0 },

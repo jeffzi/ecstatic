@@ -1,0 +1,773 @@
+import { join } from "node:path";
+
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { analyze } from "../../../../src/plugin/optimizer/analysis/analyze.js";
+import { inlineCallback } from "../../../../src/plugin/optimizer/analysis/callback.js";
+import { PackageRoots } from "../../../../src/plugin/optimizer/analysis/roots.js";
+import type {
+  Callback,
+  NodeID,
+  ParamForm,
+  UseKind,
+  ViewUse,
+} from "../../../../src/plugin/optimizer/facts.js";
+import type { NodeTable } from "../../../../src/plugin/optimizer/nodes.js";
+import {
+  openProject,
+  projectPath,
+  RUNTIME_TSCONFIG,
+  runtimeProject,
+  SPAWN_TIMEOUT_MS,
+} from "../project.js";
+import {
+  CallbackProject,
+  type Located,
+  MARK_DECL,
+  markOffset,
+  nodeOffset,
+  OWN_RETURNS,
+  OWN_VAR_MARKS,
+  REGISTER_DECL,
+  RETURNS_SOURCE,
+  VARS_SOURCE,
+} from "./callback-project.js";
+
+/** The syntactic form of an inline callback: every Callback field but the body summary. */
+interface CallbackForm {
+  readonly params: number;
+  readonly firstParam: ParamForm;
+  readonly async: boolean;
+  readonly generator: boolean;
+}
+
+/** The form of a callback with no parameter, written as a plain function expression. */
+const BARE_FORM: CallbackForm = {
+  params: 0,
+  firstParam: "none",
+  async: false,
+  generator: false,
+};
+
+/** A callback taking one identifier parameter, with `overrides` applied. */
+function viewForm(overrides: Partial<CallbackForm> = {}): CallbackForm {
+  return { ...BARE_FORM, params: 1, firstParam: "identifier", ...overrides };
+}
+
+/** An arrow callback taking the view. */
+const ARROW_SOURCE = "each(s, (e) => {});";
+
+/** A function expression callback taking the view. */
+const FUNCTION_SOURCE = "each(s, function (e) {});";
+
+const FORM_CASES: readonly { name: string; source: string; want: CallbackForm }[] = [
+  { name: "arrow with an identifier parameter", source: ARROW_SOURCE, want: viewForm() },
+  { name: "async arrow", source: "each(s, async (e) => {});", want: viewForm({ async: true }) },
+  { name: "function expression", source: FUNCTION_SOURCE, want: viewForm() },
+  {
+    name: "generator function expression",
+    source: "each(s, function* (e) {});",
+    want: viewForm({ generator: true }),
+  },
+  {
+    name: "async generator query callback without parameters",
+    source: "query(s, [], async function* () {});",
+    want: { ...BARE_FORM, async: true, generator: true },
+  },
+  {
+    name: "object pattern parameter",
+    source: "each(s, ({ id }: any) => {});",
+    want: viewForm({ firstParam: "object-pattern" }),
+  },
+  {
+    name: "identifier parameter with a default",
+    source: "each(s, (e = 0) => {});",
+    want: viewForm({ firstParam: "other" }),
+  },
+  {
+    name: "object pattern parameter with a default",
+    source: "each(s, ({ id }: any = {}) => {});",
+    want: viewForm({ firstParam: "other" }),
+  },
+  {
+    name: "rest parameter",
+    source: "each(s, (...e: number[]) => {});",
+    want: viewForm({ firstParam: "other" }),
+  },
+  {
+    name: "array pattern parameter",
+    source: "each(s, ([a]: any) => {});",
+    want: viewForm({ firstParam: "other" }),
+  },
+  {
+    name: "second parameter counted",
+    source: "each(s, (e, f = 0) => {});",
+    want: viewForm({ params: 2 }),
+  },
+  {
+    name: "this parameter not counted",
+    source: "each(s, function (this: unknown, e) {});",
+    want: viewForm(),
+  },
+];
+
+const NOT_INLINE_CASES: readonly { name: string; source: string }[] = [
+  {
+    name: "an identifier",
+    source: "declare const move: (e: number) => void;\neach(s, move);",
+  },
+  {
+    name: "a call result",
+    source: "declare function makeMove(): (e: number) => void;\neach(s, makeMove());",
+  },
+  {
+    name: "a member",
+    source: "declare const handlers: { move: (e: number) => void };\neach(s, handlers.move);",
+  },
+  {
+    name: "a call without arguments",
+    source: "// @ts-expect-error -- a call without arguments still parses\neach();",
+  },
+];
+
+/** An expected view use: its node starts at the first occurrence of `mark` in the case source. */
+interface WantUse {
+  readonly kind: UseKind;
+  readonly mark: string;
+  readonly comp?: string;
+  readonly field?: string;
+  readonly alias?: boolean;
+  readonly slotOperand?: "left" | "right";
+}
+
+/** A source whose callback references the view only in positions that lower, with its uses. */
+interface UseCase {
+  readonly name: string;
+  readonly source: string;
+  readonly want: readonly WantUse[];
+}
+
+const LOOSE_USE_CASES: readonly UseCase[] = [
+  {
+    name: "reads, assignments, updates, and id in source order",
+    source: `${REGISTER_DECL}each(s, (e: any) => {
+	e.Position.x = e.Velocity.dx;
+	e.Position.y += 1;
+	e.Flags.on ||= true;
+	e.Health.hp++;
+	--e.Health.hp;
+	register(e.id);
+});`,
+    want: [
+      { kind: "field-assign", comp: "Position", field: "x", mark: "e.Position.x =" },
+      { kind: "field-read", comp: "Velocity", field: "dx", mark: "e.Velocity.dx" },
+      { kind: "field-assign", comp: "Position", field: "y", mark: "e.Position.y +=" },
+      { kind: "field-assign", comp: "Flags", field: "on", mark: "e.Flags.on ||=" },
+      { kind: "field-update", comp: "Health", field: "hp", mark: "e.Health.hp++" },
+      { kind: "field-update", comp: "Health", field: "hp", mark: "--e.Health.hp" },
+      { kind: "id", mark: "e.id" },
+    ],
+  },
+  {
+    name: "an expression body",
+    source: "each(s, (e: any) => e.Position.x);",
+    want: [{ kind: "field-read", comp: "Position", field: "x", mark: "e.Position.x" }],
+  },
+  {
+    name: "a function expression callback",
+    source: "each(s, function (e: any) { e.Position.x = 1; });",
+    want: [{ kind: "field-assign", comp: "Position", field: "x", mark: "e.Position.x" }],
+  },
+  {
+    name: "slots compared with null on either side",
+    source: `${REGISTER_DECL}each(s, (e: any) => {
+	register(e.Shield === null);
+	register(null === e.Shield);
+});`,
+    want: [
+      { kind: "compare", comp: "Shield", mark: "e.Shield === null", slotOperand: "left" },
+      { kind: "compare", comp: "Shield", mark: "null === e.Shield);", slotOperand: "right" },
+    ],
+  },
+  {
+    name: "a local shadowing the view, which is not the view",
+    source: `each(s, (e: any) => {
+	{
+		const e = { Position: { x: 1 } };
+		e.Position.x = 2;
+	}
+});`,
+    want: [],
+  },
+];
+
+const LOWERED_USE_CASES: readonly UseCase[] = [
+  {
+    name: "optional fields through a non-null assertion",
+    source: `each(enemies, (e) => {
+	e.Shield!.hp += e.Shield!.hp;
+	e.Shield!.active = true;
+});`,
+    want: [
+      { kind: "field-assign", comp: "Shield", field: "hp", mark: "e.Shield!.hp +=" },
+      { kind: "field-read", comp: "Shield", field: "hp", mark: "e.Shield!.hp;" },
+      { kind: "field-assign", comp: "Shield", field: "active", mark: "e.Shield!.active" },
+    ],
+  },
+  {
+    name: "an optional chain on a slot",
+    source: `each(enemies, (e) => {
+	xs.push(e.Shield?.hp ?? 0);
+});`,
+    want: [{ kind: "optional-read", comp: "Shield", field: "hp", mark: "e.Shield?.hp" }],
+  },
+  {
+    name: "slots in test positions",
+    source: `each(enemies, (e) => {
+	if (e.Shield && e.Shield.hp > 0) xs.push(1);
+	while (!e.Stunned) break;
+	xs.push(e.Shield ? 1 : 0);
+});`,
+    want: [
+      { kind: "presence", comp: "Shield", mark: "e.Shield &&" },
+      { kind: "field-read", comp: "Shield", field: "hp", mark: "e.Shield.hp" },
+      { kind: "presence", comp: "Stunned", mark: "e.Stunned)" },
+      { kind: "presence", comp: "Shield", mark: "e.Shield ?" },
+    ],
+  },
+  {
+    name: "slots compared with undefined and null, either side",
+    source: `each(enemies, (e) => {
+	const a = e.Shield === undefined;
+	const b = undefined !== e.Shield;
+	const c = e.Shield == null || e.Position != null;
+	const d = e.Shield === null;
+	const f = null === e.Shield;
+	xs.push(+a, +b, +c, +d, +f);
+});`,
+    want: [
+      { kind: "compare", comp: "Shield", mark: "e.Shield === undefined", slotOperand: "left" },
+      { kind: "compare", comp: "Shield", mark: "undefined !== e.Shield", slotOperand: "right" },
+      { kind: "compare", comp: "Shield", mark: "e.Shield == null", slotOperand: "left" },
+      { kind: "compare", comp: "Position", mark: "e.Position != null", slotOperand: "left" },
+      { kind: "compare", comp: "Shield", mark: "e.Shield === null", slotOperand: "left" },
+      { kind: "compare", comp: "Shield", mark: "null === e.Shield", slotOperand: "right" },
+    ],
+  },
+  {
+    name: "slots compared through parentheses and non-null assertions",
+    source: `each(enemies, (e) => {
+	const a = (e.Shield) === null;
+	const b = undefined !== e.Shield!;
+	xs.push(+a, +b);
+});`,
+    want: [
+      { kind: "compare", comp: "Shield", mark: "(e.Shield) ===", slotOperand: "left" },
+      { kind: "compare", comp: "Shield", mark: "undefined !== e.Shield!", slotOperand: "right" },
+    ],
+  },
+  {
+    name: "a local named undefined aliasing a slot, compared with null",
+    source: `each(enemies, (e) => {
+	const undefined = e.Position;
+	xs.push(+(undefined === null), +(null === undefined));
+});`,
+    want: [
+      { kind: "alias", comp: "Position", mark: "undefined = e.Position" },
+      {
+        kind: "compare",
+        comp: "Position",
+        mark: "undefined === null",
+        alias: true,
+        slotOperand: "left",
+      },
+      {
+        kind: "compare",
+        comp: "Position",
+        mark: "null === undefined",
+        alias: true,
+        slotOperand: "right",
+      },
+    ],
+  },
+  {
+    name: "a slot coalesced in a test",
+    source: `each(enemies, (e) => {
+	if (e.Shield ?? xs.length) xs.push(1);
+});`,
+    want: [{ kind: "coalesce", comp: "Shield", mark: "e.Shield ??" }],
+  },
+  {
+    name: "slots reached by string keys",
+    source: `each(enemies, (e) => {
+	e["Position"].x += e["Shield"]!.hp;
+	xs.push(e["Shield"]?.hp ?? 0);
+	if (e["Shield"]) xs.push(1);
+	const held = e["Shield"];
+	if (held) held.hp = 1;
+	const { "Velocity": v } = e;
+	visit(v.dx);
+});`,
+    want: [
+      { kind: "field-assign", comp: "Position", field: "x", mark: `e["Position"].x` },
+      { kind: "field-read", comp: "Shield", field: "hp", mark: `e["Shield"]!.hp` },
+      { kind: "optional-read", comp: "Shield", field: "hp", mark: `e["Shield"]?.hp` },
+      { kind: "presence", comp: "Shield", mark: `e["Shield"])` },
+      { kind: "alias", comp: "Shield", mark: `held = e["Shield"]` },
+      { kind: "presence", comp: "Shield", mark: "held)", alias: true },
+      { kind: "field-assign", comp: "Shield", field: "hp", mark: "held.hp", alias: true },
+      { kind: "destructure", mark: `{ "Velocity": v } = e` },
+      { kind: "alias", comp: "Velocity", mark: `"Velocity": v` },
+      { kind: "field-read", comp: "Velocity", field: "dx", mark: "v.dx", alias: true },
+    ],
+  },
+  {
+    name: "an optional tag as a value",
+    source: `each(enemies, (e) => {
+	const stunned = e.Stunned;
+	visit(stunned);
+});`,
+    want: [{ kind: "tag", comp: "Stunned", mark: "e.Stunned" }],
+  },
+  {
+    name: "a required tag as a value",
+    source: `each(marked, (e) => {
+	visit(e.Stunned);
+});`,
+    want: [{ kind: "tag", comp: "Stunned", mark: "e.Stunned" }],
+  },
+  {
+    name: "a relation data field",
+    source: `each(linked, (e) => {
+	e.ChildOf.order += 1;
+});`,
+    want: [{ kind: "field-assign", comp: "ChildOf", field: "order", mark: "e.ChildOf.order" }],
+  },
+  {
+    name: "aliases of a slot, plain and non-null asserted",
+    source: `each(enemies, (e) => {
+	const shield = e.Shield;
+	if (shield) shield.hp = 1;
+	const held = e.Shield!;
+	xs.push(held.hp, held === undefined ? 0 : 1, held?.hp ?? 0);
+});`,
+    want: [
+      { kind: "alias", comp: "Shield", mark: "shield = e.Shield" },
+      { kind: "presence", comp: "Shield", mark: "shield)", alias: true },
+      { kind: "field-assign", comp: "Shield", field: "hp", mark: "shield.hp", alias: true },
+      { kind: "alias", comp: "Shield", mark: "held = e.Shield!" },
+      { kind: "field-read", comp: "Shield", field: "hp", mark: "held.hp", alias: true },
+      {
+        kind: "compare",
+        comp: "Shield",
+        mark: "held === undefined",
+        alias: true,
+        slotOperand: "left",
+      },
+      { kind: "optional-read", comp: "Shield", field: "hp", mark: "held?.hp", alias: true },
+    ],
+  },
+  {
+    name: "class evaluation code reading the view",
+    source: `${MARK_DECL}each(enemies, (e) => {
+	@mark(e.Position.x)
+	class Probe {
+		[String(e.Velocity.dx)](): void {}
+		static hp = e.Position.y;
+		static {
+			xs.push(e.id);
+		}
+	}
+	visit(Probe);
+});`,
+    want: [
+      { kind: "field-read", comp: "Position", field: "x", mark: "e.Position.x)" },
+      { kind: "field-read", comp: "Velocity", field: "dx", mark: "e.Velocity.dx" },
+      { kind: "field-read", comp: "Position", field: "y", mark: "e.Position.y" },
+      { kind: "id", mark: "e.id" },
+    ],
+  },
+];
+
+const LOWERED_PATTERN_CASES: readonly { name: string; source: string }[] = [
+  {
+    name: "a parameter pattern with nested defaults and optional slots",
+    source: `each(enemies, ({ id, Position: p, Velocity: { dx, dy: vy = 0 }, Shield, Stunned }) => {
+	p.x += dx + vy;
+	if (Shield) Shield.hp = id;
+	visit(Stunned);
+	const later = () => dx;
+	visit(later);
+});`,
+  },
+  {
+    name: "const and let patterns of the view and its slots",
+    source: `each(enemies, (e) => {
+	const { x, y: py = 1 } = e.Position;
+	let { Velocity: v, id } = e;
+	const { hp, label: { length } } = e.Shield!;
+	const {} = e.Shield!;
+	const { Position: { x: px } } = e;
+	visit([x, py, v.dx, id, hp, length, px, () => x]);
+});`,
+  },
+  {
+    name: "a pattern of a relation field",
+    source: `each(linked, (e) => {
+	const { order, pinned } = e.ChildOf;
+	visit(order + +pinned);
+});`,
+  },
+];
+
+/** Spawns into a storage whose shape differs from the iterated one. */
+const SPAWN_ELSEWHERE_SOURCE = `const ships = register(createWorld(), Ship);
+each(enemies, () => {
+	spawn(ships);
+});`;
+
+const LOOP_CALL = "each(s, (e) => {});";
+
+/** `declaration` followed by the loop call, both at the top level. */
+function beforeLoop(declaration: string): string {
+  return `${declaration}\n${LOOP_CALL}`;
+}
+
+/** `declaration` followed by the loop call, both in the body of a function. */
+function inFunction(declaration: string): string {
+  return `function run(): void {\n\t${declaration}\n\t${LOOP_CALL}\n}`;
+}
+
+/**
+ * A source declaring `NDEBUG` somewhere, and whether that declaration is in scope at its loop
+ * call.
+ */
+const NDEBUG_CASES: readonly { name: string; source: string; bound: boolean }[] = [
+  { name: "a top-level const", source: beforeLoop("const NDEBUG = false;"), bound: true },
+  { name: "a top-level let", source: beforeLoop("let NDEBUG = false;"), bound: true },
+  { name: "a top-level var", source: beforeLoop("var NDEBUG = false;"), bound: true },
+  { name: "a top-level function", source: beforeLoop("function NDEBUG(): void {}"), bound: true },
+  { name: "a top-level class", source: beforeLoop("class NDEBUG {}"), bound: true },
+  {
+    name: "an import",
+    source: beforeLoop('import { Position as NDEBUG } from "../position.js";'),
+    bound: true,
+  },
+  { name: "an enclosing const", source: inFunction("const NDEBUG = false;"), bound: true },
+  { name: "an enclosing let", source: inFunction("let NDEBUG = false;"), bound: true },
+  { name: "an enclosing var", source: inFunction("var NDEBUG = false;"), bound: true },
+  {
+    name: "an enclosing block's const",
+    source: `{\n\tconst NDEBUG = false;\n\t${LOOP_CALL}\n}`,
+    bound: true,
+  },
+  {
+    name: "a parameter of the enclosing function",
+    source: `function run(NDEBUG: boolean): void {\n\t${LOOP_CALL}\n}`,
+    bound: true,
+  },
+  { name: "an enclosing function", source: inFunction("function NDEBUG(): void {}"), bound: true },
+  { name: "an enclosing class", source: inFunction("class NDEBUG {}"), bound: true },
+  { name: "no declaration", source: LOOP_CALL, bound: false },
+  {
+    name: "a const in the callback body",
+    source: "each(s, (e) => {\n\tconst NDEBUG = false;\n});",
+    bound: false,
+  },
+  { name: "a callback parameter", source: "each(s, (NDEBUG) => {});", bound: false },
+  {
+    name: "a const in a sibling function",
+    source: `function other(): void {\n\tconst NDEBUG = false;\n}\n${LOOP_CALL}`,
+    bound: false,
+  },
+  { name: "a type alias", source: beforeLoop("type NDEBUG = boolean;"), bound: false },
+  {
+    name: "a var merged with an ambient declaration of it",
+    source: beforeLoop("declare var NDEBUG: boolean;\nvar NDEBUG = false;"),
+    bound: true,
+  },
+  {
+    name: "an ambient const, which emits no binding",
+    source: beforeLoop("declare const NDEBUG: boolean;"),
+    bound: false,
+  },
+];
+
+/** A body whose recorded nodes `nodes` picks from the callback start at the marks. */
+interface NodeListCase {
+  readonly name: string;
+  readonly source: string;
+  readonly nodes: (callback: Callback) => readonly NodeID[];
+  readonly marks: readonly string[];
+}
+
+const NODE_LIST_CASES: readonly NodeListCase[] = [
+  {
+    name: "the var declarations outside nested functions",
+    source: VARS_SOURCE,
+    nodes: (callback) => callback.varDecls,
+    marks: OWN_VAR_MARKS,
+  },
+  {
+    name: "the var declarations that redeclare a pattern binding",
+    source: `each(s, ({ id, Position: p, Velocity: { dx: vx } }: any) => {
+	var p;
+	var other = 1, vx: any = 2;
+	{
+		var id: any = 0;
+	}
+	let shadow = 0;
+	function inner() {
+		var p;
+	}
+});`,
+    nodes: (callback) => callback.paramRedeclarations,
+    marks: ["p;", "vx: any = 2", "id: any = 0"],
+  },
+  {
+    name: "the function-local reads of a function expression",
+    source: `each(s, function visit(this: unknown, e) {
+	this;
+	arguments;
+	new.target;
+	visit;
+});`,
+    nodes: (callback) => callback.functionLocal,
+    marks: ["this;", "arguments;", "new.target;", "visit;"],
+  },
+  {
+    name: "no function-local reads for an arrow, whose this is the enclosing one",
+    source: `each(s, (e) => {
+	visit(this);
+});
+function visit(value: unknown): void {}`,
+    nodes: (callback) => callback.functionLocal,
+    marks: [],
+  },
+  {
+    name: "the hazard points of the body, past view uses on an any-typed view",
+    source: `${REGISTER_DECL}each(s, (e: any) => {
+	e.Position.x = e.Velocity.dx;
+	register(e.id);
+});`,
+    nodes: (callback) => callback.hazards,
+    marks: ["register(e.id)"],
+  },
+  {
+    name: "the hazard points of the parameter defaults",
+    source: `declare function make(): number;
+each(s, ({ Position: { x = make() } }: any) => {});`,
+    nodes: (callback) => callback.hazards,
+    marks: ["Position: {", "x = make", "make() }"],
+  },
+];
+
+const project = new CallbackProject(
+  [
+    ...FORM_CASES.map(({ source }) => source),
+    ...NOT_INLINE_CASES.map(({ source }) => source),
+    ...LOOSE_USE_CASES.map(({ source }) => source),
+    ...NODE_LIST_CASES.map(({ source }) => source),
+    ...NDEBUG_CASES.map(({ source }) => source),
+    RETURNS_SOURCE,
+  ],
+  [
+    ...LOWERED_USE_CASES.map(({ source }) => source),
+    ...LOWERED_PATTERN_CASES.map(({ source }) => source),
+    SPAWN_ELSEWHERE_SOURCE,
+  ],
+);
+
+beforeAll(() => project.open(), SPAWN_TIMEOUT_MS);
+
+afterAll(() => project.close());
+
+/** A view use with the start offset of its node in place of its node ID. */
+function useAt(
+  table: NodeTable,
+  { node, ...use }: ViewUse,
+): Omit<ViewUse, "node"> & { offset: number } {
+  return { ...use, offset: nodeOffset(table, node) };
+}
+
+/** The view use `want` describes, located in `located`. */
+function wantedUse(
+  located: Located,
+  { mark, ...want }: WantUse,
+): Omit<ViewUse, "node"> & { offset: number } {
+  return {
+    kind: want.kind,
+    comp: want.comp ?? "",
+    field: want.field ?? "",
+    alias: want.alias ?? false,
+    ...(want.slotOperand === undefined ? {} : { slotOperand: want.slotOperand }),
+    offset: markOffset(located, mark),
+  };
+}
+
+describe("inlineCallback", () => {
+  it.each(NOT_INLINE_CASES)("finds no inline callback in $name", async ({ source }) => {
+    const { call } = await project.looseCall(source);
+
+    const fn = inlineCallback(call, "each");
+
+    expect(fn).toBeUndefined();
+  });
+
+  it("finds no inline callback for an op that does not iterate", async () => {
+    const { call } = await project.looseCall(ARROW_SOURCE);
+
+    const fn = inlineCallback(call, "spawn");
+
+    expect(fn).toBeUndefined();
+  });
+
+  it.each([
+    { name: "an arrow", source: ARROW_SOURCE },
+    { name: "a function expression", source: FUNCTION_SOURCE },
+  ])("finds $name written as the last argument", async ({ source }) => {
+    const { call } = await project.looseCall(source);
+
+    const fn = inlineCallback(call, "each");
+
+    expect(fn).toBe(call.arguments.at(-1));
+  });
+});
+
+describe("callback summary", () => {
+  it.each(FORM_CASES)("records the form of $name", async ({ source, want }) => {
+    const located = await project.looseCall(source);
+
+    const { callback } = await project.summarize(located);
+
+    expect({
+      params: callback.params,
+      firstParam: callback.firstParam,
+      async: callback.async,
+      generator: callback.generator,
+    }).toStrictEqual(want);
+  });
+
+  describe("when every view reference lowers", () => {
+    it.each(LOOSE_USE_CASES)(
+      "records each as a view use for $name, with no shape resolved",
+      async ({ source, want }) => {
+        const located = await project.looseCall(source);
+
+        const { callback, table } = await project.summarize(located);
+
+        expect(callback.viewUses.map((use) => useAt(table, use))).toStrictEqual(
+          want.map((use) => wantedUse(located, use)),
+        );
+      },
+    );
+
+    it.each(LOWERED_USE_CASES)("records each as a view use for $name", async ({ source, want }) => {
+      const located = await project.viewCall(source);
+
+      const { callback, table } = await project.summarize(located);
+
+      expect({
+        uses: callback.viewUses.map((use) => useAt(table, use)),
+        escapes: callback.escapes,
+      }).toStrictEqual({ uses: want.map((use) => wantedUse(located, use)), escapes: [] });
+    });
+
+    it.each(LOWERED_PATTERN_CASES)("records no escape for $name", async ({ source }) => {
+      const located = await project.viewCall(source);
+
+      const { callback } = await project.summarize(located);
+
+      expect(callback.escapes).toStrictEqual([]);
+    });
+  });
+
+  it("records only its own returns, nested under a loop or switch or not", async () => {
+    const located = await project.looseCall(RETURNS_SOURCE);
+
+    const { callback, table } = await project.summarize(located);
+
+    expect(
+      callback.returns.map(({ node, nested }) => ({ offset: nodeOffset(table, node), nested })),
+    ).toStrictEqual(
+      OWN_RETURNS.map(({ mark, nth, nested }) => ({
+        offset: markOffset(located, mark, nth),
+        nested,
+      })),
+    );
+  });
+
+  it.each(NODE_LIST_CASES)("records $name", async ({ source, nodes, marks }) => {
+    const located = await project.looseCall(source);
+
+    const { callback, table } = await project.summarize(located);
+
+    expect(nodes(callback).map((id) => nodeOffset(table, id))).toStrictEqual(
+      marks.map((mark) => markOffset(located, mark)),
+    );
+  });
+
+  it.each(NDEBUG_CASES)(
+    "records whether NDEBUG is declared in scope at the call for $name",
+    async ({ source, bound }) => {
+      const located = await project.looseCall(source);
+
+      const { callback } = await project.summarize(located);
+
+      expect(callback.ndebugBound).toBe(bound);
+    },
+  );
+
+  it("adds the declaration files a spawn target's shape consulted to the site", async () => {
+    const located = await project.viewCall(SPAWN_ELSEWHERE_SOURCE);
+
+    const { site } = await project.summarize(located);
+
+    expect(site.declarationFiles).toStrictEqual(
+      expect.arrayContaining([join(project.root, "app", "archetypes.ts")]),
+    );
+  });
+});
+
+/**
+ * A script file: it neither imports nor exports, so under default module detection the compiler
+ * files its top-level `NDEBUG` with the globals, while a bundler still loads it as a module.
+ */
+const SCRIPT_SOURCE = `declare const ecs: typeof import("../src/ecstatic/index.js");
+declare const s: any;
+const NDEBUG = false;
+ecs.each(s, (e) => {});
+`;
+
+describe("a script file's top-level NDEBUG", () => {
+  it(
+    "records NDEBUG as declared in scope at the call",
+    async () => {
+      const config: { compilerOptions: Record<string, unknown> } = JSON.parse(RUNTIME_TSCONFIG);
+      const opened = await openProject(
+        runtimeProject({
+          "tsconfig.json": JSON.stringify({
+            ...config,
+            compilerOptions: {
+              ...config.compilerOptions,
+              module: "esnext",
+              moduleResolution: "bundler",
+              moduleDetection: "legacy",
+            },
+          }),
+          "app/script.ts": SCRIPT_SOURCE,
+        }),
+      );
+      try {
+        const file = await opened.view.sourceFile(projectPath(opened.root, "app/script.ts"));
+
+        const { sites } = await analyze(opened.view.checker, file, new PackageRoots());
+
+        expect(sites.map((site) => site.callback?.ndebugBound)).toStrictEqual([true]);
+      } finally {
+        await opened.session.close();
+      }
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+});

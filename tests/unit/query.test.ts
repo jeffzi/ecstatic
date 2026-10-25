@@ -14,7 +14,7 @@ import {
   query,
   register,
   spawn,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 
 const { QueryPosition: Position } = components({ QueryPosition: { x: 0, y: 0 } });
 const { QueryVelocity: Velocity } = components({ QueryVelocity: { vx: 0, vy: 0 } });

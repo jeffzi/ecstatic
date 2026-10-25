@@ -29,11 +29,11 @@ import type {
   SpawnOverridesFor as _PublicSpawnOverridesFor,
   // @ts-expect-error filter application is not public: `each()` applies filters internally
   ViewApplyFilter as _PublicViewApplyFilter,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 // @ts-expect-error relation metadata is internal: relations are used through `relation()`, `link()`, and `getTarget()`
-import { getRelationMeta as _publicGetRelationMeta } from "../../src/index.js";
-import type { RelationDescriptor } from "../../src/relation.js";
-import { getRelationMeta } from "../../src/relation.js";
+import { getRelationMeta as _publicGetRelationMeta } from "../../src/ecstatic/index.js";
+import type { RelationDescriptor } from "../../src/ecstatic/relation.js";
+import { getRelationMeta } from "../../src/ecstatic/relation.js";
 
 /** The types the package promises to keep reachable from its single public entry point. */
 export type {
@@ -50,7 +50,7 @@ export type {
   Tag,
   With,
   World,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 
 describe("relation.js internal exports", () => {
   it("keeps getRelationMeta's signature reachable from its defining module", () => {

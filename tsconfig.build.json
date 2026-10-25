@@ -2,13 +2,13 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "types": [],
-    "rootDir": "src",
+    "rootDir": "src/ecstatic",
     "outDir": "dist",
     "noEmit": false,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src"],
-  "exclude": ["tests", "**/*.test.ts"]
+  "include": ["src/ecstatic"],
+  "exclude": ["**/*.test.ts"]
 }

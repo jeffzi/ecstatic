@@ -1,0 +1,32 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: expression-body
+import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
+
+const Bead = component("AbacusBead", { x: 0 });
+
+/**
+ * Runs an expression-bodied callback, whose expression runs once per row.
+ *
+ * @returns The values the expression recorded, in visit order.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Bead]));
+  for (const x of [1, 2, 3]) {
+    spawn(storage, { AbacusBead: { x } });
+  }
+  const seen: number[] = [];
+
+  {
+      const storage_1 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:AbacusBead{1:x=n}|");
+      const n = storage_1.n;
+      if (n > 0) {
+          const AbacusBeadRecord = storage_1.AbacusBead;
+          for (let i = n - 1; i >= 0; i--) {
+              seen.push(AbacusBeadRecord.x[i] * 10);
+          }
+      }
+  }
+
+  return seen;
+}

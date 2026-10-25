@@ -3,7 +3,7 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "paths": {
-      "ecstatic": ["../src/index.ts"]
+      "ecstatic": ["../src/ecstatic/index.ts"]
     }
   },
   "include": ["."]

@@ -1,6 +1,12 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import { archetype, createWorld, type EntityId, each, register } from "../../../src/index.js";
+import {
+  archetype,
+  createWorld,
+  type EntityId,
+  each,
+  register,
+} from "../../../src/ecstatic/index.js";
 import { Payload, Position } from "../_fixtures.js";
 
 describe("view — per-entity view type", () => {

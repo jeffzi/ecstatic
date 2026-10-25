@@ -9,7 +9,7 @@ import {
   spawn,
   spawnMany,
   type Storage,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 import { Health, Position } from "../_fixtures.js";
 
 const ReqRel = relation("SpawnRelType_Req", [Position]);

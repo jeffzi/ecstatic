@@ -1,6 +1,12 @@
 import { describe, it } from "vitest";
 
-import { archetype, createWorld, despawnMany, register, spawnMany } from "../../../src/index.js";
+import {
+  archetype,
+  createWorld,
+  despawnMany,
+  register,
+  spawnMany,
+} from "../../../src/ecstatic/index.js";
 import { Position, Velocity } from "../_fixtures.js";
 
 describe("despawnMany world-scoped overloads", () => {

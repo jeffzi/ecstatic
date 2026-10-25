@@ -6,14 +6,14 @@ import {
   type FieldDescriptor,
   component,
   ref,
-} from "../../src/component.js";
-import type { EntityId } from "../../src/entity-id.js";
+} from "../../src/ecstatic/component.js";
+import type { EntityId } from "../../src/ecstatic/entity-id.js";
 import {
   type Relation,
   type RelationConstraints,
   type RelationFields,
   relation,
-} from "../../src/relation.js";
+} from "../../src/ecstatic/relation.js";
 
 interface Handle {
   readonly kind: "handle";

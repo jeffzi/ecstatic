@@ -1,0 +1,53 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: callback-without-parameter
+import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
+
+const Bale = component("BarnBale", { x: 0 });
+const Barn = archetype([Bale]);
+
+/**
+ * Evaluates the storage argument once, before any row: an identifier the body reassigns keeps its first storage
+ * for the whole loop, and a call is made once.
+ *
+ * @returns How many rows ran over the reassigned identifier, and how often the storage call and the body ran.
+ */
+export function scenario(): unknown {
+  const first = register(createWorld(), Barn);
+  const second = register(createWorld(), Barn);
+  spawn(first, { BarnBale: { x: 1 } });
+  spawn(first, { BarnBale: { x: 2 } });
+  for (const x of [3, 4, 5]) {
+    spawn(second, { BarnBale: { x } });
+  }
+  let current = first;
+  let rows = 0;
+  let calls = 0;
+  const pick = (): typeof first => {
+    calls += 1;
+    return first;
+  };
+
+  {
+      const storage = current;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage, "c8:BarnBale{1:x=n}|");
+      const n = storage.n;
+      if (n > 0) {
+          for (let i = n - 1; i >= 0; i--) {
+              current = second;
+              rows += 1;
+          }
+      }
+  }
+  {
+      const storage_1 = pick();
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c8:BarnBale{1:x=n}|");
+      const n_1 = storage_1.n;
+      if (n_1 > 0) {
+          for (let i_1 = n_1 - 1; i_1 >= 0; i_1--) {
+              calls += 10;
+          }
+      }
+  }
+
+  return { rows, calls };
+}

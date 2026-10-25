@@ -1,0 +1,31 @@
+import * as ecstatic_internal from "ecstatic/internal";
+import { createWorld, each, get, register, spawn, type Storage } from "ecstatic";
+
+import { Mover, Position } from "../../schema.js";
+
+/** Moves every row of a wide storage cast back to the archetype it was registered with. */
+export function scenario(): unknown {
+  const movers = register(createWorld(), Mover);
+  const ids = [
+    spawn(movers, { Position: { x: 1, y: 0 }, Velocity: { dx: 6, dy: 0 } }),
+    spawn(movers, { Position: { x: 4, y: 0 }, Velocity: { dx: -1, dy: 0 } }),
+  ];
+  const wide: Storage = movers;
+  const visited: number[] = [];
+
+  {
+      const storage = wide as Storage<typeof Mover>;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage, "c8:Position{1:x=n,1:y=n}c8:Velocity{2:dx=n,2:dy=n}|");
+      const n = storage.n;
+      if (n > 0) {
+          const PositionRecord = storage.Position, VelocityRecord = storage.Velocity;
+          let value;
+          for (let i = n - 1; i >= 0; i--) {
+              visited.push(storage.entities[i]);
+              (value = PositionRecord.x[i], value = value + (VelocityRecord.dx[i]), PositionRecord.x[i] = value);
+          }
+      }
+  }
+
+  return { visited, xs: ids.map((id) => get(movers, id, Position.x)) };
+}

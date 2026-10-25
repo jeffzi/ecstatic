@@ -1,6 +1,6 @@
 import { assert, describe, expect, it } from "vitest";
 
-import type { ComponentDescriptor } from "../../../src/component.js";
+import type { ComponentDescriptor } from "../../../src/ecstatic/component.js";
 import {
   archetype,
   components,
@@ -11,9 +11,9 @@ import {
   relation,
   spawn,
   spawnMany,
-} from "../../../src/index.js";
-import { getRelationMeta } from "../../../src/relation.js";
-import { createWorld, register } from "../../../src/world.js";
+} from "../../../src/ecstatic/index.js";
+import { getRelationMeta } from "../../../src/ecstatic/relation.js";
+import { createWorld, register } from "../../../src/ecstatic/world.js";
 import { rowOf } from "../fixtures.js";
 
 const { SpawnOptPosition: Position } = components({

@@ -1,0 +1,41 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: destructure-slot
+import { archetype, component, createWorld, each, get, register, spawn } from "ecstatic";
+
+const Spot = component("CopySpot", { x: 0, y: 0 });
+const Pace = component("CopyPace", { dx: 0, dy: 0 });
+
+/**
+ * Destructures slots in `const` and `let` declarations, renamed and not: the bindings copy the fields, `let` ones
+ * stay assignable, and writing them never writes the columns back.
+ *
+ * @returns What the body bound, and each row's `x` after the loop.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Spot, Pace]));
+  const ids = [
+    spawn(storage, { CopySpot: { x: 1, y: 2 }, CopyPace: { dx: 3, dy: 4 } }),
+    spawn(storage, { CopySpot: { x: 5, y: 6 }, CopyPace: { dx: 7, dy: 8 } }),
+  ];
+  const trace: unknown[] = [];
+
+  {
+      const storage_1 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c8:CopySpot{1:x=n,1:y=n}c8:CopyPace{2:dx=n,2:dy=n}|");
+      const n = storage_1.n;
+      if (n > 0) {
+          const CopySpotRecord = storage_1.CopySpot, CopyPaceRecord = storage_1.CopyPace;
+          let value;
+          for (let i = n - 1; i >= 0; i--) {
+              const x = CopySpotRecord.x[i], py = CopySpotRecord.y[i];
+              let vx = CopyPaceRecord.dx[i], dy = CopyPaceRecord.dy[i];
+              vx += 100;
+              dy = x;
+              (value = vx, CopySpotRecord.x[i] = value);
+              trace.push(x, py, vx, dy, CopySpotRecord.x[i], CopyPaceRecord.dy[i]);
+          }
+      }
+  }
+
+  return { trace, xs: ids.map((id) => get(storage, id, Spot.x)) };
+}

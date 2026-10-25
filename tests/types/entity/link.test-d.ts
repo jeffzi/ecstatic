@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import type { EntityId, With } from "../../../src/index.js";
+import type { EntityId, With } from "../../../src/ecstatic/index.js";
 import {
   archetype,
   createWorld,
@@ -10,7 +10,7 @@ import {
   relation,
   spawn,
   unlink,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 import { Health, Position } from "../_fixtures.js";
 
 const Owner = relation("LinkTd_Owner", [Position]);

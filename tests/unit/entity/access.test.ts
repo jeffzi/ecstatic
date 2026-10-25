@@ -13,7 +13,7 @@ import {
   relation,
   set,
   spawn,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 
 // Use unique prefixes to avoid collisions with other test files
 const { AccessPos: Position } = components({
@@ -39,7 +39,7 @@ describe("get", () => {
     expect(get(storage, id, Position.y)).toBe(3);
   });
 
-  it("errors on a stale (despawned) entity ID", () => {
+  it("errors on a stale (despawned) entity ID #checked", () => {
     const world = createWorld();
     const Arch = archetype([Health]);
     const storage = register(world, Arch);
@@ -62,7 +62,7 @@ describe("get", () => {
     }).toThrow("not on this archetype");
   });
 
-  it("errors when the ID belongs to a different storage in the same world", () => {
+  it("errors when the ID belongs to a different storage in the same world #checked", () => {
     const world = createWorld();
     const storage1 = register(world, archetype([Position]));
     const storage2 = register(world, archetype([Velocity]));
@@ -125,7 +125,7 @@ describe("set", () => {
     expect(get(storage, id, Position.y)).toBe(20);
   });
 
-  it("errors on a stale entity ID", () => {
+  it("errors on a stale entity ID #checked", () => {
     const world = createWorld();
     const Arch = archetype([Health]);
     const storage = register(world, Arch);
@@ -253,7 +253,7 @@ describe("get/set world form", () => {
     expect(get(world, id, Position.x)).toBe(99);
   });
 
-  it("get errors on a stale entity ID", () => {
+  it("get errors on a stale entity ID #checked", () => {
     const world = createWorld();
     const storage = register(world, archetype([Health]));
     const id = spawn(storage);
@@ -264,7 +264,7 @@ describe("get/set world form", () => {
     }).toThrow("stale entity ID");
   });
 
-  it("set errors on a stale entity ID", () => {
+  it("set errors on a stale entity ID #checked", () => {
     const world = createWorld();
     const storage = register(world, archetype([Health]));
     const id = spawn(storage);
@@ -324,7 +324,7 @@ describe("get/set on a disabled optional component", () => {
     return { world, storage };
   }
 
-  it("get errors for a disabled optional component", () => {
+  it("get errors for a disabled optional component #checked", () => {
     const { storage } = createShieldStorage();
     const id = spawn(storage);
 
@@ -333,7 +333,7 @@ describe("get/set on a disabled optional component", () => {
     }).toThrow("component AccessShield not enabled on entity");
   });
 
-  it("set errors for a disabled optional component (field-descriptor form)", () => {
+  it("set errors for a disabled optional component (field-descriptor form) #checked", () => {
     const { storage } = createShieldStorage();
     const id = spawn(storage);
 
@@ -342,7 +342,7 @@ describe("get/set on a disabled optional component", () => {
     }).toThrow("component AccessShield not enabled on entity");
   });
 
-  it("set errors for a disabled optional component (component+values form)", () => {
+  it("set errors for a disabled optional component (component+values form) #checked", () => {
     const { storage } = createShieldStorage();
     const id = spawn(storage);
 

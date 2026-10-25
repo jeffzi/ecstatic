@@ -11,7 +11,7 @@ import {
   register,
   spawn,
   spawnMany,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 import { rowOf } from "./fixtures.js";
 
 const { MatcherPosition: Position } = components({ MatcherPosition: { x: 0, y: 0 } });

@@ -1,0 +1,259 @@
+import * as ecstatic_internal from "ecstatic/internal";
+import {
+  archetype,
+  component,
+  createWorld,
+  each,
+  get,
+  register,
+  spawn,
+  spawnMany,
+  type EntityId,
+  type Storage,
+} from "ecstatic";
+
+import type { TwinShape } from "./twin.js";
+
+const Spot = component("LyingSpot", { x: 0 });
+const Other = component("LyingOther", { y: 0 });
+
+const SpotShape = archetype([Spot]);
+const OtherShape = archetype([Other]);
+
+/** What a walk left: the message of the error it threw, each original row's `x`, and each storage's row count. */
+export interface Outcome {
+  readonly error: string | undefined;
+  readonly xs: number[];
+  readonly rows: number;
+  readonly others: number;
+}
+
+/** A storage of two rows whose `x` is 1, then 2, the ids of those rows, and an empty storage of another shape. */
+function setup(): {
+  storage: Storage<typeof SpotShape>;
+  others: Storage<typeof OtherShape>;
+  ids: EntityId[];
+} {
+  const world = createWorld();
+  const storage = register(world, SpotShape);
+  const others = register(world, OtherShape);
+  const ids = [spawn(storage, { LyingSpot: { x: 1 } }), spawn(storage, { LyingSpot: { x: 2 } })];
+  return { storage, others, ids };
+}
+
+/**
+ * Runs `walk`, catching what it throws.
+ *
+ * @param storage - The storage `walk` iterates.
+ * @param others - The storage of another shape `walk` may spawn into.
+ * @param ids - The ids of the rows of `storage` before the walk.
+ * @param walk - The walk.
+ * @returns What the walk left.
+ */
+function outcome(
+  storage: Storage<typeof SpotShape>,
+  others: Storage<typeof OtherShape>,
+  ids: readonly EntityId[],
+  walk: () => void,
+): Outcome {
+  let error: string | undefined;
+  try {
+    walk();
+  } catch (caught) {
+    error = caught instanceof Error ? caught.message : "thrown";
+  }
+  return {
+    error,
+    xs: ids.map((id) => get(storage, id, Spot.x)),
+    rows: storage.n,
+    others: others.n,
+  };
+}
+
+/** Spawns through a cast that claims another shape for the iterated storage, between two writes of each row. */
+export function spawnThroughLie(): Outcome {
+  const { storage, others, ids } = setup();
+  const lie = storage as unknown as Storage<typeof OtherShape>;
+  return outcome(storage, others, ids, () => {
+    {
+        const storage_1 = storage;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:LyingSpot{1:x=n}|");
+        const n_1 = storage_1.n;
+        if (n_1 > 0) {
+            const LyingSpotRecord = storage_1.LyingSpot;
+            const xColumn = LyingSpotRecord.x;
+            let target;
+            for (let i = n_1 - 1; i >= 0; i--) {
+                xColumn[i] += 100;
+                spawn((target = lie, (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(target, "c10:LyingOther{1:y=n}|"), target));
+                xColumn[i] += 1000;
+            }
+        }
+    }
+  });
+}
+
+/** Spawns many rows through a cast that claims another shape for the iterated storage, between two writes of each row. */
+export function spawnManyThroughLie(): Outcome {
+  const { storage, others, ids } = setup();
+  const lie = storage as unknown as Storage<typeof OtherShape>;
+  return outcome(storage, others, ids, () => {
+    {
+        const storage_2 = storage;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_2, "c9:LyingSpot{1:x=n}|");
+        const n_2 = storage_2.n;
+        if (n_2 > 0) {
+            const LyingSpotRecord_1 = storage_2.LyingSpot;
+            const xColumn_1 = LyingSpotRecord_1.x;
+            let target_1;
+            for (let i_1 = n_2 - 1; i_1 >= 0; i_1--) {
+                xColumn_1[i_1] += 100;
+                spawnMany((target_1 = lie, (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(target_1, "c10:LyingOther{1:y=n}|"), target_1), 1);
+                xColumn_1[i_1] += 1000;
+            }
+        }
+    }
+  });
+}
+
+/** Spawns through a cast that claims another shape for the iterated storage on the second row visited only, after the first row finished. */
+export function spawnThroughLieOnLaterRow(): Outcome {
+  const { storage, others, ids } = setup();
+  const lie = storage as unknown as Storage<typeof OtherShape>;
+  return outcome(storage, others, ids, () => {
+    {
+        const storage_3 = storage;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_3, "c9:LyingSpot{1:x=n}|");
+        const n_3 = storage_3.n;
+        if (n_3 > 0) {
+            const LyingSpotRecord_2 = storage_3.LyingSpot;
+            const xColumn_2 = LyingSpotRecord_2.x;
+            let target_2;
+            for (let i_2 = n_3 - 1; i_2 >= 0; i_2--) {
+                xColumn_2[i_2] += 100;
+                if (xColumn_2[i_2] === 101)
+                    spawn((target_2 = lie, (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(target_2, "c10:LyingOther{1:y=n}|"), target_2));
+                xColumn_2[i_2] += 1000;
+            }
+        }
+    }
+  });
+}
+
+/** Spawns many rows through a cast that claims another shape for the iterated storage on the second row visited only, after the first row finished. */
+export function spawnManyThroughLieOnLaterRow(): Outcome {
+  const { storage, others, ids } = setup();
+  const lie = storage as unknown as Storage<typeof OtherShape>;
+  return outcome(storage, others, ids, () => {
+    {
+        const storage_4 = storage;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_4, "c9:LyingSpot{1:x=n}|");
+        const n_4 = storage_4.n;
+        if (n_4 > 0) {
+            const LyingSpotRecord_3 = storage_4.LyingSpot;
+            const xColumn_3 = LyingSpotRecord_3.x;
+            let target_3;
+            for (let i_3 = n_4 - 1; i_3 >= 0; i_3--) {
+                xColumn_3[i_3] += 100;
+                if (xColumn_3[i_3] === 101)
+                    spawnMany((target_3 = lie, (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(target_3, "c10:LyingOther{1:y=n}|"), target_3), 1);
+                xColumn_3[i_3] += 1000;
+            }
+        }
+    }
+  });
+}
+
+/** Spawns into a truthfully typed storage of another shape, then through a cast that claims that shape for the iterated one. */
+export function spawnAfterTruth(): Outcome {
+  const { storage, others, ids } = setup();
+  const lie = storage as unknown as Storage<typeof OtherShape>;
+  return outcome(storage, others, ids, () => {
+    {
+        const storage_5 = storage;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_5, "c9:LyingSpot{1:x=n}|");
+        const n_5 = storage_5.n;
+        if (n_5 > 0) {
+            const LyingSpotRecord_4 = storage_5.LyingSpot;
+            const xColumn_4 = LyingSpotRecord_4.x;
+            let target_4, target_5;
+            for (let i_4 = n_5 - 1; i_4 >= 0; i_4--) {
+                xColumn_4[i_4] += 100;
+                spawn((target_4 = others, (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(target_4, "c10:LyingOther{1:y=n}|"), target_4));
+                spawn((target_5 = lie, (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(target_5, "c10:LyingOther{1:y=n}|"), target_5));
+                xColumn_4[i_4] += 1000;
+            }
+        }
+    }
+  });
+}
+
+/** Spawns many rows into a truthfully typed storage of another shape, then through a cast that claims that shape for the iterated one. */
+export function spawnManyAfterTruth(): Outcome {
+  const { storage, others, ids } = setup();
+  const lie = storage as unknown as Storage<typeof OtherShape>;
+  return outcome(storage, others, ids, () => {
+    {
+        const storage_6 = storage;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_6, "c9:LyingSpot{1:x=n}|");
+        const n_6 = storage_6.n;
+        if (n_6 > 0) {
+            const LyingSpotRecord_5 = storage_6.LyingSpot;
+            const xColumn_5 = LyingSpotRecord_5.x;
+            let target_6, target_7;
+            for (let i_5 = n_6 - 1; i_5 >= 0; i_5--) {
+                xColumn_5[i_5] += 100;
+                spawnMany((target_6 = others, (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(target_6, "c10:LyingOther{1:y=n}|"), target_6), 2);
+                spawnMany((target_7 = lie, (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(target_7, "c10:LyingOther{1:y=n}|"), target_7), 1);
+                xColumn_5[i_5] += 1000;
+            }
+        }
+    }
+  });
+}
+
+/** Spawns through a cast that claims a same-named component with another field for the iterated storage. */
+export function spawnThroughTwin(): Outcome {
+  const { storage, others, ids } = setup();
+  const lie = storage as unknown as Storage<typeof TwinShape>;
+  return outcome(storage, others, ids, () => {
+    {
+        const storage_7 = storage;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_7, "c9:LyingSpot{1:x=n}|");
+        const n_7 = storage_7.n;
+        if (n_7 > 0) {
+            const LyingSpotRecord_6 = storage_7.LyingSpot;
+            const xColumn_6 = LyingSpotRecord_6.x;
+            let target_8;
+            for (let i_6 = n_7 - 1; i_6 >= 0; i_6--) {
+                xColumn_6[i_6] += 100;
+                spawn((target_8 = lie, (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(target_8, "c9:LyingSpot{1:z=n}|"), target_8));
+                xColumn_6[i_6] += 1000;
+            }
+        }
+    }
+  });
+}
+
+/** Spawns many rows through a cast that claims a same-named component with another field for the iterated storage. */
+export function spawnManyThroughTwin(): Outcome {
+  const { storage, others, ids } = setup();
+  const lie = storage as unknown as Storage<typeof TwinShape>;
+  return outcome(storage, others, ids, () => {
+    {
+        const storage_8 = storage;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_8, "c9:LyingSpot{1:x=n}|");
+        const n_8 = storage_8.n;
+        if (n_8 > 0) {
+            const LyingSpotRecord_7 = storage_8.LyingSpot;
+            const xColumn_7 = LyingSpotRecord_7.x;
+            let target_9;
+            for (let i_7 = n_8 - 1; i_7 >= 0; i_7--) {
+                xColumn_7[i_7] += 100;
+                spawnMany((target_9 = lie, (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(target_9, "c9:LyingSpot{1:z=n}|"), target_9), 1);
+                xColumn_7[i_7] += 1000;
+            }
+        }
+    }
+  });
+}

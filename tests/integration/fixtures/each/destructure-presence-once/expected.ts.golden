@@ -1,0 +1,47 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: destructure-optional-slot
+// rewrite-applies: destructure-default-plain
+import {
+  archetype,
+  component,
+  createWorld,
+  disable,
+  each,
+  enable,
+  get,
+  ref,
+  register,
+  spawn,
+} from "ecstatic";
+
+const Base = component("LedgerBase", { x: 0 });
+const Entry = component("LedgerEntry", { first: ref<number>(), second: ref<number>(), third: 0 });
+
+/**
+ * Destructures an optional slot whose first field's default disables it: the pattern tests the slot's presence once,
+ * so the fields after that default still read its columns, as the record the runtime's slot getter returned does.
+ *
+ * @returns What the body bound, row by row, and the slot's second field after the loop.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Base], [Entry]));
+  const id = spawn(storage, { LedgerBase: { x: 1 }, LedgerEntry: { second: 4, third: 6 } });
+  const trace: unknown[] = [];
+
+  {
+      const storage_1 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:LedgerBase{1:x=n}|c11:LedgerEntry{5:first=p,6:second=p,5:third=n}");
+      const n = storage_1.n;
+      if (n > 0) {
+          const LedgerEntryRecord = storage_1.LedgerEntry;
+          let value;
+          for (let i = n - 1; i >= 0; i--) {
+              const {} = (((storage_1.mask[i] & 1) !== 0) ? 0 : void 0), first = ((value = LedgerEntryRecord.first[i]) === void 0 ? (disable(storage, storage_1.entities[i], Entry), trace.push("disabled"), 1) : value), second = LedgerEntryRecord.second[i], third = LedgerEntryRecord.third[i];
+              trace.push(first, second, third);
+          }
+      }
+  }
+
+  enable(storage, id, Entry);
+  return { trace, second: get(storage, id, Entry.second) };
+}

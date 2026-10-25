@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "ecstatic": ["../../../src/ecstatic/index.ts"],
+      "ecstatic/internal": ["../../../src/ecstatic/internal.ts"]
+    }
+  },
+  "include": ["."]
+}

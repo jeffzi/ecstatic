@@ -1,0 +1,30 @@
+import * as ecstatic_internal from "ecstatic/internal";
+import { each, get, spawn } from "ecstatic";
+
+import { Position } from "../../schema.js";
+import { crowd } from "./storage.js";
+
+/** Moves every row of a storage registered in a sibling module. */
+export function scenario(): unknown {
+  const ids = [
+    spawn(crowd, { Position: { x: 2, y: 0 }, Velocity: { dx: 3, dy: 0 } }),
+    spawn(crowd, { Position: { x: 6, y: 0 }, Velocity: { dx: -2, dy: 0 } }),
+  ];
+  const visited: number[] = [];
+
+  {
+      const storage = crowd;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage, "c8:Position{1:x=n,1:y=n}c8:Velocity{2:dx=n,2:dy=n}|");
+      const n = storage.n;
+      if (n > 0) {
+          const PositionRecord = storage.Position, VelocityRecord = storage.Velocity;
+          let value;
+          for (let i = n - 1; i >= 0; i--) {
+              visited.push(storage.entities[i]);
+              (value = PositionRecord.x[i], value = value + (VelocityRecord.dx[i]), PositionRecord.x[i] = value);
+          }
+      }
+  }
+
+  return { visited, xs: ids.map((id) => get(crowd, id, Position.x)) };
+}

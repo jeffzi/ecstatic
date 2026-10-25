@@ -1,0 +1,39 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: mode-hoisted
+// rewrite-applies: read-required-field
+// rewrite-applies: write-required-field
+import { archetype, component, createWorld, each, get, ref, register, spawn } from "ecstatic";
+
+const Note = component("ScrollNote", { text: "", page: 0 });
+const Seal = component("ScrollSeal", { owner: ref<string>() });
+
+/**
+ * Reads and writes fields stored in plain arrays, a string and a `ref()` field, beside a numeric one, in a body
+ * that makes no call.
+ *
+ * @returns Each row's fields after the loop.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Note, Seal]));
+  const ids = [
+    spawn(storage, { ScrollNote: { text: "a", page: 1 }, ScrollSeal: { owner: "ann" } }),
+    spawn(storage, { ScrollNote: { text: "b", page: 2 } }),
+  ];
+
+  {
+      const storage_1 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:ScrollNote{4:page=n,4:text=p}c10:ScrollSeal{5:owner=p}|");
+      const n = storage_1.n;
+      if (n > 0) {
+          const ScrollNoteRecord = storage_1.ScrollNote, ScrollSealRecord = storage_1.ScrollSeal;
+          const textColumn = ScrollNoteRecord.text, pageColumn = ScrollNoteRecord.page, ownerColumn = ScrollSealRecord.owner;
+          for (let i = n - 1; i >= 0; i--) {
+              textColumn[i] = textColumn[i] + pageColumn[i];
+              textColumn[i] += "!";
+              ownerColumn[i] ??= textColumn[i];
+          }
+      }
+  }
+
+  return ids.map((id) => [get(storage, id, Note.text), get(storage, id, Seal.owner)]);
+}

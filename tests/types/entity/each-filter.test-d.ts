@@ -1,7 +1,7 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import type { EachFilter, QueryFilter } from "../../../src/index.js";
-import { archetype, createWorld, each, register } from "../../../src/index.js";
+import type { EachFilter, QueryFilter } from "../../../src/ecstatic/index.js";
+import { archetype, createWorld, each, register } from "../../../src/ecstatic/index.js";
 import { OnFire, Position, Shield, Stunned } from "../_fixtures.js";
 
 describe("each filter typing", () => {

@@ -15,7 +15,7 @@ import {
   register,
   spawn,
   spawnMany,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 import { rowOf } from "../fixtures.js";
 
 const { ManyPosition: Position } = components({ ManyPosition: { x: 0, y: 0 } });
@@ -121,7 +121,7 @@ describe("enableMany with ids", () => {
     expect(soa["effect"]?.[rowOf(storage, idB)]).toBe(obj);
   });
 
-  it("errors on a stale entity ID with zero rows changed", () => {
+  it("errors on a stale entity ID with zero rows changed #checked", () => {
     const { storage } = createStorage();
     const idA = spawn(storage);
     const idB = spawn(storage);
@@ -216,7 +216,7 @@ describe("disableMany with ids", () => {
     expect(alive(storage, id)).toBe(true);
   });
 
-  it("errors on a stale entity ID with zero rows changed", () => {
+  it("errors on a stale entity ID with zero rows changed #checked", () => {
     const { storage } = createStorage();
     const idA = spawn(storage);
     const idB = spawn(storage);

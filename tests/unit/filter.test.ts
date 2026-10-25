@@ -10,7 +10,7 @@ import {
   enable,
   register,
   spawn,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 
 const { FilterPosition: Position } = components({ FilterPosition: { x: 0, y: 0 } });
 const { FilterVelocity: Velocity } = components({ FilterVelocity: { vx: 0, vy: 0 } });

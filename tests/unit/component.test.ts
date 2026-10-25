@@ -15,7 +15,7 @@ import {
   u8,
   u16,
   u32,
-} from "../../src/component.js";
+} from "../../src/ecstatic/component.js";
 import { asMutableDescriptor } from "./fixtures.js";
 
 describe("component", () => {

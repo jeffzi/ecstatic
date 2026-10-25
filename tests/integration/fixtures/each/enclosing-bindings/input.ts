@@ -1,0 +1,52 @@
+// rewrite-applies: this
+// rewrite-applies: arguments
+// rewrite-applies: super
+// rewrite-applies: callback-typed-parameter
+import { archetype, component, createWorld, each, register, spawn, type Storage } from "ecstatic";
+
+const Page = component("ShelfPage", { x: 0 });
+const Book = archetype([Page]);
+
+/** A base class whose `name` the collector's callback reaches through `super`. */
+class Named {
+  name(): string {
+    return "base";
+  }
+}
+
+/** Collects rows from a method whose arrow callback reads `this`, `arguments`, and `super`. */
+class Collector extends Named {
+  readonly tag = "collector";
+
+  override name(): string {
+    return "collector";
+  }
+
+  /**
+   * Walks `storage` with an arrow callback whose parameter carries a type annotation.
+   *
+   * @param storage - The storage to walk.
+   * @param extra - Arguments that only count towards `arguments.length`.
+   * @returns What the callback read on each row.
+   */
+  collect(storage: Storage<typeof Book>, ...extra: number[]): unknown[] {
+    const seen: unknown[] = [];
+    each(storage, (e: { readonly id: number; readonly ShelfPage: { readonly x: number } }) => {
+      seen.push(this.tag, arguments.length, super.name(), extra.length, e.ShelfPage.x);
+    });
+    return seen;
+  }
+}
+
+/**
+ * Walks a storage from a method, through an annotated arrow callback that keeps the method's `this`, `arguments`,
+ * and `super`.
+ *
+ * @returns What the callback read.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), Book);
+  spawn(storage, { ShelfPage: { x: 1 } });
+  spawn(storage, { ShelfPage: { x: 2 } });
+  return new Collector().collect(storage, 7, 8);
+}

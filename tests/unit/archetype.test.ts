@@ -1,7 +1,7 @@
 import { assert, describe, expect, it } from "vitest";
 
-import { archetype } from "../../src/archetype.js";
-import { type ComponentDescriptor, components } from "../../src/component.js";
+import { Archetype, archetype } from "../../src/ecstatic/archetype.js";
+import { type ComponentDescriptor, component, components } from "../../src/ecstatic/component.js";
 import { asMutableDescriptor } from "./fixtures.js";
 
 describe("archetype", () => {
@@ -169,28 +169,8 @@ describe("archetype", () => {
       }).toThrow(/component name sparse is reserved on archetypes/);
     });
 
-    it.each(["matchers", "matcherMatched", "hasOptionalData", "hasDespawnClear"])(
-      "rejects matcher/optional bookkeeping name '%s'",
-      (name) => {
-        const { [`Reserved_${name}`]: Comp } = components({
-          [`Reserved_${name}`]: { x: 0 },
-        });
-        assert(Comp != null);
-        asMutableDescriptor(Comp).__ecstatic_name = name;
-
-        expect(() => {
-          archetype([Comp]);
-        }).toThrow(`component name ${name} is reserved on archetypes`);
-      },
-    );
-
-    it.each([
-      "relationTargetColumns",
-      "relationDescriptors",
-      "relationOptionalBits",
-      "relationN",
-      "hasRelations",
-    ])("rejects relation bookkeeping name '%s'", (name) => {
+    /** Declares a required component renamed to `name` and asserts `archetype` rejects it. */
+    function expectReservedNameRejected(name: string): void {
       const { [`Reserved_${name}`]: Comp } = components({
         [`Reserved_${name}`]: { x: 0 },
       });
@@ -200,6 +180,33 @@ describe("archetype", () => {
       expect(() => {
         archetype([Comp]);
       }).toThrow(`component name ${name} is reserved on archetypes`);
+    }
+
+    it.each([
+      { group: "matcher/optional", name: "matchers" },
+      { group: "matcher/optional", name: "matcherMatched" },
+      { group: "matcher/optional", name: "hasOptionalData" },
+      { group: "matcher/optional", name: "hasDespawnClear" },
+      { group: "relation", name: "relationTargetColumns" },
+      { group: "relation", name: "relationDescriptors" },
+      { group: "relation", name: "relationOptionalBits" },
+      { group: "relation", name: "relationN" },
+      { group: "relation", name: "hasRelations" },
+    ])("rejects $group bookkeeping name '$name'", ({ name }) => {
+      expectReservedNameRejected(name);
+    });
+
+    it.each([
+      { form: "archetype([C])", declare: (c: ComponentDescriptor) => archetype([c]) },
+      { form: "archetype([], [C])", declare: (c: ComponentDescriptor) => archetype([], [c]) },
+      {
+        form: "class extends Archetype([C])",
+        declare: (c: ComponentDescriptor) => class extends Archetype([c]) {},
+      },
+    ])("rejects a component named __proto__ in $form", ({ declare }) => {
+      const Proto = component("__proto__", { x: 0 });
+
+      expect(() => declare(Proto)).toThrow("component name __proto__ is reserved on archetypes");
     });
 
     it("rejects reserved name 'archetype'", () => {
@@ -302,6 +309,23 @@ describe("archetype", () => {
       const arch1 = archetype([A]);
       const arch2 = archetype([B]);
       expect(arch2.id).toBe(arch1.id + 1);
+    });
+
+    it("keeps its component lists when the caller mutates the arrays it passed", () => {
+      const {
+        ArchTestOwn_Req: Req,
+        ArchTestOwn_Opt: Opt,
+        ArchTestOwn_Late: Late,
+      } = components({ ArchTestOwn_Req: { x: 0 }, ArchTestOwn_Opt: {}, ArchTestOwn_Late: {} });
+      const required: ComponentDescriptor[] = [Req];
+      const optionals: ComponentDescriptor[] = [Opt];
+      const arch = archetype(required, optionals);
+
+      required.push(Late);
+      optionals.push(Late);
+
+      expect(arch.components).toStrictEqual([Req]);
+      expect(arch.optionals).toStrictEqual([Opt]);
     });
   });
 });

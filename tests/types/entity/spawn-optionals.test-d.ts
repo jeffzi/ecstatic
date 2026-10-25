@@ -1,6 +1,6 @@
 import { describe, it } from "vitest";
 
-import { archetype, createWorld, register, spawn, spawnMany } from "../../../src/index.js";
+import { archetype, createWorld, register, spawn, spawnMany } from "../../../src/ecstatic/index.js";
 import { OnFire, Position, Shield, Stunned } from "../_fixtures.js";
 
 describe("spawn optional overrides", () => {

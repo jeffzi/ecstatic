@@ -1,0 +1,116 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: return-void
+// rewrite-applies: return-value
+// rewrite-applies: return-labeled
+// rewrite-applies: return-in-finally
+// rewrite-applies: return-object-literal
+// rewrite-applies: return-function-expression
+// rewrite-applies: return-class-expression
+import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
+
+const Step = component("LadderStep", { x: 0 });
+
+/**
+ * Returns early from the callback: with no value; with a value, an object literal, a function expression, and a
+ * class expression included, whose expression still runs; from under a nested loop and a `switch`, which ends the row rather than
+ * the inner statement; and from inside `try … finally`, whose `finally` still runs.
+ *
+ * @returns What each row ran before it ended, in visit order.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Step]));
+  for (const x of [1, 2, 3]) {
+    spawn(storage, { LadderStep: { x } });
+  }
+  const trace: unknown[] = [];
+  const note = (value: unknown): unknown => {
+    trace.push(value);
+    return value;
+  };
+
+  {
+      const storage_1 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c10:LadderStep{1:x=n}|");
+      const n = storage_1.n;
+      if (n > 0) {
+          const LadderStepRecord = storage_1.LadderStep;
+          for (let i = n - 1; i >= 0; i--) {
+              if (LadderStepRecord.x[i] === 2)
+                  continue;
+              trace.push(`plain ${LadderStepRecord.x[i]}`);
+          }
+      }
+  }
+  {
+      const storage_2 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_2, "c10:LadderStep{1:x=n}|");
+      const n_1 = storage_2.n;
+      if (n_1 > 0) {
+          const LadderStepRecord_1 = storage_2.LadderStep;
+          for (let i_1 = n_1 - 1; i_1 >= 0; i_1--) {
+              if (LadderStepRecord_1.x[i_1] === 1) {
+                  ({ at: note(LadderStepRecord_1.x[i_1]), twice: note(LadderStepRecord_1.x[i_1] * 2) });
+                  continue;
+              }
+              if (LadderStepRecord_1.x[i_1] === 2) {
+                  (function () {
+                      trace.push("never");
+                  });
+                  continue;
+              }
+              if (LadderStepRecord_1.x[i_1] === 3) {
+                  (class {
+                      static {
+                          trace.push(`class ${LadderStepRecord_1.x[i_1]}`);
+                      }
+                  });
+                  continue;
+              }
+              note(LadderStepRecord_1.x[i_1] * 10);
+              continue;
+          }
+      }
+  }
+  // fallow-ignore-next-line complexity -- the callback packs the forms under test into one body
+  {
+      const storage_3 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_3, "c10:LadderStep{1:x=n}|");
+      const n_2 = storage_3.n;
+      if (n_2 > 0) {
+          const LadderStepRecord_2 = storage_3.LadderStep;
+          row: for (let i_2 = n_2 - 1; i_2 >= 0; i_2--) {
+              for (let k = 0; k < 3; k++) {
+                  if (k === 1 && LadderStepRecord_2.x[i_2] === 2)
+                      continue row;
+                  trace.push(`${LadderStepRecord_2.x[i_2]}:${k}`);
+              }
+              switch (LadderStepRecord_2.x[i_2]) {
+                  case 3: continue row;
+                  default: trace.push(`${LadderStepRecord_2.x[i_2]}:end`);
+              }
+              trace.push(`${LadderStepRecord_2.x[i_2]}:after`);
+          }
+      }
+  }
+  {
+      const storage_4 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_4, "c10:LadderStep{1:x=n}|");
+      const n_3 = storage_4.n;
+      if (n_3 > 0) {
+          const LadderStepRecord_3 = storage_4.LadderStep;
+          for (let i_3 = n_3 - 1; i_3 >= 0; i_3--) {
+              try {
+                  if (LadderStepRecord_3.x[i_3] === 2)
+                      continue;
+                  trace.push(`try ${LadderStepRecord_3.x[i_3]}`);
+              }
+              finally {
+                  trace.push(`finally ${LadderStepRecord_3.x[i_3]}`);
+              }
+              trace.push(`after ${LadderStepRecord_3.x[i_3]}`);
+          }
+      }
+  }
+
+  return trace;
+}

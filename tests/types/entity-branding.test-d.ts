@@ -10,7 +10,7 @@ import {
   spawn,
   spawnMany,
   type With,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 import { Health, Position, Shield } from "./_fixtures.js";
 
 declare const plainId: EntityId;

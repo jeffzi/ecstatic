@@ -15,7 +15,8 @@
     "url": "git+https://github.com/jeffzi/ecstatic.git"
   },
   "files": [
-    "dist"
+    "dist",
+    "src/ecstatic"
   ],
   "type": "module",
   "main": "dist/index.js",
@@ -24,15 +25,24 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "default": "./dist/internal.js"
+    },
+    "./vite": {
+      "types": "./dist/plugin/vite.d.ts",
+      "default": "./dist/plugin/vite.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.build-plugin.json",
     "check": "lefthook run check && npm run check:type && npm run check:version && npm run check:alloc",
     "check:alloc": "npm run -s build && tsx --expose-gc benchmarks/alloc/gate.ts",
+    "check:mutation": "stryker run stryker.config.ts",
     "check:package": "npm run build && publint --strict && attw --pack . --profile esm-only",
     "check:security": "fallow security",
-    "check:type": "tsc -p tsconfig.build.json --noEmit && tsc -p examples/tsconfig.json --noEmit && tsc -p benchmarks/tsconfig.json --noEmit",
+    "check:type": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.build-plugin.json --noEmit && tsc -p examples/tsconfig.json --noEmit && tsc -p benchmarks/tsconfig.json --noEmit",
     "check:version": "tsx scripts/sync-version.ts --check",
     "examples": "npm run build && tsx examples/basics.ts && tsx examples/iteration.ts && tsx examples/component-sets.ts && tsx examples/relationships.ts && tsx examples/resources.ts && tsx examples/game-loop.ts && tsx examples/optionals.ts",
     "fix": "lefthook run check --command lint --command md --command fmt && fallow fix --yes --no-create-config",
@@ -40,12 +50,15 @@
     "prepublishOnly": "npm test && npm run check",
     "test": "vitest run --coverage",
     "test:types": "vitest run --project types",
-    "version": "tsx scripts/sync-version.ts && git add src/version.ts"
+    "version": "tsx scripts/sync-version.ts && git add src/ecstatic/version.ts"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.0",
     "@commitlint/cli": "^21.2.0",
     "@commitlint/config-conventional": "^21.2.0",
+    "@stryker-mutator/api": "^10.0.0",
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/vitest-runner": "^10.0.0",
     "@types/node": "^26.6.0",
     "@vitest/coverage-istanbul": "^4.1.0",
     "cspell": "^10.3.0",
@@ -59,8 +72,21 @@
     "oxlint-tsgolint": "^7.0.0",
     "publint": "^0.3.0",
     "tsx": "^4.23.0",
-    "typescript": "^7.0.0",
+    "typescript": "7.1.0-dev.20261020.3",
+    "vite": "^8.3.4",
     "vitest": "^4.1.0"
+  },
+  "peerDependencies": {
+    "typescript": "7.1.0-dev.20261020.3",
+    "vite": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    }
   },
   "overrides": {
     "markdownlint-cli2": {

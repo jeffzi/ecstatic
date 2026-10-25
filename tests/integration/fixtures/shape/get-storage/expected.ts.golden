@@ -1,0 +1,31 @@
+import * as ecstatic_internal from "ecstatic/internal";
+import { createWorld, each, get, getStorage, register, spawn } from "ecstatic";
+
+import { Mover, Position } from "../../schema.js";
+
+/** Moves every row of a storage looked up with `getStorage`. */
+export function scenario(): unknown {
+  const world = createWorld();
+  const movers = register(world, Mover);
+  const ids = [
+    spawn(movers, { Position: { x: 2, y: 0 }, Velocity: { dx: 7, dy: 0 } }),
+    spawn(movers, { Position: { x: 5, y: 0 }, Velocity: { dx: -2, dy: 0 } }),
+  ];
+  const visited: number[] = [];
+
+  {
+      const storage = getStorage(world, Mover);
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage, "c8:Position{1:x=n,1:y=n}c8:Velocity{2:dx=n,2:dy=n}|");
+      const n = storage.n;
+      if (n > 0) {
+          const PositionRecord = storage.Position, VelocityRecord = storage.Velocity;
+          let value;
+          for (let i = n - 1; i >= 0; i--) {
+              visited.push(storage.entities[i]);
+              (value = PositionRecord.x[i], value = value + (VelocityRecord.dx[i]), PositionRecord.x[i] = value);
+          }
+      }
+  }
+
+  return { visited, xs: ids.map((id) => get(movers, id, Position.x)) };
+}

@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import type { EntityId } from "../../../src/index.js";
+import type { EntityId } from "../../../src/ecstatic/index.js";
 import {
   archetype,
   component,
@@ -11,7 +11,7 @@ import {
   relation,
   set,
   spawn,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 import { Position } from "../_fixtures.js";
 
 describe("get", () => {

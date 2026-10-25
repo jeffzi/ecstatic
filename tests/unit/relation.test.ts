@@ -1,18 +1,22 @@
 import { assert, describe, expect, it } from "vitest";
 
-import { archetype } from "../../src/archetype.js";
-import { component, components, isComponentDescriptor, ref } from "../../src/component.js";
-import { type EntityId, entityIndex } from "../../src/entity-id.js";
-import { get, getTarget } from "../../src/entity/access.js";
-import { alive } from "../../src/entity/common.js";
-import { despawn } from "../../src/entity/despawn.js";
-import { each } from "../../src/entity/each.js";
-import { link, unlink } from "../../src/entity/relation.js";
-import { reverseInsert, reverseRemove, sourceBucket } from "../../src/entity/reverse-map.js";
-import { spawn, spawnMany } from "../../src/entity/spawn.js";
-import { getRelationMeta, relation } from "../../src/relation.js";
-import type { World } from "../../src/world.js";
-import { createWorld, destroyWorld, register } from "../../src/world.js";
+import { archetype } from "../../src/ecstatic/archetype.js";
+import { component, components, isComponentDescriptor } from "../../src/ecstatic/component.js";
+import { type EntityId, entityIndex } from "../../src/ecstatic/entity-id.js";
+import { get, getTarget } from "../../src/ecstatic/entity/access.js";
+import { alive } from "../../src/ecstatic/entity/common.js";
+import { despawn } from "../../src/ecstatic/entity/despawn.js";
+import { each } from "../../src/ecstatic/entity/each.js";
+import { link, unlink } from "../../src/ecstatic/entity/relation.js";
+import {
+  reverseInsert,
+  reverseRemove,
+  sourceBucket,
+} from "../../src/ecstatic/entity/reverse-map.js";
+import { spawn, spawnMany } from "../../src/ecstatic/entity/spawn.js";
+import { getRelationMeta, relation } from "../../src/ecstatic/relation.js";
+import type { World } from "../../src/ecstatic/world.js";
+import { createWorld, destroyWorld, register } from "../../src/ecstatic/world.js";
 import { asMutableDescriptor, type DescriptorView, rowOf } from "./fixtures.js";
 
 /** Source entity indices currently recorded for a relation target (reverse-map view). */
@@ -277,7 +281,7 @@ describe("accessing relation targets", () => {
     expect(get(storage, entityId, Owner.target)).toBe(targetId);
   });
 
-  it("spawn errors when required relation lacks target", () => {
+  it("spawn errors when required relation lacks target #checked", () => {
     const Rel = relation("SpawnTargetGuard_Rel");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp, Rel]));
@@ -317,7 +321,7 @@ describe("accessing relation targets", () => {
     expect(sources).toContain(entityIndex(source2));
   });
 
-  it("spawn errors when required relation target is stale", () => {
+  it("spawn errors when required relation target is stale #checked", () => {
     const Link = relation("SpawnStaleTarget_Link");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp, Link]));
@@ -396,7 +400,7 @@ describe("optional relation birth-link at spawn", () => {
     expect(get(storage, entityId, OptionalDataRel.strength)).toBe(1);
   });
 
-  it("spawn with optional relation birth-link errors on stale target", () => {
+  it("spawn with optional relation birth-link errors on stale target #checked", () => {
     const OptionalStaleTarget = relation("OptionalStaleTarget");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp], [OptionalStaleTarget]));
@@ -411,7 +415,7 @@ describe("optional relation birth-link at spawn", () => {
     }).toThrow("stale target ID for relation OptionalStaleTarget");
   });
 
-  it("spawn with optional relation errors on a 0 target", () => {
+  it("spawn with optional relation errors on a 0 target #checked", () => {
     const OptionalZeroTarget = relation("OptionalZeroTarget");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp], [OptionalZeroTarget]));
@@ -555,7 +559,7 @@ const atomicCases = invalidTargets.flatMap((invalid) =>
 );
 
 describe("checked-mode birth-link validation", () => {
-  it.each(atomicCases)("rejects $name without mutating the world", (testCase) => {
+  it.each(atomicCases)("rejects $name without mutating the world #checked", (testCase) => {
     const fixture = createAtomicFixture();
     testCase.prepare(fixture);
     const { storage, world } = fixture;
@@ -575,7 +579,7 @@ describe("checked-mode birth-link validation", () => {
     expect(visitLinked(storage)).toStrictEqual([]);
   });
 
-  it("reuses the recycled slot cleanly after a rejected birth-link spawn", () => {
+  it("reuses the recycled slot cleanly after a rejected birth-link spawn #checked", () => {
     const { storage, targetStorage, world } = createAtomicFixture();
     const target = spawn(targetStorage);
     const first = spawn(storage, { BirthLinkAtomic_Rel: { target } });
@@ -781,7 +785,7 @@ describe("link and unlink", () => {
     expect(sourceIndices(world, DataRel, targetB)).toStrictEqual([entityIndex(sourceId)]);
   });
 
-  it("link errors on a stale source ID", () => {
+  it("link errors on a stale source ID #checked", () => {
     const Rel = relation("LinkSpec_StaleSource");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp], [Rel]));
@@ -795,7 +799,7 @@ describe("link and unlink", () => {
     }).toThrow("stale entity ID");
   });
 
-  it("link errors on a stale target", () => {
+  it("link errors on a stale target #checked", () => {
     const Rel = relation("LinkSpec_StaleTarget");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp], [Rel]));
@@ -855,7 +859,7 @@ describe("link and unlink", () => {
     }).toThrow("cannot unlink required relation UnlinkSpec_Required");
   });
 
-  it("unlink errors on a stale source ID", () => {
+  it("unlink errors on a stale source ID #checked", () => {
     const Rel = relation("UnlinkSpec_StaleSource");
     const world = createWorld();
     const storage = register(world, archetype([RelSpec_Comp], [Rel]));
@@ -866,116 +870,6 @@ describe("link and unlink", () => {
     expect(() => {
       unlink(world, sourceId, Rel);
     }).toThrow("stale entity ID");
-  });
-});
-
-describe("link/unlink archetype guard", () => {
-  it("link errors when relation not on archetype", () => {
-    const OnArch = relation("ArchGuard_OnArch");
-    const NotOnArch = relation("ArchGuard_NotOnArch");
-    const world = createWorld();
-    const simpleStorage = register(world, archetype([RelSpec_Comp]));
-    const storage = register(world, archetype([RelSpec_Comp, OnArch]));
-
-    const targetId = spawn(simpleStorage);
-    const entityId = spawn(storage, { ArchGuard_OnArch: { target: targetId } });
-
-    expect(() => {
-      link(world, entityId, NotOnArch, targetId);
-    }).toThrow("relation not on this entity's archetype");
-  });
-
-  it("unlink errors when relation not on archetype", () => {
-    const OnArch = relation("ArchGuard_OnArch2");
-    const NotOnArch = relation("ArchGuard_NotOnArch2");
-    const world = createWorld();
-    const simpleStorage = register(world, archetype([RelSpec_Comp]));
-    const storage = register(world, archetype([RelSpec_Comp, OnArch]));
-
-    const targetId = spawn(simpleStorage);
-    const entityId = spawn(storage, { ArchGuard_OnArch2: { target: targetId } });
-
-    expect(() => {
-      unlink(world, entityId, NotOnArch);
-    }).toThrow("relation not on this entity's archetype");
-  });
-});
-
-describe("filtered each reflects link/unlink mutations", () => {
-  it("filtered each reflects a newly linked optional relation", () => {
-    const Rel = relation("LinkMatcherCache_Rel");
-    const world = createWorld();
-    const storage = register(world, archetype([RelSpec_Comp], [Rel]));
-
-    const targetId = spawn(storage);
-    const sourceId = spawn(storage);
-
-    let matchedCountBefore = 0;
-    each(storage, { all: [Rel] }, () => {
-      matchedCountBefore += 1;
-    });
-    expect(matchedCountBefore).toBe(0);
-
-    link(world, sourceId, Rel, targetId);
-
-    let matchedCountAfter = 0;
-    each(storage, { all: [Rel] }, (e) => {
-      matchedCountAfter += 1;
-      expect(e.id).toBe(sourceId);
-    });
-    expect(matchedCountAfter).toBe(1);
-  });
-
-  it("filtered each excludes unlinked optional relation", () => {
-    const Rel = relation("UnlinkMatcherCache_Rel");
-    const world = createWorld();
-    const storage = register(world, archetype([RelSpec_Comp], [Rel]));
-
-    // Establish the relation with link() before any matcher exists — with no
-    // matchers yet, link()'s own refresh is a no-op, so this isolates unlink().
-    const targetId = spawn(storage);
-    const sourceId = spawn(storage);
-    link(world, sourceId, Rel, targetId);
-
-    let matchedCountBefore = 0;
-    each(storage, { all: [Rel] }, (e) => {
-      matchedCountBefore += 1;
-      expect(e.id).toBe(sourceId);
-    });
-    expect(matchedCountBefore).toBe(1);
-
-    unlink(world, sourceId, Rel);
-
-    let matchedCountAfter = 0;
-    each(storage, { all: [Rel] }, () => {
-      matchedCountAfter += 1;
-    });
-    expect(matchedCountAfter).toBe(0);
-  });
-});
-
-describe("link value cloning", () => {
-  it("link stores object values by reference — mutating the caller object affects stored state", () => {
-    const LinkRefTest = relation("LinkRefTest", [], {
-      config: ref<{ enabled: boolean; timeout: number }>(),
-    });
-    const world = createWorld();
-    const storage = register(world, archetype([RelSpec_Comp, LinkRefTest]));
-    const simpleStorage = register(world, archetype([RelSpec_Comp]));
-
-    const targetId = spawn(simpleStorage);
-    const sourceId = spawn(storage, { LinkRefTest: { target: targetId } });
-
-    const configObj = { enabled: true, timeout: 1000 };
-    link(world, sourceId, LinkRefTest, targetId, { config: configObj });
-    configObj.enabled = false;
-    configObj.timeout = 9999;
-
-    // Reference semantics: the stored value IS the caller's object
-    const storedConfig = get(storage, sourceId, LinkRefTest.config);
-    expect(storedConfig).toBe(configObj);
-    expect(storedConfig?.enabled).toBe(false);
-    expect(storedConfig?.timeout).toBe(9999);
   });
 });
 

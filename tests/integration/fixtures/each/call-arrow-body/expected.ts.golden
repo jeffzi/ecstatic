@@ -1,0 +1,38 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: callback-arrow
+// rewrite-applies: read-required-field
+import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
+
+const Tail = component("KiteTail", { x: 0 });
+
+/**
+ * Runs an each call that is the expression body of an arrow function, so the loop runs on every call of the arrow.
+ *
+ * @returns The values each call recorded, in visit order, with a marker between the two calls.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Tail]));
+  for (const x of [1, 2, 3]) {
+    spawn(storage, { KiteTail: { x } });
+  }
+  const seen: unknown[] = [];
+
+  const run = (): void =>
+    // oxlint-disable-next-line typescript/no-confusing-void-expression -- the each call as an arrow's expression body is the behavior under test
+    {
+        const storage_1 = storage;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c8:KiteTail{1:x=n}|");
+        const n = storage_1.n;
+        if (n > 0) {
+            const KiteTailRecord = storage_1.KiteTail;
+            for (let i = n - 1; i >= 0; i--) {
+                seen.push(KiteTailRecord.x[i]);
+            }
+        }
+    };
+  run();
+  seen.push("again");
+  run();
+
+  return seen;
+}

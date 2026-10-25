@@ -1,0 +1,43 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: callback-without-parameter
+import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
+
+const Crate = component("DockCrate", { x: 0 });
+
+/**
+ * Counts rows with a callback that takes no parameter, over an empty storage, which runs no row, then over a
+ * storage of two rows.
+ *
+ * @returns How many rows each walk ran.
+ */
+export function scenario(): unknown {
+  const empty = register(createWorld(), archetype([Crate]));
+  const full = register(createWorld(), archetype([Crate]));
+  spawn(full, { DockCrate: { x: 1 } });
+  spawn(full, { DockCrate: { x: 2 } });
+  let emptyRows = 0;
+  let fullRows = 0;
+
+  {
+      const storage = empty;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage, "c9:DockCrate{1:x=n}|");
+      const n = storage.n;
+      if (n > 0) {
+          for (let i = n - 1; i >= 0; i--) {
+              emptyRows += 1;
+          }
+      }
+  }
+  {
+      const storage_1 = full;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:DockCrate{1:x=n}|");
+      const n_1 = storage_1.n;
+      if (n_1 > 0) {
+          for (let i_1 = n_1 - 1; i_1 >= 0; i_1--) {
+              fullRows += 1;
+          }
+      }
+  }
+
+  return { emptyRows, fullRows };
+}

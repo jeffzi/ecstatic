@@ -6,8 +6,8 @@ import {
   type Resource,
   resetResource,
   setResource,
-} from "../../src/index.js";
-import { resource } from "../../src/resource.js";
+} from "../../src/ecstatic/index.js";
+import { resource } from "../../src/ecstatic/resource.js";
 
 const Score = resource("ResourceTypeTestScore", { value: 0, label: "" });
 

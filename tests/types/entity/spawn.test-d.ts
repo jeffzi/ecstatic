@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import type { SpawnOverrides, SpawnOverridesFor } from "../../../src/entity/spawn.js";
+import type { SpawnOverrides, SpawnOverridesFor } from "../../../src/ecstatic/entity/spawn.js";
 import {
   Archetype,
   archetype,
@@ -10,7 +10,7 @@ import {
   relation,
   spawn,
   type Storage,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 import { Health, Position, Stunned } from "../_fixtures.js";
 
 describe("spawn", () => {

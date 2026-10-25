@@ -1,0 +1,41 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: mode-realloc-safe
+// rewrite-applies: outer-let-dead-zone
+import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
+
+const Tick = component("ClockTick", { x: 0 });
+
+/**
+ * Reads an outer `let` in its temporal dead zone from the body, which throws at the same point as the runtime's
+ * call: after the first row's earlier statements ran.
+ *
+ * @returns What the body recorded before the read threw, the constructor name of the error, and the `let` once
+ * initialized.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Tick]));
+  for (const x of [1, 2, 3]) {
+    spawn(storage, { ClockTick: { x } });
+  }
+  const seen: unknown[] = [];
+  try {
+    {
+        const storage_1 = storage;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:ClockTick{1:x=n}|");
+        const n = storage_1.n;
+        if (n > 0) {
+            const ClockTickRecord = storage_1.ClockTick;
+            for (let i = n - 1; i >= 0; i--) {
+                seen.push(ClockTickRecord.x[i]);
+                seen.push(later);
+            }
+        }
+    }
+  } catch (error) {
+    seen.push(error instanceof Error ? error.constructor.name : typeof error);
+  }
+  let later = "late";
+  later += "!";
+
+  return { seen, later };
+}

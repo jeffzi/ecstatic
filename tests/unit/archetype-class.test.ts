@@ -10,7 +10,7 @@ import {
   getStorage,
   register,
   spawn,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 
 const { ArchClass_Position: Position } = components({ ArchClass_Position: { x: 0, y: 0 } });
 const { ArchClass_Health: Health } = components({ ArchClass_Health: { hp: 100 } });

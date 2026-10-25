@@ -1,0 +1,61 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: this
+// rewrite-applies: arguments
+// rewrite-applies: super
+// rewrite-applies: callback-typed-parameter
+import { archetype, component, createWorld, each, register, spawn, type Storage } from "ecstatic";
+
+const Page = component("ShelfPage", { x: 0 });
+const Book = archetype([Page]);
+
+/** A base class whose `name` the collector's callback reaches through `super`. */
+class Named {
+  name(): string {
+    return "base";
+  }
+}
+
+/** Collects rows from a method whose arrow callback reads `this`, `arguments`, and `super`. */
+class Collector extends Named {
+  readonly tag = "collector";
+
+  override name(): string {
+    return "collector";
+  }
+
+  /**
+   * Walks `storage` with an arrow callback whose parameter carries a type annotation.
+   *
+   * @param storage - The storage to walk.
+   * @param extra - Arguments that only count towards `arguments.length`.
+   * @returns What the callback read on each row.
+   */
+  collect(storage: Storage<typeof Book>, ...extra: number[]): unknown[] {
+    const seen: unknown[] = [];
+    {
+        const storage_1 = storage;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:ShelfPage{1:x=n}|");
+        const n = storage_1.n;
+        if (n > 0) {
+            const ShelfPageRecord = storage_1.ShelfPage;
+            for (let i = n - 1; i >= 0; i--) {
+                seen.push(this.tag, arguments.length, super.name(), extra.length, ShelfPageRecord.x[i]);
+            }
+        }
+    }
+    return seen;
+  }
+}
+
+/**
+ * Walks a storage from a method, through an annotated arrow callback that keeps the method's `this`, `arguments`,
+ * and `super`.
+ *
+ * @returns What the callback read.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), Book);
+  spawn(storage, { ShelfPage: { x: 1 } });
+  spawn(storage, { ShelfPage: { x: 2 } });
+  return new Collector().collect(storage, 7, 8);
+}

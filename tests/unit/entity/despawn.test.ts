@@ -1,7 +1,12 @@
 import { assert, describe, expect, it } from "vitest";
 
-import { entityIndex, initialEntityId, MAX_GEN, MAX_INDEX } from "../../../src/entity-id.js";
-import { ERROR_STALE_ENTITY_ID } from "../../../src/errors.js";
+import {
+  entityIndex,
+  initialEntityId,
+  MAX_GEN,
+  MAX_INDEX,
+} from "../../../src/ecstatic/entity-id.js";
+import { ERROR_STALE_ENTITY_ID } from "../../../src/ecstatic/errors.js";
 import {
   alive,
   archetype,
@@ -12,8 +17,8 @@ import {
   ref,
   spawn,
   spawnMany,
-} from "../../../src/index.js";
-import { createWorld, register } from "../../../src/world.js";
+} from "../../../src/ecstatic/index.js";
+import { createWorld, register } from "../../../src/ecstatic/world.js";
 
 const { DespawnTestPosition: Position } = components({
   DespawnTestPosition: { x: 0, y: 0 },
@@ -232,7 +237,7 @@ describe("despawn world overload", () => {
 });
 
 describe("despawn safety checks", () => {
-  it("errors under DEBUG when a live ID is despawned through the wrong storage", () => {
+  it("errors under DEBUG when a live ID is despawned through the wrong storage #checked", () => {
     const world = createWorld();
     const storage1 = register(world, archetype([Position]));
     const storage2 = register(world, archetype([Velocity]));
@@ -434,7 +439,7 @@ describe("an id whose slot is free after the generation wraps", () => {
         get(world, held, Position.x);
       },
     },
-  ])("is stale to get through the $label", ({ run }) => {
+  ])("is stale to get through the $label #checked", ({ run }) => {
     const fixture = createWrappedFreeSlot();
 
     expect(() => {

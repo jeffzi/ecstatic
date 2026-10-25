@@ -14,7 +14,7 @@ import {
   relation,
   spawn,
   unlink,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 
 const { QSSpec_Comp } = components({ QSSpec_Comp: { x: 0 } });
 

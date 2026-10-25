@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import { createWorld, type EntityId, query } from "../../src/index.js";
+import { createWorld, type EntityId, query } from "../../src/ecstatic/index.js";
 import { Position, Shield, Stunned } from "./_fixtures.js";
 
 describe("query typing", () => {

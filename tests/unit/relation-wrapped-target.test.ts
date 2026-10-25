@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { archetype } from "../../src/archetype.js";
-import { components } from "../../src/component.js";
-import { type EntityId, MAX_GEN } from "../../src/entity-id.js";
-import { getTarget } from "../../src/entity/access.js";
-import { despawn } from "../../src/entity/despawn.js";
-import { link } from "../../src/entity/relation.js";
-import { spawn } from "../../src/entity/spawn.js";
-import { countSources, hasSources } from "../../src/index.js";
-import { relation } from "../../src/relation.js";
-import type { World } from "../../src/world.js";
-import { createWorld, register } from "../../src/world.js";
+import { archetype } from "../../src/ecstatic/archetype.js";
+import { components } from "../../src/ecstatic/component.js";
+import { type EntityId, MAX_GEN } from "../../src/ecstatic/entity-id.js";
+import { getTarget } from "../../src/ecstatic/entity/access.js";
+import { despawn } from "../../src/ecstatic/entity/despawn.js";
+import { link } from "../../src/ecstatic/entity/relation.js";
+import { spawn } from "../../src/ecstatic/entity/spawn.js";
+import { countSources, hasSources } from "../../src/ecstatic/index.js";
+import { relation } from "../../src/ecstatic/relation.js";
+import type { World } from "../../src/ecstatic/world.js";
+import { createWorld, register } from "../../src/ecstatic/world.js";
 
 const { WrapSpec_Comp } = components({ WrapSpec_Comp: { x: 0, y: 0 } });
 const WrapSpec_Rel = relation("WrapSpec_Rel");
@@ -46,7 +46,7 @@ function attemptLink(world: World, source: EntityId, target: EntityId): void {
 }
 
 describe("a dead id whose slot is free after the generation wraps", () => {
-  it("is a stale link target", () => {
+  it("is a stale link target #checked", () => {
     const { held, source, world } = createWrappedFreeTarget();
 
     expect(() => {
@@ -63,7 +63,7 @@ describe("a dead id whose slot is free after the generation wraps", () => {
     expect(countSources(world, WrapSpec_Rel, held)).toBe(0);
   });
 
-  it("leaves no sources for the slot's next occupant after a rejected link", () => {
+  it("leaves no sources for the slot's next occupant after a rejected link #checked", () => {
     const { held, source, storage, world } = createWrappedFreeTarget();
     attemptLink(world, source, held);
 

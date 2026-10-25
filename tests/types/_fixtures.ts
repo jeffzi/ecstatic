@@ -1,4 +1,4 @@
-import { components, ref } from "../../src/index.js";
+import { components, ref } from "../../src/ecstatic/index.js";
 
 /** Shared fixtures for type tests. Never executed — type-checked only. */
 export const { Position, Velocity, Health, Shield, Stunned, OnFire, Payload } = components({

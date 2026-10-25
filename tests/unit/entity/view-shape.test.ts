@@ -3,6 +3,7 @@ import { runInThisContext } from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
+import type { EachViewOf } from "../../../src/ecstatic/entity/each.js";
 import {
   archetype,
   components,
@@ -11,7 +12,7 @@ import {
   query,
   register,
   spawn,
-} from "../../../src/index.js";
+} from "../../../src/ecstatic/index.js";
 
 // Every field in this file is a plain number (one column array kind), so the
 // accessors' element loads stay monomorphic and only the column lookup can
@@ -193,13 +194,15 @@ describe("view shape — field access independent of unrelated objects", () => {
       records.add(e.ShapeWide).add(e.ShapePair);
     });
     const accessors = [...records].flatMap(accessorFunctions);
+    // A callback held in a variable keeps the runtime call, so the accessors under test run.
+    const cb = (e: EachViewOf<typeof storage>): void => {
+      e.ShapeWide.a +=
+        e.ShapeWide.b + e.ShapeWide.c + e.ShapeWide.d + e.ShapeWide.e + (keep["j"] ?? 0);
+      e.ShapePair.a += e.ShapePair.b;
+    };
 
     for (let pass = 0; pass < 200; pass++) {
-      each(storage, (e) => {
-        e.ShapeWide.a +=
-          e.ShapeWide.b + e.ShapeWide.c + e.ShapeWide.d + e.ShapeWide.e + (keep["j"] ?? 0);
-        e.ShapePair.a += e.ShapePair.b;
-      });
+      each(storage, cb);
     }
 
     // Seven fields (five on Wide, two on Pair), each with a getter and a setter.

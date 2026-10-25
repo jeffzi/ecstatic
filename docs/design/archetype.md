@@ -373,9 +373,9 @@ each(storage, [filter], fn) or each([storages], [filter], fn)
 The view is a reused object per archetype with generated accessors over the columns — no per-entity
 allocation, and property access stays monomorphic. Each archetype keeps one view per nesting depth,
 so nested `each` over the same archetype rebinds distinct views (a pairwise pass reads two different
-rows through two views). A future build-time transform could replace an `each` call with an inlined
-direct-column loop, but the design never depends on it: the untransformed path is fully correct and
-is the performance floor.
+rows through two views). A future build-time optimizer could replace an `each` call with an inlined
+direct-column loop, but the design never depends on it: the unoptimized path is fully correct and is
+the performance floor.
 
 Iteration runs **backward** (n−1 down to 0) so despawning the current entity during iteration is
 safe: swap-and-pop only moves the last row (already visited) into the hole.

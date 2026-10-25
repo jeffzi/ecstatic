@@ -1,5 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
 
+import type { ComponentDescriptor } from "../../src/ecstatic/archetype.js";
 import {
   Archetype,
   type ComponentsOf,
@@ -11,7 +12,7 @@ import {
   spawn,
   type Storage,
   type With,
-} from "../../src/index.js";
+} from "../../src/ecstatic/index.js";
 import { Health, Position, Shield, Stunned, Velocity } from "./_fixtures.js";
 
 class Ship extends Archetype([Position, Health], [Shield, Stunned]) {}
@@ -106,6 +107,16 @@ describe("component-list statics on an archetype class", () => {
 
   it("types the optional component tuple", () => {
     expectTypeOf(Ship.optionals).toEqualTypeOf<readonly [typeof Shield, typeof Stunned]>();
+  });
+
+  it("types read-only lists when built from mutable array variables", () => {
+    const required: ComponentDescriptor[] = [Position];
+    const optionals: ComponentDescriptor[] = [Shield];
+
+    class Hull extends Archetype(required, optionals) {}
+
+    expectTypeOf(Hull.components).toEqualTypeOf<readonly ComponentDescriptor[]>();
+    expectTypeOf(Hull.optionals).toEqualTypeOf<readonly ComponentDescriptor[]>();
   });
 });
 

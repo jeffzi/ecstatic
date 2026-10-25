@@ -1,5 +1,6 @@
 import { assert, describe, expect, it } from "vitest";
 
+import { errorMessage } from "../../scripts/caught.js";
 import {
   component,
   createWorld,
@@ -7,15 +8,15 @@ import {
   getResource,
   resetResource,
   setResource,
-} from "../../src/index.js";
-import { getResourceMeta, resource } from "../../src/resource.js";
+} from "../../src/ecstatic/index.js";
+import { getResourceMeta, resource } from "../../src/ecstatic/resource.js";
 
 /** Message of the error `fn` throws; throws itself when `fn` completes. */
 function messageOfThrow(fn: () => unknown): string {
   try {
     fn();
   } catch (error) {
-    return error instanceof Error ? error.message : String(error);
+    return errorMessage(error);
   }
   throw new Error("expected the call to throw, but it returned");
 }

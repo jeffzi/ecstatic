@@ -1,0 +1,73 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: mode-realloc-safe
+// rewrite-applies: write-required-field
+// rewrite-applies: write-optional-field
+// rewrite-applies: write-boolean-field
+// rewrite-applies: update-field
+import {
+  archetype,
+  component,
+  createWorld,
+  each,
+  get,
+  has,
+  register,
+  spawn,
+  spawnMany,
+} from "ecstatic";
+
+const Spot = component("SwarmSpot", { x: 0, y: 0 });
+const Wing = component("SwarmWing", { beat: false });
+const Sting = component("SwarmSting", { hp: 0 });
+
+/**
+ * Spawns into the iterated storage past its capacity, which replaces its columns: directly in the body, and inside
+ * the right-hand side of plain, compound, and logical field writes, optional and boolean fields included. Every
+ * write lands in the columns growth put in place, and the spawned rows are never visited.
+ *
+ * @returns The rows visited, each original row's fields after the loop, and how many rows the storage holds.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), archetype([Spot, Wing], [Sting]));
+  const ids = [
+    spawn(storage, { SwarmSpot: { x: 1, y: 0 }, SwarmSting: { hp: 2 } }),
+    spawn(storage, { SwarmSpot: { x: 2, y: 0 } }),
+  ];
+  const visited: number[] = [];
+  const grow = (value: number): number => {
+    spawnMany(storage, 20);
+    return value;
+  };
+
+  {
+      const storage_1 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:SwarmSpot{1:x=n,1:y=n}c9:SwarmWing{4:beat=b}|c10:SwarmSting{2:hp=n}");
+      const n_1 = storage_1.n;
+      if (n_1 > 0) {
+          const SwarmSpotRecord = storage_1.SwarmSpot, SwarmWingRecord = storage_1.SwarmWing, SwarmStingRecord = storage_1.SwarmSting;
+          let value_1, value_2, value_3, value_4, present, value_5;
+          for (let i = n_1 - 1; i >= 0; i--) {
+              visited.push(ids.indexOf(storage_1.entities[i]));
+              (value_1 = grow(SwarmSpotRecord.x[i] * 10), SwarmSpotRecord.x[i] = value_1);
+              (value_2 = SwarmSpotRecord.x[i], value_2 = value_2 + (grow(5)), SwarmSpotRecord.x[i] = value_2);
+              (value_3 = SwarmSpotRecord.y[i]) || (value_3 = grow(SwarmSpotRecord.x[i] + 1), SwarmSpotRecord.y[i] = value_3);
+              (SwarmWingRecord.beat[i] !== 0) || (value_4 = grow(1) > 0, SwarmWingRecord.beat[i] = (value_4 === true ? 1 : 0));
+              if (((storage_1.mask[i] & 1) !== 0))
+                  (present = ((storage_1.mask[i] & 1) !== 0), value_5 = (present ? SwarmStingRecord.hp : void 0)[i], value_5 = value_5 + (grow(3)), (present ? SwarmStingRecord.hp : void 0)[i] = value_5);
+              grow(0);
+              SwarmSpotRecord.y[i]++;
+          }
+      }
+  }
+
+  return {
+    visited,
+    fields: ids.map((id) => [
+      get(storage, id, Spot.x),
+      get(storage, id, Spot.y),
+      get(storage, id, Wing.beat),
+      has(storage, id, Sting) ? get(storage, id, Sting.hp) : -1,
+    ]),
+    rows: storage.n,
+  };
+}
