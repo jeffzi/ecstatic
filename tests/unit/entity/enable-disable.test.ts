@@ -1,6 +1,7 @@
 import { assert, describe, expect, it } from "vitest";
 
 import {
+  type EntityId,
   alive,
   archetype,
   components,
@@ -10,10 +11,12 @@ import {
   disableMany,
   enable,
   enableMany,
+  get,
   ref,
   register,
   relation,
   spawn,
+  spawnMany,
 } from "../../../src/ecstatic/index.js";
 import { rowOf } from "../fixtures.js";
 
@@ -366,6 +369,63 @@ describe("enable record boolean values", () => {
     const row = rowOf(storage, id);
     expect(storage.mask[row]).toBe(0);
     expect(storage.columns.get(Shield)?.["hp"]?.[row]).toBe(50);
+  });
+});
+
+describe("enable values reads", () => {
+  type ShieldStorage = ReturnType<typeof createShieldStorage>["storage"];
+  type ShieldValues = { hp?: number; defense?: number };
+
+  const forms: {
+    form: string;
+    apply: (storage: ShieldStorage, id: EntityId, values: ShieldValues) => void;
+  }[] = [
+    {
+      form: "component form",
+      apply: (storage, id, values) => {
+        enable(storage, id, Shield, values);
+      },
+    },
+    {
+      form: "record form",
+      apply: (storage, id, values) => {
+        enable(storage, id, { EnDisShield: values });
+      },
+    },
+  ];
+
+  it.each(forms)(
+    "$form writes a getter value that grows the storage, reading it once",
+    ({ apply }) => {
+      const { storage } = createShieldStorage();
+      const id = spawn(storage);
+      let reads = 0;
+      const values = {
+        get hp(): number {
+          reads += 1;
+          spawnMany(storage, 16);
+          return 75;
+        },
+      };
+
+      apply(storage, id, values);
+
+      expect(get(storage, id, Shield.hp)).toBe(75);
+      expect(reads).toBe(1);
+    },
+  );
+
+  it.each(forms)("$form keeps the current value of an absent or undefined field", ({ apply }) => {
+    const { storage } = createShieldStorage();
+    const id = spawn(storage);
+    enable(storage, id, Shield, { hp: 75, defense: 5 });
+    disable(storage, id, Shield);
+
+    // @ts-expect-error the types reject an explicit undefined; JavaScript callers can still pass one
+    apply(storage, id, { hp: undefined });
+
+    expect(get(storage, id, Shield.hp)).toBe(75);
+    expect(get(storage, id, Shield.defense)).toBe(5);
   });
 });
 

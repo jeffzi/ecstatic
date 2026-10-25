@@ -6,6 +6,7 @@ import {
   components,
   despawn,
   despawnMany,
+  type EntityId,
   get,
   getSources,
   relation,
@@ -243,5 +244,26 @@ describe("spawn mixing optional relations with plain optionals", () => {
 
     expect(getSources(world, Owner, target)).toStrictEqual(ids);
     expect(ids.map((id) => get(storage, id, Owner.target))).toStrictEqual([target, target, target]);
+  });
+
+  it("birth-links to the target its override held on the single read of `target`", () => {
+    const Owner = relation("SpawnOptRelation_ReadOnceOwner");
+    const world = createWorld();
+    const storage = register(world, archetype([Position], [Owner]));
+    const target = spawn(register(world, archetype([Position])));
+    let reads = 0;
+    const override = {
+      get target(): EntityId {
+        reads += 1;
+        // @ts-expect-error the types reject an undefined target; the getter returns one after its first read to catch a second read
+        return reads === 1 ? target : undefined;
+      },
+    };
+
+    const id = spawn(storage, { SpawnOptRelation_ReadOnceOwner: override });
+
+    expect(get(storage, id, Owner.target)).toBe(target);
+    expect(getSources(world, Owner, target)).toStrictEqual([id]);
+    expect(reads).toBe(1);
   });
 });

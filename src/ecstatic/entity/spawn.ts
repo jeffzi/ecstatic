@@ -4,7 +4,6 @@
 
 import type { ArchetypeDescriptor, ComponentsOf, OptionalsOf } from "../archetype.js";
 import type { ComponentDescriptor, ComponentFields, ComponentName } from "../component.js";
-import { DEBUG } from "../debug.js";
 import type { EntityId, With } from "../entity-id.js";
 import {
   assertEntityIndex,
@@ -19,10 +18,9 @@ import { getRelationMeta } from "../relation.js";
 import { syncColumnCaches } from "../world.js";
 import type { SoAColumns, Storage, TypedArray, WorldState } from "../world.js";
 import {
-  assertRelationTargets,
-  insertOptionalRelationEntries,
   insertRequiredRelationEntries,
-  writeBirthTargets,
+  linkOptionalRelations,
+  readBirthTargets,
 } from "./spawn-link.js";
 
 // ---------------------------------------------------------------------------
@@ -151,6 +149,9 @@ export type SpawnOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescript
  * Atomic in checked mode: a relation birth-link target that is missing, 0, or
  * stale is rejected before any allocation, so the world is left untouched.
  *
+ * An optional relation override's `target` is read exactly once: the entity
+ * links to the value that was validated, even through a getter.
+ *
  * @param storage - Archetype storage the entity joins. This form accepts only archetypes without
  *   a required relation, since omitted overrides cannot supply the mandatory birth-link target;
  *   the overload with mandatory overrides accepts any storage.
@@ -162,6 +163,7 @@ export type SpawnOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescript
  * @throws If the world is out of entity indices
  * @throws If an override sets a required component to `false`
  * @throws (checked mode) If a relation birth-link target is missing, 0, or stale
+ * @throws Whatever a getter on `overrides` throws
  */
 export function spawn<A extends ArchetypeDescriptor>(
   storage: WithoutRequiredRelations<A>,
@@ -174,8 +176,8 @@ export function spawn<A extends ArchetypeDescriptor>(
 export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   const state = storage.world;
 
-  if (DEBUG && storage.relationN > 0) {
-    assertRelationTargets(storage, overrides);
+  if (storage.relationN > 0) {
+    readBirthTargets(storage, overrides);
   }
 
   const index = allocateOneIndex(state);
@@ -200,10 +202,14 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   state.sparse[index] = di;
   state.entityArch[index] = storage;
 
-  initComponentFields(storage, di, 1, overrides);
   if (storage.hasOptionalData) {
     writeOptionalDefaults(storage, di, 1);
   }
+  // Before any override getter runs: `readBirthTargets` holds slots until this call.
+  if (storage.relationN > 0) {
+    linkOptionalRelations(storage, di, 1);
+  }
+  initComponentFields(storage, di, 1, overrides);
   const spawnMask = applyOptionalOverrides(storage, di, 1, overrides);
   storage.mask[di] = spawnMask;
   // Unconditional refresh: a recycled row holds the previous occupant's
@@ -478,16 +484,19 @@ function writeOptionalDefaults(storage: Storage, denseStart: number, count: numb
  * Iterates the archetype's optionals, so unknown override keys are silently ignored (the types
  * reject them) — unlike `enable`, whose record form throws on unknown names at runtime.
  *
+ * An optional relation's `target` is not read here: `linkOptionalRelations` already linked the
+ * rows to the target `readBirthTargets` read once, and this sets the presence bit and patches
+ * the data fields.
+ *
  * @param storage - Storage whose optional columns are patched and whose `optionalBitLookup`
  *   supplies each enabled component's bit.
  * @param denseStart - First dense row of the run.
- * @param count - Number of consecutive rows that receive the same patches and birth links; the
- *   run must end at `storage.n`, which is where birth-linking stops.
+ * @param count - Number of consecutive rows that receive the same patches.
  * @param overrides - Spawn overrides keyed by component name; `undefined` short-circuits to an
- *   empty mask with no column writes. An optional relation record carrying a `target` also
- *   birth-links every row in the run.
+ *   empty mask with no column writes.
  * @returns The OR of the presence bits of every enabled optional — the mask every row in the
  *   run should carry; the caller writes it to `storage.mask`, this function does not.
+ * @throws Whatever a getter on `overrides` throws; the patches before it are already written.
  */
 // Spawn hot path: the override grammar's per-kind continues and the
 // column-major field loops stay fused in one function so a batch pays one
@@ -533,14 +542,6 @@ function applyOptionalOverrides(
         col[denseStart + i] = override;
       }
     }
-
-    // Optional relation birth-link: presence bit is already set above and
-    // data fields patched (the synthetic target column is not in
-    // __ecstatic_fields); write the target and record the reverse entries.
-    if (getRelationMeta(comp) !== undefined && raw["target"] !== undefined) {
-      const target = writeBirthTargets(soa, raw["target"], denseStart, count);
-      insertOptionalRelationEntries(storage, comp, target, denseStart);
-    }
   }
   return bits;
 }
@@ -584,7 +585,9 @@ function refreshBatchMatchers(storage: Storage, start: number, count: number, ma
  * allocator and the field initializers below, which a separately compiled loop measured slower.
  *
  * @param storage - Storage whose rows `[n - count, n)` are filled; `storage.n` must already have
- *   been advanced past the batch and the arrays grown to hold it.
+ *   been advanced past the batch and the arrays grown to hold it. When the storage has relations,
+ *   `readBirthTargets` must already have run for this batch: the rows link to the targets it
+ *   read once, and this call releases the slots it reserved.
  * @param count - Number of entities to allocate and fill; `assertBatchCapacity` must have passed
  *   for this count so no allocation overflows.
  * @param overrides - Spawn overrides applied identically to every row; `undefined` means
@@ -595,6 +598,7 @@ function refreshBatchMatchers(storage: Storage, start: number, count: number, ma
  *   place), then the length is set to `count` to trim any tail left by a longer buffer.
  * @throws If an override sets a required component to `false`.
  * @throws If a fresh index reaches `MAX_INDEX` — unreachable once `assertBatchCapacity` passed.
+ * @throws Whatever a getter on `overrides` throws.
  */
 function fillBatch(
   storage: Storage,
@@ -627,10 +631,14 @@ function fillBatch(
   }
   out.length = count;
 
-  initComponentFields(storage, denseStart, count, overrides);
   if (storage.hasOptionalData) {
     writeOptionalDefaults(storage, denseStart, count);
   }
+  // Before any override getter runs: `readBirthTargets` holds slots until this call.
+  if (storage.relationN > 0) {
+    linkOptionalRelations(storage, denseStart, count);
+  }
+  initComponentFields(storage, denseStart, count, overrides);
   const optionalBits = applyOptionalOverrides(storage, denseStart, count, overrides);
   if (optionalBits !== 0) {
     for (let i = 0; i < count; i++) {
@@ -655,10 +663,17 @@ function fillBatch(
  * Atomic: no mutation occurs if allocation would overflow MAX_INDEX, or if
  * checked mode rejects a relation birth-link target.
  *
+ * An optional relation override's `target` is read exactly once for the whole
+ * batch: every entity links to the value that was validated, even through a
+ * getter.
+ *
  * @param storage - Archetype storage the entities join. This form takes no overrides, so it
  *   accepts only archetypes without a required relation (nothing could supply the mandatory
  *   birth-link target); the overrides forms accept any storage.
  * @param count - Number of entities to spawn; `0` allocates nothing and returns `out` emptied.
+ * @param overrides - Per-component values applied identically to every row, keyed by component
+ *   name; omitted means defaults everywhere with no optional enabled. An optional relation's
+ *   `target` is read once for the whole batch.
  * @param out - Caller-owned buffer that receives the ids: written from index 0, grown in place
  *   when shorter than `count`, then truncated so `out.length === count`. An array in this third
  *   position selects this overload; the overrides forms take the buffer as an optional fourth
@@ -666,7 +681,9 @@ function fillBatch(
  * @returns `out` itself, holding the ids in allocation order (recycled freelist slots first,
  *   then fresh indices), each branded with the storage's archetype.
  * @throws If the batch would exceed entity index capacity
+ * @throws If an override sets a required component to `false`
  * @throws (checked mode) If a relation birth-link target is missing, 0, or stale
+ * @throws Whatever a getter on the overrides throws
  */
 export function spawnMany<A extends ArchetypeDescriptor>(
   storage: WithoutRequiredRelations<A>,
@@ -707,8 +724,8 @@ export function spawnMany(
 
   assertBatchCapacity(state, count);
 
-  if (DEBUG && storage.relationN > 0) {
-    assertRelationTargets(storage, overrides);
+  if (storage.relationN > 0) {
+    readBirthTargets(storage, overrides);
   }
 
   // Grow storage arrays for dense rows in one shot (after we know count)

@@ -17,6 +17,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reject `__proto__` as a component name in `archetype()` and `Archetype()`, alongside the other
   names reserved on archetypes
 
+### Fixed
+
+- Run a getter in a values record once in `enable`, `enableMany`, `link`, and `setResource`, and
+  read an optional relation's `target` once in `spawn` and `spawnMany`, so a getter that returns a
+  different value on a second read no longer loses its write
+- Keep a field value whose getter grows the storage (by spawning into it) in `enable`, `enableMany`,
+  and `link`; the write used to land in the replaced column and the field read its default
+
 ## [0.5.0] - 2026-10-16
 
 ### Added

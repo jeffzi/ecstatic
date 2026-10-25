@@ -1,25 +1,43 @@
 /**
- * Relation birth-link helpers for spawn: validate relation targets before
- * allocation and record reverse-map entries after the row is committed.
+ * Relation birth-link helpers for spawn: read and validate relation targets
+ * before allocation and link the rows after they are committed.
  *
  * Every function here is internal to the spawn path and not part of the
  * public API.
  */
 
 import type { ComponentDescriptor } from "../component.js";
+import { DEBUG } from "../debug.js";
 import { entityIndex } from "../entity-id.js";
 import {
   errorOptionalRelationTarget,
   errorRequiredRelationTarget,
   errorStaleTarget,
 } from "../errors.js";
-import type { SoAColumns, Storage, WorldState } from "../world.js";
+import type { Storage, WorldState } from "../world.js";
 import { reverseInsert } from "./reverse-map.js";
 import type { SpawnOverrides } from "./spawn.js";
 
 /**
- * Validate every relation birth-link target in `overrides` before a row exists
- * (DEBUG-gated at the call sites).
+ * Optional-relation birth-link targets held between {@link readBirthTargets}
+ * and {@link linkOptionalRelations}; 0 means "leave unlinked". A stack: each
+ * read reserves `relationN` slots above `birthTop`, so a getter that spawns
+ * while its caller's overrides are being read takes the slots above the
+ * caller's and never overwrites them. Reused across spawns, so the hot path
+ * allocates nothing once it has reached its deepest nesting.
+ */
+const birthTargets: number[] = [];
+let birthTop = 0;
+
+/**
+ * Read every relation birth-link target in `overrides` before a row exists,
+ * validating each in checked mode, and hold the optional relations' targets
+ * for {@link linkOptionalRelations}.
+ *
+ * Each optional relation's `target` is read exactly once per spawn: the value
+ * validated here is the value linked, so a getter cannot pass validation with
+ * one entity and link another. Under NDEBUG the required relations are not
+ * read here; `initComponentFields` reads their targets.
  *
  * Running ahead of allocation is what makes a rejected checked-mode spawn
  * atomic. The write path commits `storage.n`, `entityArch`, the presence mask,
@@ -31,40 +49,85 @@ import type { SpawnOverrides } from "./spawn.js";
  * `relationDescriptors` lists required relations before optionals, so errors
  * surface in archetype declaration order.
  *
+ * Every call must be paired with one {@link linkOptionalRelations} on the same
+ * storage, with no user code run between the two: the pair pushes and pops
+ * `relationN` slots. A throw from here releases the slots before propagating.
+ *
  * @param storage - Storage being spawned into; its `relationDescriptors`
- *   drive the checks, so a storage with no relations is a no-op.
+ *   drive the reads, and a storage with no relations reserves nothing.
  * @param overrides - The spawn's per-component override record, or
  *   `undefined` for a default spawn; each relation is read by name.
- * @throws If a required relation's override has no `target`, or names the 0
- *   sentinel.
- * @throws If an optional relation's override names the 0 sentinel as target.
- * @throws If a relation's target is not alive in the storage's world.
+ * @throws (checked mode) If a required relation's override has no `target`,
+ *   or names the 0 sentinel.
+ * @throws (checked mode) If an optional relation's override names the 0
+ *   sentinel as target.
+ * @throws (checked mode) If a relation's target is not alive in the storage's
+ *   world.
+ * @throws Whatever a getter on `overrides` or on a relation override throws.
  */
-export function assertRelationTargets(
-  storage: Storage,
-  overrides: SpawnOverrides | undefined,
-): void {
+export function readBirthTargets(storage: Storage, overrides: SpawnOverrides | undefined): void {
+  const base = birthTop;
   const relN = storage.relationN;
-  for (let ri = 0; ri < relN; ri++) {
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- ri < relN ≤ relationDescriptors.length
-    const name = storage.relationDescriptors[ri]!.__ecstatic_name;
-    const optional = storage.relationOptionalBits[ri] !== 0;
-    assertRelationTarget(storage.world, name, optional, overrides?.[name]);
+  birthTop = base + relN;
+  try {
+    for (let ri = 0; ri < relN; ri++) {
+      birthTargets[base + ri] = readBirthTarget(storage, ri, overrides);
+    }
+  } catch (error) {
+    birthTop = base;
+    throw error;
   }
 }
 
 /**
- * Validate one relation's spawn override value against the birth-link grammar.
+ * Read one relation's birth-link target, validating it in checked mode.
+ *
+ * @param storage - Storage being spawned into.
+ * @param ri - Index of the relation in `relationDescriptors`.
+ * @param overrides - The spawn's per-component override record, or
+ *   `undefined` for a default spawn.
+ * @returns The optional relation's target entity id, read once from its
+ *   override; 0 when it stays unlinked and for every required relation.
+ * @throws (checked mode) If the target breaks the birth-link grammar; see
+ *   {@link assertRelationTarget}.
+ * @throws Whatever a getter on `overrides` or on the relation override throws.
+ */
+function readBirthTarget(
+  storage: Storage,
+  ri: number,
+  overrides: SpawnOverrides | undefined,
+): number {
+  const optional = storage.relationOptionalBits[ri] !== 0;
+  if (!DEBUG && !optional) {
+    return 0;
+  }
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- ri < relN ≤ relationDescriptors.length
+  const name = storage.relationDescriptors[ri]!.__ecstatic_name;
+  const raw = overrides?.[name];
+  // `false` on an optional relation means "stay unlinked"; on a required one
+  // resolveRequiredOverride owns the "cannot be disabled" error.
+  if (raw === false) {
+    return 0;
+  }
+  const rawTarget = raw === undefined || raw === true ? undefined : raw["target"];
+  if (DEBUG) {
+    assertRelationTarget(storage.world, name, optional, rawTarget);
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- override targets are EntityIds (branded numbers)
+  return optional && rawTarget !== undefined ? (rawTarget as number) : 0;
+}
+
+/**
+ * Validate one relation's birth-link target against the birth-link grammar.
  *
  * @param state - World whose generation table decides target liveness.
  * @param name - Relation name, used only in error messages.
  * @param optional - Whether the relation is optional on the archetype; an
  *   optional relation may omit the birth link, a required one must name a
  *   target.
- * @param raw - The relation's override as the caller wrote it: `undefined`
- *   or `true` (no birth link), `false` (stay unlinked; a required relation's
- *   rejection is owned by `resolveRequiredOverride`), or a record whose
- *   `target` is the link target.
+ * @param rawTarget - The `target` already read from the relation's override
+ *   record; `undefined` when the override is absent, `true`, or a record
+ *   without a `target`.
  * @throws If a required relation has no target.
  * @throws If the target is the 0 sentinel.
  * @throws If the target id's generation does not match the world's, i.e. the
@@ -74,15 +137,8 @@ function assertRelationTarget(
   state: WorldState,
   name: string,
   optional: boolean,
-  raw: Record<string, unknown> | boolean | undefined,
+  rawTarget: unknown,
 ): void {
-  // `false` on an optional relation means "stay unlinked"; on a required one
-  // resolveRequiredOverride owns the "cannot be disabled" error.
-  if (raw === false) {
-    return;
-  }
-
-  const rawTarget = raw === undefined || raw === true ? undefined : raw["target"];
   if (rawTarget === undefined) {
     if (optional) {
       return;
@@ -103,70 +159,41 @@ function assertRelationTarget(
 }
 
 /**
- * Write an optional relation's birth-link target into the target column for a
- * run of freshly spawned rows. Targets are pre-validated by
- * `assertRelationTargets`, so this write path never throws — see that function
- * before adding a check here.
+ * Birth-link a run of freshly spawned rows to the optional-relation targets
+ * {@link readBirthTargets} held for this spawn, and release their slots.
  *
- * @param soa - The relation's column record on the storage; only its `target`
- *   column is written.
- * @param rawTarget - Target entity id from the override; 0 (reachable only
- *   under NDEBUG, where it is unvalidated) writes nothing, leaving the sentinel
- *   in place so the rows spawn unlinked.
+ * Writes each linked relation's target column and records its reverse-map
+ * entries. Targets were validated when they were read, so this write path
+ * never throws — see {@link readBirthTargets} before adding a check here. A
+ * held 0 (an unlinked relation, or under NDEBUG an unvalidated 0 target)
+ * writes nothing, leaving the sentinel `writeOptionalDefaults` put in place.
+ *
+ * @param storage - Storage the rows were spawned into; every row in the run
+ *   must already hold its entity id, and `writeOptionalDefaults` must already
+ *   have run so it does not overwrite the targets written here.
  * @param denseStart - Dense index of the first new row.
  * @param count - Number of consecutive new rows from `denseStart`.
- * @returns The target entity id written to every row of the run, or 0 when
- *   the rows were left unlinked.
  */
-export function writeBirthTargets(
-  soa: SoAColumns,
-  rawTarget: unknown,
-  denseStart: number,
-  count: number,
-): number {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- override targets are EntityIds (branded numbers)
-  const target = rawTarget as number;
-  if (target === 0) {
-    return 0;
-  }
-  // oxlint-disable-next-line typescript/no-non-null-assertion -- relation SoA always has a target column
-  const targetCol = soa["target"]!;
-  for (let i = 0; i < count; i++) {
-    targetCol[denseStart + i] = target;
-  }
-  return target;
-}
-
-/**
- * Record the reverse-map entries of an optional relation's birth link for the
- * freshly spawned rows at the tail of a storage.
- *
- * Spawn appends rows, so the run being linked always ends at `storage.n`; the
- * row count is read from there. A caller linking rows that are not the
- * storage's tail must not use this function.
- *
- * @param storage - Storage the rows were spawned into, with `n` already
- *   advanced past them and every row holding its entity id.
- * @param rel - The optional relation being linked; keys the reverse map.
- * @param target - Target entity id shared by the run, as returned by
- *   {@link writeBirthTargets}; 0 records nothing.
- * @param denseStart - Dense index of the first new row; rows from here up to
- *   `storage.n` are recorded.
- */
-export function insertOptionalRelationEntries(
-  storage: Storage,
-  rel: ComponentDescriptor,
-  target: number,
-  denseStart: number,
-): void {
-  if (target === 0) {
-    return;
-  }
-  const targetIdx = entityIndex(target);
-  const denseEnd = storage.n;
-  for (let di = denseStart; di < denseEnd; di++) {
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- di is a freshly spawned dense index
-    reverseInsert(rel, targetIdx, storage, entityIndex(storage.entities[di]!));
+export function linkOptionalRelations(storage: Storage, denseStart: number, count: number): void {
+  const relN = storage.relationN;
+  const base = birthTop - relN;
+  birthTop = base;
+  for (let ri = 0; ri < relN; ri++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- readBirthTargets filled every slot below the old top
+    const target = birthTargets[base + ri]!;
+    if (target === 0) {
+      continue;
+    }
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- ri < relN ≤ relationTargetColumns.length
+    const targetCol = storage.relationTargetColumns[ri]!;
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- ri < relN ≤ relationDescriptors.length
+    const rel = storage.relationDescriptors[ri]!;
+    const targetIdx = entityIndex(target);
+    for (let di = denseStart; di < denseStart + count; di++) {
+      targetCol[di] = target;
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- di is a freshly spawned dense index
+      reverseInsert(rel, targetIdx, storage, entityIndex(storage.entities[di]!));
+    }
   }
 }
 
@@ -175,7 +202,7 @@ export function insertOptionalRelationEntries(
  * spawned rows, reading targets from the already-initialized target columns.
  *
  * Target presence (0 = not provided) and liveness are validated by
- * `assertRelationTargets` before the row exists — a stale target would seed a
+ * `readBirthTargets` before the row exists — a stale target would seed a
  * reverse entry that aliases onto a reused slot. Under NDEBUG both checks are
  * absent: the entity spawns unlinked on a 0 target, and no reverse entry is
  * recorded.

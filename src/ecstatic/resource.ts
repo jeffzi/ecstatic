@@ -228,11 +228,13 @@ export function getResource<R extends Resource>(world: World, res: R): ResourceF
  *
  * @param world - World whose record is written; other worlds holding the same resource are unaffected.
  * @param res - Resource ID from `resource()`.
- * @param values - Fields to overwrite. Only own keys are written, and a key set to `undefined` is
- *   skipped rather than clearing the field; each value is deep-cloned (see `cloneUnknown`), so
- *   later mutation of `values` does not reach the record.
+ * @param values - Fields to overwrite. Only own keys are written, and each property is read
+ *   exactly once, so a getter runs once and the value it returns is the value stored. A key set to
+ *   `undefined` is skipped rather than clearing the field; each value is deep-cloned (see
+ *   `cloneUnknown`), so later mutation of `values` does not reach the record.
  *
  * @throws If `res` is not a registered resource ID
+ * @throws Whatever a getter on `values` throws; fields written before it keep their new values
  */
 export function setResource<R extends Resource>(
   world: World,
@@ -241,14 +243,11 @@ export function setResource<R extends Resource>(
 ): void {
   const data = world.resources.get(res) ?? initResource(world, res);
   for (const key in values) {
-    // Only the value object's own keys are written — an enumerable property
-    // inherited from its prototype is not part of the write set. An
-    // explicitly-undefined entry leaves the field untouched (same contract as
-    // writeFieldOverrides); exactOptionalPropertyTypes already rejects it at
-    // compile time, so this only guards untyped callers.
-    if (Object.hasOwn(values, key) && values[key] !== undefined) {
-      data[key] = cloneValue(values[key]);
-    }
+    // An enumerable property inherited from the prototype is not part of the
+    // write set. Keep the undefined-skip in step with `writeFieldOverrides`.
+    if (!Object.hasOwn(values, key)) continue;
+    const value = values[key];
+    if (value !== undefined) data[key] = cloneValue(value);
   }
 }
 

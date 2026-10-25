@@ -425,10 +425,11 @@ describe("setResource", () => {
 
   it("merges listed fields and keeps unlisted ones", () => {
     const world = createWorld();
+    setResource(world, Score, { value: 1, combo: 5 });
 
     setResource(world, Score, { value: 42 });
 
-    expect(getResource(world, Score)).toStrictEqual({ value: 42, combo: 1 });
+    expect(getResource(world, Score)).toStrictEqual({ value: 42, combo: 5 });
   });
 
   it("overwrites every field when all are listed", () => {
@@ -472,6 +473,36 @@ describe("setResource", () => {
     shared.push(2);
 
     expect(getResource(world, Bag).items).toStrictEqual([1]);
+  });
+
+  describe("when a field's type admits undefined", () => {
+    const defaults: { value: number | undefined } = { value: 0 };
+    const Maybe = resource("ResourceTestSetMaybe", defaults);
+
+    it("keeps the current value of a field set to undefined", () => {
+      const world = createWorld();
+      setResource(world, Maybe, { value: 3 });
+
+      setResource(world, Maybe, { value: undefined });
+
+      expect(getResource(world, Maybe).value).toBe(3);
+    });
+
+    it("reads each value once, so a getter that changes between reads still lands", () => {
+      const world = createWorld();
+      let reads = 0;
+      const values = {
+        get value(): number | undefined {
+          reads += 1;
+          return reads === 1 ? 5 : undefined;
+        },
+      };
+
+      setResource(world, Maybe, values);
+
+      expect(getResource(world, Maybe).value).toBe(5);
+      expect(reads).toBe(1);
+    });
   });
 });
 

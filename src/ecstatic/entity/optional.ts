@@ -55,11 +55,15 @@ function rejectRelation(comp: ComponentDescriptor, targetOp: "link" | "unlink"):
 /**
  * Write per-field value overrides into a component's SoA columns.
  *
- * @param soa - The component's column record, one column per declared field.
+ * @param soa - The component's column record, one column per declared field. Each column is
+ *   looked up after its value is read, so a getter that grows the storage, replacing the
+ *   arrays in this record, still writes into the live column.
  * @param fields - The component's declared field names, in column order.
  * @param di - Dense row written; must be below the storage's row count.
- * @param values - Fields to patch, stored by reference (no clone); a field absent from the
- *   record or set to `undefined` keeps its current slot value.
+ * @param values - Fields to patch, stored by reference (no clone); each declared field is read
+ *   exactly once. A field absent from the record or set to `undefined` keeps its current slot
+ *   value.
+ * @throws Whatever a getter on `values` throws; the fields before it are already written
  */
 export function writeFieldOverrides(
   soa: SoAColumns,
@@ -70,9 +74,10 @@ export function writeFieldOverrides(
   for (let i = 0; i < fields.length; i++) {
     // oxlint-disable-next-line typescript/no-non-null-assertion -- i < fields.length
     const f = fields[i]!;
-    if (values[f] !== undefined) {
+    const value = values[f];
+    if (value !== undefined) {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- SoA column exists for every declared field
-      soa[f]![di] = values[f];
+      soa[f]![di] = value;
     }
   }
 }

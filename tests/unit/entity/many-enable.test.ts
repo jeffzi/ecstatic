@@ -10,6 +10,7 @@ import {
   each,
   enable,
   enableMany,
+  get,
   has,
   ref,
   register,
@@ -153,6 +154,41 @@ describe("enableMany with ids", () => {
       enableMany(storage, [id], { ManyStunned: true, ManyPosition: true });
     }).toThrow("component ManyPosition is not optional on this archetype");
     expect(storage.mask[rowOf(storage, id)]).toBe(0);
+  });
+});
+
+describe("enableMany values reads", () => {
+  it("writes a getter value that grows the storage to every row, reading it once per row", () => {
+    const { storage } = createStorage();
+    const idA = spawn(storage);
+    const idB = spawn(storage);
+    let reads = 0;
+    const values = {
+      get hp(): number {
+        reads += 1;
+        spawnMany(storage, 16);
+        return 75;
+      },
+    };
+
+    enableMany(storage, [idA, idB], { ManyShield: values });
+
+    expect(get(storage, idA, Shield.hp)).toBe(75);
+    expect(get(storage, idB, Shield.hp)).toBe(75);
+    expect(reads).toBe(2);
+  });
+
+  it("keeps the current value of an absent or undefined field", () => {
+    const { storage } = createStorage();
+    const id = spawn(storage);
+    enable(storage, id, Shield, { hp: 75, defense: 5 });
+    disableMany(storage, [id], [Shield]);
+
+    // @ts-expect-error the types reject an explicit undefined; JavaScript callers can still pass one
+    enableMany(storage, [id], { ManyShield: { hp: undefined } });
+
+    expect(get(storage, id, Shield.hp)).toBe(75);
+    expect(get(storage, id, Shield.defense)).toBe(5);
   });
 });
 
