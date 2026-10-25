@@ -12,17 +12,13 @@ import {
   NO_FREE_SLOT,
   OVERFLOW_MSG,
 } from "../entity-id.js";
-import { errorRequiredDisabled } from "../errors.js";
 import { growMatcherArrays, maskSatisfies, refreshMatchersMask } from "../matcher.js";
 import type { RelationFields } from "../relation.js";
 import { getRelationMeta } from "../relation.js";
 import { syncColumnCaches } from "../world.js";
 import type { SoAColumns, Storage, TypedArray, WorldState } from "../world.js";
-import {
-  insertRequiredRelationEntries,
-  readBirthTargets,
-  writeBirthRelations,
-} from "./spawn-link.js";
+import { insertRequiredRelationEntries, writeBirthRelations } from "./spawn-link.js";
+import { holdSpawnOverrides, writeHeldOverrides } from "./spawn-values.js";
 
 // ---------------------------------------------------------------------------
 // Spawn override types
@@ -148,12 +144,13 @@ export type SpawnOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescript
  * fields with defaults or override values (stored by reference, no clone).
  *
  * Atomic: an exhausted index space is rejected before any override is read,
- * and in checked mode a relation birth-link target that is missing, 0, or
- * stale is rejected before any allocation, so the world is left untouched.
+ * and every override is read and validated before any allocation, so a
+ * rejected spawn or a throwing getter leaves the world untouched.
  *
- * Every override value is read exactly once, even through a getter: a relation
- * links to the target that was validated, and a getter that spawns into the
- * same storage never loses a write to its growth.
+ * Every override value is read exactly once, even through a getter, before the
+ * row exists: a relation links to the target that was validated, and a getter
+ * that spawns into the same storage or despawns another entity in it never
+ * redirects a write.
  *
  * @param storage - Archetype storage the entity joins. This form accepts only archetypes without
  *   a required relation, since omitted overrides cannot supply the mandatory birth-link target;
@@ -166,7 +163,7 @@ export type SpawnOverridesFor<A extends ArchetypeDescriptor> = ArchetypeDescript
  * @throws If the world is out of entity indices, before any getter on `overrides` runs
  * @throws If an override sets a required component or required relation to `false`
  * @throws (checked mode) If a relation birth-link target is missing, 0, or stale
- * @throws Whatever a getter on `overrides` throws
+ * @throws Whatever a getter on `overrides` throws; nothing is allocated or written
  */
 export function spawn<A extends ArchetypeDescriptor>(
   storage: WithoutRequiredRelations<A>,
@@ -180,9 +177,7 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   const state = storage.world;
 
   assertBatchCapacity(state, 1);
-  if (storage.relationN > 0) {
-    readBirthTargets(storage, overrides);
-  }
+  const heldBase = holdSpawnOverrides(storage, overrides);
 
   const index = allocateOneIndex(state);
 
@@ -209,10 +204,8 @@ export function spawn(storage: Storage, overrides?: SpawnOverrides): EntityId {
   if (storage.hasOptionalData) {
     writeOptionalDefaults(storage, di, 1);
   }
-  // Before any override getter runs: `readBirthTargets` holds slots until this call.
   const relationBits = storage.relationN > 0 ? writeBirthRelations(storage, di, 1) : 0;
-  initComponentFields(storage, di, 1, overrides);
-  const spawnMask = applyOptionalOverrides(storage, di, 1, overrides) | relationBits;
+  const spawnMask = writeHeldOverrides(storage, di, heldBase) | relationBits;
   storage.mask[di] = spawnMask;
   // Unconditional refresh: a recycled row holds the previous occupant's
   // matched flags.
@@ -347,69 +340,6 @@ function growStorageArrays(storage: Storage): void {
 // Field initialization
 // ---------------------------------------------------------------------------
 
-function fillRange(
-  col: { [i: number]: unknown },
-  start: number,
-  count: number,
-  value: unknown,
-): void {
-  for (let i = 0; i < count; i++) {
-    col[start + i] = value;
-  }
-}
-
-/**
- * Initialize SoA fields for a run of dense rows: per required component, per field
- * (column-major), write the override value when present (`!== undefined`), else the default for
- * non-ref fields. Ref fields with no override stay undefined (despawn cleared the slot).
- *
- * Required relations are skipped: `writeBirthRelations` already wrote them from the values
- * `readBirthTargets` read once. Each field's override is read before its column is looked up, so
- * a getter that grows the storage leaves the write landing in the live array.
- *
- * @param storage - Storage whose required non-relation components' columns are written.
- * @param denseStart - First dense row of the run; rows `[denseStart, denseStart + count)` must
- *   already be reserved (`storage.n` advanced and arrays grown).
- * @param count - Number of consecutive rows to fill; every row gets the same values.
- * @param overrides - Spawn overrides keyed by component name; `undefined` means defaults
- *   everywhere.
- * @throws If an override sets a required component to `false`.
- * @throws Whatever a getter on `overrides` throws; the fields before it are already written.
- */
-function initComponentFields(
-  storage: Storage,
-  denseStart: number,
-  count: number,
-  overrides?: SpawnOverrides,
-): void {
-  for (const comp of storage.archetype.components) {
-    if (getRelationMeta(comp) !== undefined) {
-      continue;
-    }
-    const fieldOverrides = resolveRequiredOverride(comp.__ecstatic_name, overrides);
-
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- comp is on the archetype, so columns has it
-    const soa = storage.columns.get(comp)!;
-    const fields = comp.__ecstatic_fields;
-    const defaultValues = comp.__ecstatic_default_values;
-    const isRef = comp.__ecstatic_is_reference;
-
-    for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- fieldIdx < fields.length
-      const fieldName = fields[fieldIdx]!;
-      const override = fieldOverrides?.[fieldName];
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- SoA column exists for every declared field
-      const col = soa[fieldName]!;
-
-      if (override !== undefined) {
-        fillRange(col, denseStart, count, override);
-      } else if (isRef[fieldIdx] !== true) {
-        fillRange(col, denseStart, count, defaultValues[fieldIdx]);
-      }
-    }
-  }
-}
-
 /**
  * Reset a relation's target column to the unlinked sentinel for a run of rows. Unlinked
  * relations store 0 (not undefined) so liveness checks fail naturally — no live packed id is ever
@@ -474,79 +404,6 @@ function writeOptionalDefaults(storage: Storage, denseStart: number, count: numb
   }
 }
 
-/**
- * Resolve optional spawn overrides for a run of rows and accumulate the presence mask: `true`
- * enables with the pre-populated defaults, a record enables and patches the listed fields on top
- * of them, `false`/absent stays disabled.
- *
- * Iterates the archetype's optionals, so unknown override keys are silently ignored (the types
- * reject them) — unlike `enable`, whose record form throws on unknown names at runtime.
- *
- * Optional relations are skipped, their override never read here: `writeBirthRelations`
- * already wrote their targets and data fields and returned their presence bits, all from the
- * values `readBirthTargets` read once.
- *
- * @param storage - Storage whose optional columns are patched and whose `optionalBitLookup`
- *   supplies each enabled component's bit.
- * @param denseStart - First dense row of the run.
- * @param count - Number of consecutive rows that receive the same patches.
- * @param overrides - Spawn overrides keyed by component name; `undefined` short-circuits to an
- *   empty mask with no column writes.
- * @returns The OR of the presence bits of every enabled non-relation optional; the caller merges
- *   in the relation bits and writes the mask to `storage.mask`, this function does not.
- * @throws Whatever a getter on `overrides` throws; the patches before it are already written.
- */
-// Spawn hot path: the override grammar's per-kind continues and the
-// column-major field loops stay fused in one function so a batch pays one
-// pass over the resolved overrides.
-// fallow-ignore-next-line complexity
-function applyOptionalOverrides(
-  storage: Storage,
-  denseStart: number,
-  count: number,
-  overrides: SpawnOverrides | undefined,
-): number {
-  if (overrides === undefined) {
-    return 0;
-  }
-
-  let bits = 0;
-  for (const comp of storage.archetype.optionals) {
-    if (getRelationMeta(comp) !== undefined) {
-      continue;
-    }
-    const raw = overrides[comp.__ecstatic_name];
-    if (raw === undefined || raw === false) {
-      continue;
-    }
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- comp is an optional on the archetype, so bit is registered
-    bits |= storage.optionalBitLookup.get(comp)!;
-    if (raw === true) {
-      continue;
-    }
-
-    const soa = storage.columns.get(comp);
-    if (soa === undefined) {
-      continue;
-    }
-    const fields = comp.__ecstatic_fields;
-    for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- fieldIdx < fields.length
-      const fieldName = fields[fieldIdx]!;
-      const override = raw[fieldName];
-      if (override === undefined) {
-        continue;
-      }
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- SoA column exists for every declared field
-      const col = soa[fieldName]!;
-      for (let i = 0; i < count; i++) {
-        col[denseStart + i] = override;
-      }
-    }
-  }
-  return bits;
-}
-
 // ---------------------------------------------------------------------------
 // Batch spawn and override resolution
 // ---------------------------------------------------------------------------
@@ -585,28 +442,22 @@ function refreshBatchMatchers(storage: Storage, start: number, count: number, ma
  * The loop stays in this function rather than a helper: V8 then optimizes it together with the
  * allocator and the field initializers below, which a separately compiled loop measured slower.
  *
+ * Runs no user code: every override was read by `holdSpawnOverrides` before the rows existed.
+ *
  * @param storage - Storage whose rows `[n - count, n)` are filled; `storage.n` must already have
- *   been advanced past the batch and the arrays grown to hold it. When the storage has relations,
- *   `readBirthTargets` must already have run for this batch: the rows take the relation values
- *   it read once, and this call releases the slots it reserved.
+ *   been advanced past the batch and the arrays grown to hold it.
  * @param count - Number of entities to allocate and fill; `assertBatchCapacity` must have passed
  *   for this count so no allocation overflows.
- * @param overrides - Spawn overrides applied identically to every row; `undefined` means
- *   defaults everywhere with no optional enabled.
+ * @param heldBase - The `heldTop` captured before `holdSpawnOverrides` read this batch's
+ *   overrides; every row takes the values it held, and this call releases them and the relation
+ *   slots `readBirthTargets` reserved.
  * @param out - Receives the spawned ids at indices `[0, count)`. The caller's buffer on the
  *   out-parameter path and a fresh array otherwise — one code shape, so a reused buffer costs no
  *   extra allocation or copy. Ids are written at ascending indices (growing a short buffer in
  *   place), then the length is set to `count` to trim any tail left by a longer buffer.
- * @throws If an override sets a required non-relation component to `false`.
  * @throws If a fresh index reaches `MAX_INDEX` — unreachable once `assertBatchCapacity` passed.
- * @throws Whatever a getter on `overrides` throws.
  */
-function fillBatch(
-  storage: Storage,
-  count: number,
-  overrides: SpawnOverrides | undefined,
-  out: EntityId[],
-): void {
+function fillBatch(storage: Storage, count: number, heldBase: number, out: EntityId[]): void {
   const state = storage.world;
   const denseStart = storage.n - count;
 
@@ -635,10 +486,8 @@ function fillBatch(
   if (storage.hasOptionalData) {
     writeOptionalDefaults(storage, denseStart, count);
   }
-  // Before any override getter runs: `readBirthTargets` holds slots until this call.
   const relationBits = storage.relationN > 0 ? writeBirthRelations(storage, denseStart, count) : 0;
-  initComponentFields(storage, denseStart, count, overrides);
-  const optionalBits = applyOptionalOverrides(storage, denseStart, count, overrides) | relationBits;
+  const optionalBits = writeHeldOverrides(storage, denseStart, heldBase) | relationBits;
   if (optionalBits !== 0) {
     for (let i = 0; i < count; i++) {
       storage.mask[denseStart + i] = optionalBits;
@@ -659,12 +508,14 @@ function fillBatch(
  * each slot's precomputed packed ID, appends dense rows, and initializes
  * component fields with the same defaults or override values applied to all.
  *
- * Atomic: no mutation occurs if allocation would overflow MAX_INDEX, or if
- * checked mode rejects a relation birth-link target.
+ * Atomic: no mutation occurs if allocation would overflow MAX_INDEX, and
+ * every override is read and validated before any allocation, so a rejected
+ * batch or a throwing getter leaves the world untouched.
  *
  * Every override value is read exactly once for the whole batch, even through
- * a getter: every entity links to the target that was validated, and a getter
- * that spawns into the same storage never loses a write to its growth.
+ * a getter, before any row exists: every entity links to the target that was
+ * validated, and a getter that spawns into the same storage or despawns
+ * another entity in it never redirects a write.
  *
  * @param storage - Archetype storage the entities join. This form takes no overrides, so it
  *   accepts only archetypes without a required relation (nothing could supply the mandatory
@@ -682,7 +533,7 @@ function fillBatch(
  * @throws If the batch would exceed entity index capacity
  * @throws If an override sets a required component or required relation to `false`
  * @throws (checked mode) If a relation birth-link target is missing, 0, or stale
- * @throws Whatever a getter on the overrides throws
+ * @throws Whatever a getter on the overrides throws; nothing is allocated or written
  */
 export function spawnMany<A extends ArchetypeDescriptor>(
   storage: WithoutRequiredRelations<A>,
@@ -722,10 +573,7 @@ export function spawnMany(
   }
 
   assertBatchCapacity(state, count);
-
-  if (storage.relationN > 0) {
-    readBirthTargets(storage, overrides);
-  }
+  const heldBase = holdSpawnOverrides(storage, overrides);
 
   // Grow storage arrays for dense rows in one shot (after we know count)
   const denseStart = storage.n;
@@ -741,7 +589,7 @@ export function spawnMany(
   // Allocate indices (may grow world arrays) and fill dense rows and component
   // fields, writing ids straight into the caller's buffer when one was supplied
   const result = outBuffer ?? [];
-  fillBatch(storage, count, overrides, result);
+  fillBatch(storage, count, heldBase, result);
 
   return result;
 }
@@ -771,27 +619,4 @@ function assertBatchCapacity(state: WorldState, count: number): void {
   if (state.nextIndex + (count - freeCount) > MAX_INDEX) {
     throw new Error(OVERFLOW_MSG);
   }
-}
-
-/**
- * Resolve a required component's spawn override.
- *
- * @param name - The component's declared name, the key looked up in `overrides`.
- * @param overrides - Spawn overrides record; `undefined` means no overrides at all.
- * @returns The field record to patch on top of defaults, or `undefined` when the component takes
- *   its defaults (`true` or absent).
- * @throws If the override is `false` — required components cannot be disabled at spawn.
- */
-function resolveRequiredOverride(
-  name: string,
-  overrides?: SpawnOverrides,
-): Record<string, unknown> | undefined {
-  const raw = overrides?.[name];
-  if (raw === undefined || raw === true) {
-    return undefined;
-  }
-  if (raw === false) {
-    throw new Error(errorRequiredDisabled(name));
-  }
-  return raw;
 }

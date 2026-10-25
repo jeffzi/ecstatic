@@ -10,6 +10,7 @@ import { entityIndex } from "../entity-id.js";
 import {
   ERROR_RELATION_NOT_ON_ARCHETYPE,
   ERROR_RELATION_TARGET_WRITE,
+  ERROR_STALE_ENTITY_ID,
   errorNotEnabled,
 } from "../errors.js";
 import type {
@@ -171,6 +172,10 @@ export function get(
  * Write one field via a descriptor or multiple fields via a partial
  * component record.
  *
+ * The record form reads every value once, before the entity's row is
+ * resolved, so a getter that grows the storage or despawns another entity in
+ * it still has the values land in the entity's current row.
+ *
  * @param storageOrWorld - The entity's storage, or the world to resolve it
  *   from; the storage form additionally checks ownership under DEBUG.
  * @param id - Generational entity id, validated for staleness only under
@@ -182,6 +187,8 @@ export function get(
  *   keep their current values.
  * @throws If the entity ID is stale or from another storage (under DEBUG)
  * @throws If the component or a field cannot be resolved on the archetype
+ * @throws If the component is a relation and the write names its reserved `target` field
+ * @throws Whatever a getter on the values record throws; the row is left unchanged
  */
 export function set<V>(
   storageOrWorld: Storage | World,
@@ -212,10 +219,6 @@ export function set(
   valuesOrValue?: unknown,
 ): void {
   const storage = resolveEntityArch(storageOrWorld, id);
-  const di = storage.sparse[entityIndex(id)];
-  /* istanbul ignore next */
-  if (di === undefined) throw new Error("invariant: entity missing from sparse array");
-  const row: RowCtx = { storage, di };
 
   if (isFieldDescriptor(componentOrField)) {
     guardRelationTargetWrite(
@@ -223,7 +226,7 @@ export function set(
       componentOrField.__ecstatic_field,
     );
     writeField(
-      row,
+      entityRow(storage, id),
       componentOrField.__ecstatic_component,
       componentOrField.__ecstatic_field,
       valuesOrValue,
@@ -234,9 +237,31 @@ export function set(
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the overload signatures guarantee valuesOrValue is a Record<string, unknown> here
   const values = valuesOrValue as Record<string, unknown>;
   guardRelationTargetWrite(componentOrField, values);
-  for (const [fieldName, value] of Object.entries(values)) {
+  // `Object.entries` runs every getter on `values` before the row is resolved; one of them may
+  // have despawned the entity.
+  const entries = Object.entries(values);
+  if (DEBUG && storage.generation[entityIndex(id)] !== id) {
+    throw new Error(ERROR_STALE_ENTITY_ID);
+  }
+  const row = entityRow(storage, id);
+  for (const [fieldName, value] of entries) {
     writeField(row, componentOrField, fieldName, value);
   }
+}
+
+/**
+ * Resolve an entity's current dense row.
+ *
+ * @param storage - Storage the entity lives in.
+ * @param id - Entity id, already validated against `storage`.
+ * @returns The storage and the entity's dense row at the time of the call.
+ * @throws If the entity's sparse slot is empty (invariant guard, unreachable for a validated id)
+ */
+function entityRow(storage: Storage, id: EntityId): RowCtx {
+  const di = storage.sparse[entityIndex(id)];
+  /* istanbul ignore next */
+  if (di === undefined) throw new Error("invariant: entity missing from sparse array");
+  return { storage, di };
 }
 
 /**

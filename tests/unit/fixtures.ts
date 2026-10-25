@@ -1,10 +1,26 @@
 import { entityIndex } from "../../src/ecstatic/entity-id.js";
+import { despawn, type EntityId, type Storage } from "../../src/ecstatic/index.js";
 
 /** Dense row of a live entity: sparse lookup by entity index. */
 export function rowOf(storage: { sparse: Int32Array }, id: number): number {
   const row = storage.sparse[entityIndex(id)];
   if (row == null) throw new Error("entity index out of bounds");
   return row;
+}
+
+/** Values object whose `field` getter despawns `sibling` on read, then returns `value`. */
+export function despawnOnRead(
+  storage: Storage,
+  sibling: EntityId,
+  field: string,
+  value: number,
+): Record<string, number> {
+  return {
+    get [field](): number {
+      despawn(storage, sibling);
+      return value;
+    },
+  };
 }
 
 /**

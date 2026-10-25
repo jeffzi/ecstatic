@@ -8,13 +8,14 @@ import {
   type EntityId,
   get,
   getSources,
+  has,
   ref,
   relation,
   spawn,
   spawnMany,
 } from "../../../src/ecstatic/index.js";
 import { createWorld, register, type World } from "../../../src/ecstatic/world.js";
-import { rowOf } from "../fixtures.js";
+import { despawnOnRead, rowOf } from "../fixtures.js";
 
 const { SpawnTestPosition: Position } = components({
   SpawnTestPosition: { x: 0, y: 0 },
@@ -218,6 +219,21 @@ describe("spawn", () => {
       expect(storage.generation.length).toBeGreaterThanOrEqual(300);
       expect(storage.sparse.length).toBeGreaterThanOrEqual(300);
     });
+  });
+});
+
+describe("override getters", () => {
+  it("writes an override getter value that despawns an earlier sibling to the spawned row", () => {
+    const { SpawnTestStunned: Stunned } = components({ SpawnTestStunned: {} });
+    const world = createWorld();
+    const storage = register(world, archetype([Position], [Stunned]));
+    const sibling = spawn(storage);
+    const position = despawnOnRead(storage, sibling, "x", 42);
+
+    const id = spawn(storage, { SpawnTestPosition: position, SpawnTestStunned: true });
+
+    expect(get(storage, id, Position.x)).toBe(42);
+    expect(has(storage, id, Stunned)).toBe(true);
   });
 });
 

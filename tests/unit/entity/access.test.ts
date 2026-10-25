@@ -14,6 +14,7 @@ import {
   set,
   spawn,
 } from "../../../src/ecstatic/index.js";
+import { despawnOnRead } from "../fixtures.js";
 
 // Use unique prefixes to avoid collisions with other test files
 const { AccessPos: Position } = components({
@@ -123,6 +124,18 @@ describe("set", () => {
     set(storage, id, Position, { x: 15, y: 20 });
     expect(get(storage, id, Position.x)).toBe(15);
     expect(get(storage, id, Position.y)).toBe(20);
+  });
+
+  it("writes a getter value that despawns an earlier sibling to the moved row", () => {
+    const world = createWorld();
+    const storage = register(world, archetype([Position]));
+    const sibling = spawn(storage);
+    const id = spawn(storage);
+    const values = despawnOnRead(storage, sibling, "x", 42);
+
+    set(storage, id, Position, values);
+
+    expect(get(storage, id, Position.x)).toBe(42);
   });
 
   it("errors on a stale entity ID #checked", () => {

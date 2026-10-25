@@ -90,50 +90,74 @@ export const Mover = archetype([Position]);
 /** What a probe saw of a build: the compiler processes running and the code of each module. */
 interface Probe {
   readonly plugin: Plugin;
-  /** Every child process of this process that was running at a module load, apart from those running before. */
+  /**
+   * Every compiler child process of this process that was running at a build's first module load
+   * or as it generated its bundle, apart from those running before.
+   */
   readonly processes: Set<number>;
   /** The latest code of each module id, as the plugins before the probe left it. */
   readonly outputs: Map<string, string>;
-  /** How many bundles the build generated. */
+  /**
+   * How many bundles the build generated, counted once each bundle's processes are recorded, so a
+   * wait on it sees them.
+   */
   bundles: number;
   /** The message of each build error a watch build's watcher reported. */
   readonly errors: string[];
   /** Each event a watch build's watcher reported, with the milliseconds since it started. */
   readonly events: string[];
+  /** Whether a watch build's watcher has a rebuild running or a change it has yet to rebuild. */
+  rebuilding: boolean;
 }
 
 /**
- * A plugin that records, at each module load, the child processes started since `before`, and the
- * code each transform hands it. Placed after `ecstatic()`, it sees the plugin's output.
+ * A plugin that records the compiler processes started since `before`, at each build's first
+ * module load and as it generates its bundle, and the code each transform hands it. Placed after
+ * `ecstatic()`, it sees the plugin's output.
  *
- * @param before - The child processes running before the build.
+ * It lists processes twice per build rather than at every load: a listing starts a process, which
+ * on Windows takes long enough that one per load stretches a rebuild, and so a watcher's close,
+ * which waits for the rebuild's loads, past a test's timeout.
+ *
+ * @param before - The compiler processes running before the build.
  * @returns The probe, whose fields fill in as the build runs.
  */
 function processProbe(before: ReadonlySet<number>): Probe {
   let snapshots = Promise.resolve();
+  let sampled = false;
+  const sample = async (): Promise<void> => {
+    const previous = snapshots;
+    snapshots = (async () => {
+      await previous;
+      for (const pid of await processesStartedSince(before)) probe.processes.add(pid);
+    })();
+    await snapshots;
+  };
   const probe: Probe = {
     processes: new Set(),
     outputs: new Map(),
     bundles: 0,
     errors: [],
     events: [],
+    rebuilding: false,
     plugin: {
       name: "process-probe",
       enforce: "pre",
+      buildStart() {
+        sampled = false;
+      },
       async load() {
-        const previous = snapshots;
-        snapshots = (async () => {
-          await previous;
-          for (const pid of await processesStartedSince(before)) probe.processes.add(pid);
-        })();
-        await snapshots;
+        if (sampled) return null;
+        sampled = true;
+        await sample();
         return null;
       },
       transform(code, id) {
         probe.outputs.set(id, code);
         return null;
       },
-      generateBundle() {
+      async generateBundle() {
+        await sample();
         probe.bundles += 1;
       },
     },
@@ -199,19 +223,23 @@ function buildConfig(root: string, plugins: PluginOption[]): InlineConfig {
 
 /**
  * Starts a watch build of the main project at `root` through the optimizer and `probe`, recording
- * in `probe` each build error its watcher reports.
+ * in `probe` each build error its watcher reports and whether it is rebuilding.
  */
 async function startWatchBuild(root: string, probe: Probe): Promise<{ close(): Promise<void> }> {
   const config = buildConfig(root, [ecstatic(), probe.plugin]);
   const output = await build({ ...config, build: { ...config.build, watch: {} } });
   if (!("close" in output)) throw new Error("the watch build returned no watcher");
   const started = Date.now();
+  probe.rebuilding = true;
   output.on("event", (event) => {
     probe.events.push(`${event.code} at ${Date.now() - started} ms`);
     if (event.code === "ERROR") probe.errors.push(event.error.message);
+    if (event.code === "START") probe.rebuilding = true;
+    if (event.code === "END" || event.code === "ERROR") probe.rebuilding = false;
   });
   output.on("change", (id) => {
     probe.events.push(`change of ${id} at ${Date.now() - started} ms`);
+    probe.rebuilding = true;
   });
   return output;
 }
@@ -235,6 +263,19 @@ async function waitForBundles(probe: Probe, count: number): Promise<void> {
       },
     );
   }
+}
+
+/**
+ * Waits until the watch build behind `probe` has no rebuild running or pending, so a close does not
+ * wait on one.
+ */
+async function waitUntilIdle(probe: Probe): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(probe.rebuilding).toBe(false);
+    },
+    { timeout: WATCH_BUILD_TIMEOUT_MS },
+  );
 }
 
 async function waitUntilAllDead(processes: Iterable<number>): Promise<void> {
@@ -351,6 +392,7 @@ describe("ecstatic() for Vite", () => {
     });
 
     it("ends the compiler process when the watcher closes", async () => {
+      await waitUntilIdle(probe);
       const closing = watcher?.close();
       watcher = undefined;
       await closing;

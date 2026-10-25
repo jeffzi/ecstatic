@@ -114,10 +114,33 @@ export function readBirthTargets(storage: Storage, overrides: SpawnOverrides | u
       }
     }
     birthTargets[base + relN] = presence;
+    if (DEBUG && overrides !== undefined) {
+      assertBirthTargetsAlive(storage, base);
+    }
   } catch (error) {
     birthTop = base;
     valuesTop = valuesBase;
     throw error;
+  }
+}
+
+/**
+ * Re-check, once every relation override has been read, that each held birth-link target is
+ * still alive: a getter read after a target was validated may have despawned it.
+ *
+ * @param storage - Storage being spawned into; its `relationDescriptors` name the relations.
+ * @param base - First slot of the spawn's frame on {@link birthTargets}.
+ * @throws If a held target is no longer alive in the storage's world.
+ */
+function assertBirthTargetsAlive(storage: Storage, base: number): void {
+  const generation = storage.world.generation;
+  for (let ri = 0; ri < storage.relationN; ri++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- readBirthTargets filled every slot of the frame
+    const target = birthTargets[base + ri]!;
+    if (target !== 0 && generation[entityIndex(target)] !== target) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- ri < relationN ≤ relationDescriptors.length
+      throw new Error(errorStaleTarget(storage.relationDescriptors[ri]!.__ecstatic_name));
+    }
   }
 }
 

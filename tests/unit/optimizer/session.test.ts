@@ -430,7 +430,7 @@ describe("Session.close", () => {
 
       const closing = stalled.close();
 
-      await expect(vi.waitFor(() => parsing, { timeout: 5_000 })).rejects.toThrow(/exited/);
+      await expect(parsing).rejects.toThrow(/exited/);
       await expect(parsing).rejects.toThrow(stalled.tsconfig);
       await expect(closing).resolves.toBeUndefined();
     },

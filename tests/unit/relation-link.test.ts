@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { archetype } from "../../src/ecstatic/archetype.js";
 import { components, ref } from "../../src/ecstatic/component.js";
-import { get } from "../../src/ecstatic/entity/access.js";
+import { get, getTarget } from "../../src/ecstatic/entity/access.js";
 import { each } from "../../src/ecstatic/entity/each.js";
 import { link, unlink } from "../../src/ecstatic/entity/relation.js";
 import { spawn } from "../../src/ecstatic/entity/spawn.js";
-import { spawnMany } from "../../src/ecstatic/index.js";
+import { getSources, spawnMany } from "../../src/ecstatic/index.js";
 import { relation } from "../../src/ecstatic/relation.js";
 import { createWorld, register } from "../../src/ecstatic/world.js";
+import { despawnOnRead } from "./fixtures.js";
 
 const { RelSpec_Comp } = components({ RelSpec_Comp: { x: 0, y: 0 } });
 
@@ -160,6 +161,8 @@ describe("link values reads", () => {
     link(world, sourceId, Rel, firstTarget, values);
 
     expect(get(storage, sourceId, Rel.weight)).toBe(3);
+    expect(getTarget(world, sourceId, Rel)).toBe(firstTarget);
+    expect(getSources(world, Rel, firstTarget)).toStrictEqual([sourceId]);
     expect(reads).toBe(1);
   });
 
@@ -178,7 +181,21 @@ describe("link values reads", () => {
     link(world, sourceId, Rel, secondTarget, values);
 
     expect(get(storage, sourceId, Rel.weight)).toBe(3);
+    expect(getTarget(world, sourceId, Rel)).toBe(secondTarget);
+    expect(getSources(world, Rel, secondTarget)).toStrictEqual([sourceId]);
+    expect(getSources(world, Rel, firstTarget)).not.toContain(sourceId);
     expect(reads).toBe(1);
+  });
+
+  it("optional relation writes a getter value that despawns an earlier sibling to the moved row", () => {
+    const { Rel, world, storage, firstTarget, secondTarget, sourceId } =
+      createOptionalLink("LinkDespawnOpt_Rel");
+    const values = despawnOnRead(storage, secondTarget, "weight", 3);
+
+    link(world, sourceId, Rel, firstTarget, values);
+
+    expect(get(storage, sourceId, Rel.weight)).toBe(3);
+    expect(getTarget(world, sourceId, Rel)).toBe(firstTarget);
   });
 
   it.each([

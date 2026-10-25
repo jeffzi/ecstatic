@@ -212,9 +212,10 @@ describe("built package", () => {
     ]);
   });
 
-  it("exposes a working assertShape from the built internal entry", async () => {
-    const runtime: unknown = await import(pathToFileURL(join(distDir, "index.js")).href);
-    const internal: unknown = await import(pathToFileURL(join(distDir, "internal.js")).href);
+  it("exposes a working assertShape from the packed internal entry", async () => {
+    const resolve = createRequire(join(consumer, "package.json")).resolve;
+    const runtime: unknown = await import(pathToFileURL(resolve("ecstatic")).href);
+    const internal: unknown = await import(pathToFileURL(resolve("ecstatic/internal")).href);
     assert(isRecord(runtime) && isRecord(internal));
     const { archetype, component, createWorld, register } = runtime;
     const { assertShape } = internal;

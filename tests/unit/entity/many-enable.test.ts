@@ -178,6 +178,26 @@ describe("enableMany values reads", () => {
     expect(reads).toBe(2);
   });
 
+  it("writes a getter value that despawns a sibling before a later listed id to that id's moved row", () => {
+    const { storage } = createStorage();
+    const idA = spawn(storage);
+    const sibling = spawn(storage);
+    const idB = spawn(storage);
+    const values = {
+      get hp(): number {
+        if (alive(storage, sibling)) {
+          despawn(storage, sibling);
+        }
+        return 75;
+      },
+    };
+
+    enableMany(storage, [idA, idB], { ManyShield: values });
+
+    expect(get(storage, idA, Shield.hp)).toBe(75);
+    expect(get(storage, idB, Shield.hp)).toBe(75);
+  });
+
   it("writes a getter value that grows the storage to every existing row in the all-rows form", () => {
     const { storage } = createStorage();
     const idA = spawn(storage);
