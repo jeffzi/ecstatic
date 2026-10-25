@@ -67,6 +67,17 @@ export function errorRequiredRelationTarget(name: string): string {
 }
 
 /**
+ * Message for a spawn override that sets a required component to `false`.
+ *
+ * @param name - Declared name of the required component (or required relation) the override
+ *   tried to disable.
+ * @returns Message text naming the component; the caller wraps it in `new Error`.
+ */
+export function errorRequiredDisabled(name: string): string {
+  return `required component ${name} cannot be disabled at spawn`;
+}
+
+/**
  * Message for a relation target whose generation no longer matches (DEBUG-gated).
  *
  * @param name - Declared name of the relation whose target id no longer matches its slot's

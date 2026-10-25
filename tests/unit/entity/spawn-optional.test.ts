@@ -266,4 +266,27 @@ describe("spawn mixing optional relations with plain optionals", () => {
     expect(getSources(world, Owner, target)).toStrictEqual([id]);
     expect(reads).toBe(1);
   });
+
+  it("birth-links and enables an optional relation whose record the overrides key yields on its single read", () => {
+    const Owner = relation("SpawnOptRelation_ReadOnceRecordOwner");
+    const world = createWorld();
+    const storage = register(world, archetype([Position], [Owner]));
+    const target = spawn(register(world, archetype([Position])));
+    let reads = 0;
+    const overrides = {
+      get SpawnOptRelation_ReadOnceRecordOwner(): { target: EntityId } | false {
+        reads += 1;
+        return reads === 1 ? { target } : false;
+      },
+    };
+
+    const id = spawn(storage, overrides);
+
+    expect(storage.mask[rowOf(storage, id)]).toBe(
+      storage.archetype.optionalBits.get("SpawnOptRelation_ReadOnceRecordOwner"),
+    );
+    expect(get(storage, id, Owner.target)).toBe(target);
+    expect(getSources(world, Owner, target)).toStrictEqual([id]);
+    expect(reads).toBe(1);
+  });
 });

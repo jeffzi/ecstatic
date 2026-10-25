@@ -1,8 +1,19 @@
 import { assert, describe, expect, it } from "vitest";
 
 import { MAX_INDEX } from "../../../src/ecstatic/entity-id.js";
-import { archetype, components, ref, spawn } from "../../../src/ecstatic/index.js";
-import { createWorld, register } from "../../../src/ecstatic/world.js";
+import {
+  archetype,
+  components,
+  despawn,
+  type EntityId,
+  get,
+  getSources,
+  ref,
+  relation,
+  spawn,
+  spawnMany,
+} from "../../../src/ecstatic/index.js";
+import { createWorld, register, type World } from "../../../src/ecstatic/world.js";
 import { rowOf } from "../fixtures.js";
 
 const { SpawnTestPosition: Position } = components({
@@ -173,6 +184,24 @@ describe("spawn", () => {
       expect(posCol["x"]?.length).toBeGreaterThanOrEqual(10);
     });
 
+    it("writes a required field override whose getter grows the storage, reading it once", () => {
+      const world = createWorld();
+      const storage = register(world, archetype([Position]));
+      let reads = 0;
+      const position = {
+        get x(): number {
+          reads += 1;
+          spawnMany(storage, 16);
+          return 42;
+        },
+      };
+
+      const id = spawn(storage, { SpawnTestPosition: position });
+
+      expect(get(storage, id, Position.x)).toBe(42);
+      expect(reads).toBe(1);
+    });
+
     it("spawning past world capacity grows world arrays and refreshes aliases", () => {
       const world = createWorld();
       const Arch = archetype([Position]);
@@ -190,6 +219,53 @@ describe("spawn", () => {
       expect(storage.sparse.length).toBeGreaterThanOrEqual(300);
     });
   });
+});
+
+describe("required relation override", () => {
+  /** Builds a storage with a required relation and an override whose `target` names a live entity on its first read only. */
+  function createReadOnceOwner() {
+    const Owner = relation("SpawnReadOnceReq_Owner");
+    const world = createWorld();
+    const storage = register(world, archetype([Position, Owner]));
+    const target = spawn(register(world, archetype([Position])));
+    const counter = { reads: 0 };
+    const owner = {
+      get target(): EntityId {
+        counter.reads += 1;
+        // @ts-expect-error the types reject an undefined target; the getter returns one after its first read to catch a second read
+        return counter.reads === 1 ? target : undefined;
+      },
+    };
+    return { Owner, world, storage, target, counter, owner };
+  }
+
+  type ReadOnceOwner = ReturnType<typeof createReadOnceOwner>;
+
+  it.each([
+    {
+      api: "spawn",
+      act: ({ storage, owner }: ReadOnceOwner): EntityId[] => [
+        spawn(storage, { SpawnReadOnceReq_Owner: owner }),
+      ],
+    },
+    {
+      api: "spawnMany",
+      act: ({ storage, owner }: ReadOnceOwner): EntityId[] =>
+        spawnMany(storage, 2, { SpawnReadOnceReq_Owner: owner }),
+    },
+  ])(
+    "$api birth-links to the target its override held on the single read of `target`",
+    ({ act }) => {
+      const fixture = createReadOnceOwner();
+      const { Owner, world, storage, target, counter } = fixture;
+
+      const ids = act(fixture);
+
+      expect(ids.map((id) => get(storage, id, Owner.target))).toStrictEqual(ids.map(() => target));
+      expect(getSources(world, Owner, target)).toStrictEqual(ids);
+      expect(counter.reads).toBe(1);
+    },
+  );
 });
 
 describe("multi-world isolation", () => {
@@ -234,5 +310,99 @@ describe("hard limits", () => {
     expect(() => {
       spawn(storage);
     }).toThrow(new Error("entity index overflow (max 1048575 per world)"));
+  });
+
+  describe("when the spawn carries a relation override", () => {
+    const RequiredOwner = relation("SpawnOverflowReq_Owner");
+    const OptionalOwner = relation("SpawnOverflowOpt_Owner");
+
+    type OwnerRecord = { target: EntityId };
+    type BuildOwner = (world: World) => {
+      Owner: typeof RequiredOwner | typeof OptionalOwner;
+      storage: Parameters<typeof spawn>[0];
+      spawnOwned: (record: () => OwnerRecord) => EntityId;
+    };
+
+    /** Builds a world at the index ceiling with an empty freelist, holding a live target and one entity to free later. */
+    function createFullWorld(build: BuildOwner) {
+      const world = createWorld();
+      const target = spawn(register(world, archetype([Position])));
+      const spare = spawn(register(world, archetype([Health])));
+      const { Owner, storage, spawnOwned } = build(world);
+      world.nextIndex = MAX_INDEX;
+      world.freeHead = -1;
+      const counter = { reads: 0 };
+      const countedRecord = (): OwnerRecord => {
+        counter.reads += 1;
+        return {
+          get target(): EntityId {
+            counter.reads += 1;
+            return target;
+          },
+        };
+      };
+      return { world, target, spare, Owner, storage, spawnOwned, counter, countedRecord };
+    }
+
+    const relationCases: { kind: string; build: BuildOwner }[] = [
+      {
+        kind: "required",
+        build: (world) => {
+          const storage = register(world, archetype([Position, RequiredOwner]));
+          return {
+            Owner: RequiredOwner,
+            storage,
+            spawnOwned: (record) =>
+              spawn(storage, {
+                get SpawnOverflowReq_Owner(): OwnerRecord {
+                  return record();
+                },
+              }),
+          };
+        },
+      },
+      {
+        kind: "optional",
+        build: (world) => {
+          const storage = register(world, archetype([Position], [OptionalOwner]));
+          return {
+            Owner: OptionalOwner,
+            storage,
+            spawnOwned: (record) =>
+              spawn(storage, {
+                get SpawnOverflowOpt_Owner(): OwnerRecord {
+                  return record();
+                },
+              }),
+          };
+        },
+      },
+    ];
+
+    it.each(relationCases)(
+      "$kind relation: throws the overflow error without reading the override",
+      ({ build }) => {
+        const { spawnOwned, counter, countedRecord } = createFullWorld(build);
+
+        expect(() => spawnOwned(countedRecord)).toThrow(
+          new Error("entity index overflow (max 1048575 per world)"),
+        );
+        expect(counter.reads).toBe(0);
+      },
+    );
+
+    it.each(relationCases)(
+      "$kind relation: links a later spawn to its target once a slot is free again",
+      ({ build }) => {
+        const { world, target, spare, Owner, storage, spawnOwned } = createFullWorld(build);
+        expect(() => spawnOwned(() => ({ target }))).toThrow(new RegExp(String(MAX_INDEX - 1)));
+        despawn(world, spare);
+
+        const id = spawnOwned(() => ({ target }));
+
+        expect(get(storage, id, Owner.target)).toBe(target);
+        expect(getSources(world, Owner, target)).toStrictEqual([id]);
+      },
+    );
   });
 });
