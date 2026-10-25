@@ -225,6 +225,11 @@ describe("archetype", () => {
         key: "Class",
         declare: (c: ComponentDescriptor) => class extends Archetype([c]) {},
       },
+      {
+        form: "class extends Archetype([], [C])",
+        key: "ClassOpt",
+        declare: (c: ComponentDescriptor) => class extends Archetype([], [c]) {},
+      },
     ];
 
     it.each(
