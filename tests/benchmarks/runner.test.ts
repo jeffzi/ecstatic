@@ -1,15 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { join } from "node:path";
 
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
+
+import type { BenchLifecycle } from "../../benchmarks/measure.js";
 import {
-  anchoredFilter,
   type BenchEntry,
   type BenchReport,
   benchNames,
   ChildReportError,
   type ChildSpawnSpec,
   childSpawnSpec,
+  CompileError,
+  compileOptimized,
   type Engine,
   isDefaultEngines,
+  measureBench,
   mergeReports,
   namespaceReport,
   type ParsedArgs,
@@ -20,6 +25,17 @@ import {
   selectBenchmarks,
   UsageError,
 } from "../../benchmarks/runner.js";
+import { openSession, type Session } from "../../src/plugin/optimizer/session.js";
+import { createProject, removeTempDirs } from "../unit/plugin/tsconfig-fixtures.js";
+import {
+  type BareWorldCtx,
+  BENCHMARK_CONFIG,
+  benchmarkConfigProject,
+  buildBareWorld,
+  COMPILE_FAILURES,
+  COMPILE_TIMEOUT_MS,
+  removeBenchmarkProjects,
+} from "./fixtures.js";
 
 const FILTER = "^access\\.";
 const BENCH = "access.get_1field";
@@ -29,49 +45,83 @@ describe("parseArgs", () => {
     it("defaults to the node engine with no filter when argv is empty", () => {
       const parsed = parseArgs([]);
 
-      expect(parsed).toStrictEqual({ mode: "parent", engines: ["node"] });
+      expect(parsed).toStrictEqual({ mode: "parent", engines: ["node"], optimized: false });
     });
 
     it("reads a lone positional argument as the filter", () => {
       const parsed = parseArgs([FILTER]);
 
-      expect(parsed).toStrictEqual({ mode: "parent", filter: FILTER, engines: ["node"] });
+      expect(parsed).toStrictEqual({
+        mode: "parent",
+        filter: FILTER,
+        engines: ["node"],
+        optimized: false,
+      });
     });
 
     const engineCases: { label: string; argv: string[]; expected: ParsedArgs }[] = [
       {
         label: "a single engine on its own",
         argv: ["--engine", "bun"],
-        expected: { mode: "parent", engines: ["bun"] },
+        expected: { mode: "parent", engines: ["bun"], optimized: false },
       },
       {
         label: "a single engine after the filter",
         argv: [FILTER, "--engine", "bun"],
-        expected: { mode: "parent", filter: FILTER, engines: ["bun"] },
+        expected: { mode: "parent", filter: FILTER, engines: ["bun"], optimized: false },
       },
       {
         label: "a single engine before the filter",
         argv: ["--engine", "bun", FILTER],
-        expected: { mode: "parent", filter: FILTER, engines: ["bun"] },
+        expected: { mode: "parent", filter: FILTER, engines: ["bun"], optimized: false },
       },
       {
         label: "the default engine by name",
         argv: ["--engine", "node"],
-        expected: { mode: "parent", engines: ["node"] },
+        expected: { mode: "parent", engines: ["node"], optimized: false },
       },
       {
         label: "two engines comma-separated",
         argv: ["--engine", "node,bun"],
-        expected: { mode: "parent", engines: ["node", "bun"] },
+        expected: { mode: "parent", engines: ["node", "bun"], optimized: false },
       },
       {
         label: "two engines comma-separated with a filter",
         argv: [FILTER, "--engine", "node,bun"],
-        expected: { mode: "parent", filter: FILTER, engines: ["node", "bun"] },
+        expected: { mode: "parent", filter: FILTER, engines: ["node", "bun"], optimized: false },
       },
     ];
 
     it.each(engineCases)("parses --engine with $label", ({ argv, expected }) => {
+      const parsed = parseArgs(argv);
+
+      expect(parsed).toStrictEqual(expected);
+    });
+
+    const optimizedCases: { label: string; argv: string[]; expected: ParsedArgs }[] = [
+      {
+        label: "on its own",
+        argv: ["--optimized"],
+        expected: { mode: "parent", engines: ["node"], optimized: true },
+      },
+      {
+        label: "before the other arguments",
+        argv: ["--optimized", "--engine", "bun", FILTER],
+        expected: { mode: "parent", filter: FILTER, engines: ["bun"], optimized: true },
+      },
+      {
+        label: "between the other arguments",
+        argv: ["--engine", "node,bun", "--optimized", FILTER],
+        expected: { mode: "parent", filter: FILTER, engines: ["node", "bun"], optimized: true },
+      },
+      {
+        label: "after the other arguments",
+        argv: [FILTER, "--engine", "bun", "--optimized"],
+        expected: { mode: "parent", filter: FILTER, engines: ["bun"], optimized: true },
+      },
+    ];
+
+    it.each(optimizedCases)("parses --optimized $label", ({ argv, expected }) => {
       const parsed = parseArgs(argv);
 
       expect(parsed).toStrictEqual(expected);
@@ -100,6 +150,8 @@ describe("parseArgs", () => {
       { label: "--child without a value", argv: ["--child"] },
       { label: "--child alongside a filter", argv: [FILTER, "--child", BENCH] },
       { label: "--child alongside --engine", argv: ["--child", BENCH, "--engine", "bun"] },
+      { label: "--child alongside --optimized", argv: ["--child", BENCH, "--optimized"] },
+      { label: "a repeated --optimized flag", argv: ["--optimized", "--optimized"] },
     ];
 
     it.each(usageCases)("throws UsageError for $label", ({ argv }) => {
@@ -169,6 +221,13 @@ describe("childSpawnSpec", () => {
     execPath: "/usr/bin/node",
     mainPath: "/repo/benchmarks/main.ts",
     benchName: BENCH,
+    compiled: false,
+  };
+
+  const compiledTarget = {
+    ...target,
+    mainPath: "/repo/.bench-optimized/benchmarks/main.js",
+    compiled: true,
   };
 
   const spawnCases: { engine: Engine; expected: ChildSpawnSpec }[] = [
@@ -195,17 +254,47 @@ describe("childSpawnSpec", () => {
 
     expect(spec).toStrictEqual(expected);
   });
+
+  const compiledCases: { engine: Engine; expected: ChildSpawnSpec }[] = [
+    {
+      engine: "node",
+      expected: {
+        command: compiledTarget.execPath,
+        args: ["--expose-gc", compiledTarget.mainPath, "--child", compiledTarget.benchName],
+      },
+    },
+    {
+      engine: "bun",
+      expected: {
+        command: "bun",
+        args: ["--expose-gc", compiledTarget.mainPath, "--child", compiledTarget.benchName],
+      },
+    },
+  ];
+
+  it.each(compiledCases)(
+    "runs the compiled entry under $engine without a TypeScript loader",
+    ({ engine, expected }) => {
+      const spec = childSpawnSpec(engine, compiledTarget);
+
+      expect(spec).toStrictEqual(expected);
+    },
+  );
 });
 
 describe("registerBench", () => {
   // The registry is module-level state shared by the whole file, so each test
   // owns a private name prefix and only asserts on its own entries.
-  const body = (): number => 1;
+  const description: BenchLifecycle<BareWorldCtx> = {
+    kind: "warmed",
+    build: buildBareWorld,
+    body: () => {},
+  };
 
   it("records names in registration order", () => {
-    registerBench("order.first", body);
-    registerBench("order.second", body);
-    registerBench("order.third", body);
+    registerBench("order.first", description);
+    registerBench("order.second", description);
+    registerBench("order.third", description);
 
     const recorded = benchNames().filter((name) => name.startsWith("order."));
 
@@ -213,31 +302,45 @@ describe("registerBench", () => {
   });
 
   it("rejects a name that is already registered", () => {
-    registerBench("duplicate.only", body);
+    registerBench("duplicate.only", description);
 
     expect(() => {
-      registerBench("duplicate.only", body);
+      registerBench("duplicate.only", description);
     }).toThrow(/duplicate\.only/);
   });
 });
 
-describe("anchoredFilter", () => {
-  const matchCases: { candidate: string; matches: boolean }[] = [
-    { candidate: BENCH, matches: true },
-    { candidate: `${BENCH}_extra`, matches: false },
-    { candidate: "access.get", matches: false },
-    // The `.` in the name must be escaped, or it would match any character.
-    { candidate: "access:get_1field", matches: false },
-  ];
+describe("measureBench", () => {
+  /** A description whose body fails at once with `error`, so measuring it settles fast. */
+  function failingWith(error: Error): BenchLifecycle<BareWorldCtx> {
+    return {
+      kind: "warmed",
+      build: buildBareWorld,
+      body: () => {
+        throw error;
+      },
+    };
+  }
 
-  it.each(matchCases)(
-    "built from the name matches $candidate → $matches",
-    ({ candidate, matches }) => {
-      const pattern = new RegExp(anchoredFilter(BENCH));
+  it("measures the description registered under the name it is given", async () => {
+    vi.stubGlobal("gc", () => {});
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const second = new Error("the second body ran");
+    registerBench("bound.first", failingWith(new Error("the first body ran")));
+    registerBench("bound.second", failingWith(second));
 
-      expect(pattern.test(candidate)).toBe(matches);
-    },
-  );
+    const measured = measureBench("bound.second");
+
+    await expect(measured).rejects.toBe(second);
+  });
+
+  it("rejects a name that is not registered, naming it", async () => {
+    const measured = measureBench("banana.missing");
+
+    await expect(measured).rejects.toThrow("banana.missing");
+  });
 });
 
 describe("selectBenchmarks", () => {
@@ -284,19 +387,19 @@ const LAYOUT: unknown = [{ name: 0, types: [] }];
 const CONTEXT: unknown = { cpu: { freq: 3.2 }, runtime: "node" };
 
 /**
- * One benchmark entry as mitata's json format writes it.
+ * One benchmark entry as a child's report writes it.
  *
  * `stats`, `args` and `kind` are fields the runner never reads — they are here
  * so the tests can prove they survive parsing and merging.
  *
  * @param alias - The benchmark name.
  * @param overrides - Fields replacing the defaults.
- * @returns A BenchEntry shaped like one mitata json entry.
+ * @returns A BenchEntry shaped like one entry of a child's report.
  */
 function benchEntry(alias: string, overrides: Partial<BenchEntry> = {}): BenchEntry {
   return {
     alias,
-    runs: [{ stats: { p50: 1234.5, heap: { avg: 64 } }, args: { size: 1000 }, error: null }],
+    runs: [{ stats: { p50: 1234.5, heap: { avg: 64 } }, args: { size: 1000 } }],
     kind: "iter",
     ...overrides,
   };
@@ -333,8 +436,6 @@ describe("parseChildReport", () => {
   });
 
   describe("when stdout is not a usable report", () => {
-    const failingRun = { stats: { p50: 0 }, error: "field 'hp' is not defined" };
-
     const invalidCases: { label: string; stdout: string }[] = [
       { label: "output holding no JSON at all", stdout: "bun: command not found\n" },
       { label: "an empty benchmarks array", stdout: JSON.stringify(report({ benchmarks: [] })) },
@@ -343,10 +444,6 @@ describe("parseChildReport", () => {
         stdout: JSON.stringify(
           report({ benchmarks: [benchEntry(BENCH), benchEntry("access.get_3fields")] }),
         ),
-      },
-      {
-        label: "a run recording an error",
-        stdout: JSON.stringify(report({ benchmarks: [benchEntry(BENCH, { runs: [failingRun] })] })),
       },
       {
         label: "a document without layout",
@@ -378,10 +475,21 @@ describe("namespaceReport", () => {
     ]);
   });
 
+  it("inserts an optimized/ segment after the engine prefix for an optimized run", () => {
+    const input = report({
+      benchmarks: [benchEntry("access.get_1field"), benchEntry("entity.spawn")],
+    });
+
+    const namespaced = namespaceReport(input, "bun", { optimized: true });
+
+    expect(namespaced.benchmarks.map((e) => e.alias)).toStrictEqual([
+      "bun/optimized/access.get_1field",
+      "bun/optimized/entity.spawn",
+    ]);
+  });
+
   it("preserves runs, layout, and context unchanged", () => {
-    const customRuns = [
-      { stats: { p50: 9999, heap: { avg: 128 } }, args: { size: 500 }, error: null },
-    ];
+    const customRuns = [{ stats: { p50: 9999, heap: { avg: 128 } }, args: { size: 500 } }];
     const input = report({
       benchmarks: [benchEntry("access.get_1field", { runs: customRuns })],
     });
@@ -449,6 +557,21 @@ describe("mergeReports", () => {
     });
   });
 
+  describe("when merging a plain and an optimized report from the same engine", () => {
+    it("keeps both entries because the optimized/ segment tells them apart", () => {
+      const measured = report({ benchmarks: [benchEntry("access.get_1field")] });
+      const plain = namespaceReport(measured, "node");
+      const optimized = namespaceReport(measured, "node", { optimized: true });
+
+      const merged = mergeReports([plain, optimized]);
+
+      expect(merged.benchmarks.map((e) => e.alias)).toStrictEqual([
+        "node/access.get_1field",
+        "node/optimized/access.get_1field",
+      ]);
+    });
+  });
+
   it("returns an equivalent document for a single report", () => {
     const only = report();
 
@@ -467,5 +590,58 @@ describe("mergeReports", () => {
 
   it.each(failingCases)("throws ChildReportError for $label", ({ reports }) => {
     expect(() => mergeReports(reports)).toThrow(ChildReportError);
+  });
+});
+
+describe("compileOptimized", () => {
+  describe("when an output cannot be written", () => {
+    let session: Session;
+
+    beforeAll(async () => {
+      session = await openSession(BENCHMARK_CONFIG);
+    }, COMPILE_TIMEOUT_MS);
+
+    afterAll(async () => {
+      await session.close();
+      removeTempDirs();
+    });
+
+    it(
+      "rejects with CompileError naming the output directory",
+      async () => {
+        const outDir = join(createProject({ taken: "" }), "taken");
+
+        const compiled = compileOptimized(session, outDir);
+
+        await expect(compiled).rejects.toThrow(CompileError);
+        await expect(compiled).rejects.toThrow(outDir);
+      },
+      COMPILE_TIMEOUT_MS,
+    );
+  });
+
+  describe.each(COMPILE_FAILURES)("on a source with $label", ({ source, diagnostic }) => {
+    let session: Session;
+
+    beforeAll(async () => {
+      session = await openSession(benchmarkConfigProject(source));
+    }, COMPILE_TIMEOUT_MS);
+
+    afterAll(async () => {
+      await session.close();
+      removeBenchmarkProjects();
+      removeTempDirs();
+    });
+
+    it(
+      "rejects with CompileError carrying the diagnostic",
+      async () => {
+        const compiled = compileOptimized(session, createProject({}));
+
+        await expect(compiled).rejects.toThrow(CompileError);
+        await expect(compiled).rejects.toThrow(diagnostic);
+      },
+      COMPILE_TIMEOUT_MS,
+    );
   });
 });

@@ -7,5 +7,5 @@
       "ecstatic/internal": ["../src/ecstatic/internal.ts"]
     }
   },
-  "include": ["."]
+  "include": [".", "../benchmarks/bun-jsc.d.ts"]
 }

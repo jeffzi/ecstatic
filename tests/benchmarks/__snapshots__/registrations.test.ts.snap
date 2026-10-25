@@ -1,0 +1,1028 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`every registered benchmark > access/get_1field builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+]
+`;
+
+exports[`every registered benchmark > access/get_1field has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1000999001,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+  ],
+  "sank": 500500,
+}
+`;
+
+exports[`every registered benchmark > access/get_2field builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+]
+`;
+
+exports[`every registered benchmark > access/get_2field has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1000999001,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+  ],
+  "sank": 1501500,
+}
+`;
+
+exports[`every registered benchmark > access/get_4field builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+]
+`;
+
+exports[`every registered benchmark > access/get_4field has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1000999001,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+  ],
+  "sank": 1500497,
+}
+`;
+
+exports[`every registered benchmark > access/set_1field builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+]
+`;
+
+exports[`every registered benchmark > access/set_1field has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      913657693,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > access/set_record builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+]
+`;
+
+exports[`every registered benchmark > access/set_record has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      738975077,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > entity/alive_check builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+]
+`;
+
+exports[`every registered benchmark > entity/alive_check has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1000999001,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+  ],
+  "sank": 1000,
+}
+`;
+
+exports[`every registered benchmark > entity/despawn builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+]
+`;
+
+exports[`every registered benchmark > entity/despawn has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      0,
+      0,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > entity/spawn_empty builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+  [
+    0,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > entity/spawn_empty has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1000999001,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 1054075500,
+}
+`;
+
+exports[`every registered benchmark > entity/spawn_indirect builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+  [
+    0,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > entity/spawn_indirect has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1000999001,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 1054075500,
+}
+`;
+
+exports[`every registered benchmark > entity/spawn_recycle builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+]
+`;
+
+exports[`every registered benchmark > entity/spawn_recycle has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      0,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+  ],
+  "sank": 2101492,
+}
+`;
+
+exports[`every registered benchmark > entity/spawn_with_data builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+  [
+    0,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > entity/spawn_with_data has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1000999001,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 1054075500,
+}
+`;
+
+exports[`every registered benchmark > iteration/deferred_despawn builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    219312750,
+  ],
+  [
+    0,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > iteration/deferred_despawn has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      500,
+      62749242,
+    ],
+    [
+      0,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > iteration/each_chained builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > iteration/each_chained has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > iteration/each_with_despawn builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    0,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > iteration/each_with_despawn has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      500,
+      208675360,
+    ],
+    [
+      0,
+      0,
+    ],
+  ],
+  "sank": 1000,
+}
+`;
+
+exports[`every registered benchmark > iteration/frame builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    55055000,
+  ],
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > iteration/frame has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      -509857.3166666669,
+    ],
+    [
+      1000,
+      55138416.666666664,
+    ],
+    [
+      1000,
+      8341.666666666666,
+    ],
+    [
+      1000,
+      0,
+    ],
+    [
+      1000,
+      8341.666666666666,
+    ],
+    [
+      1000,
+      8341.666666666666,
+    ],
+    [
+      1000,
+      0,
+    ],
+    [
+      1000,
+      8341.666666666666,
+    ],
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > iteration/helper_call builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    0,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > iteration/helper_call has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1001032384.3499999,
+    ],
+    [
+      0,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > iteration/post_churn_throughput builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    198717753,
+  ],
+  [
+    0,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > iteration/post_churn_throughput has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      198207895.68333122,
+    ],
+    [
+      0,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > iteration/soa_1field builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > iteration/soa_1field has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > iteration/soa_2field builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > iteration/soa_2field has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > iteration/soa_5field builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > iteration/soa_5field has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > iteration/soa_10field builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > iteration/soa_10field has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > iteration/throughput builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    0,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > iteration/throughput has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1000990642.683341,
+    ],
+    [
+      0,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > many/despawn builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+]
+`;
+
+exports[`every registered benchmark > many/despawn has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      0,
+      0,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > many/despawn_all builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+]
+`;
+
+exports[`every registered benchmark > many/despawn_all has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      0,
+      0,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > many/despawn_half builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+]
+`;
+
+exports[`every registered benchmark > many/despawn_half has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      500,
+      191445379,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > many/despawn_world builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+  [
+    500,
+    125375250,
+  ],
+]
+`;
+
+exports[`every registered benchmark > many/despawn_world has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      500,
+      194923741,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+    [
+      0,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > many/spawn_empty builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+  [
+    0,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > many/spawn_empty has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1000999001,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 1000,
+}
+`;
+
+exports[`every registered benchmark > many/spawn_out_reuse builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+  [
+    0,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > many/spawn_out_reuse has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1000999001,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > many/spawn_with_data builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    4000,
+    880220000,
+  ],
+  [
+    0,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > many/spawn_with_data has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1000999001,
+    ],
+    [
+      4000,
+      880220000,
+    ],
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 1000,
+}
+`;
+
+exports[`every registered benchmark > reference/inlined_frame builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    55055000,
+  ],
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    0,
+  ],
+  [
+    1000,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > reference/inlined_frame has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      -509857.3166666669,
+    ],
+    [
+      1000,
+      55138416.666666664,
+    ],
+    [
+      1000,
+      8341.666666666666,
+    ],
+    [
+      1000,
+      0,
+    ],
+    [
+      1000,
+      8341.666666666666,
+    ],
+    [
+      1000,
+      8341.666666666666,
+    ],
+    [
+      1000,
+      0,
+    ],
+    [
+      1000,
+      8341.666666666666,
+    ],
+    [
+      1000,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;
+
+exports[`every registered benchmark > reference/inlined_throughput builds the recorded world > built world 1`] = `
+[
+  [
+    1000,
+    1001500500,
+  ],
+  [
+    0,
+    0,
+  ],
+]
+`;
+
+exports[`every registered benchmark > reference/inlined_throughput has the recorded effect in one timed call > effect 1`] = `
+{
+  "after": [
+    [
+      1000,
+      1000990642.683341,
+    ],
+    [
+      0,
+      0,
+    ],
+  ],
+  "sank": 0,
+}
+`;

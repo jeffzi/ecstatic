@@ -26,6 +26,7 @@ import {
   type RewrittenModule,
 } from "../../src/plugin/optimizer/rewrite.js";
 import { openSession, type Session } from "../../src/plugin/optimizer/session.js";
+import { advanceCall } from "../benchmarks/fixtures.js";
 import { createProject, removeTempDirs } from "../unit/plugin/tsconfig-fixtures.js";
 import {
   CORPUS_FILES,
@@ -402,6 +403,23 @@ function runDiagnostics(run: CorpusRun, strict: boolean): readonly BailDiagnosti
   return bailDiagnostics(bails, strict);
 }
 
+/** The 1-based line of `index` in `text`. */
+function lineOf(text: string, index: number): number {
+  return text.slice(0, index).split("\n").length;
+}
+
+/** The 1-based line on which the each call of the iteration/helper_call benchmark starts in `text`. */
+function helperCallLine(text: string): number {
+  const call = advanceCall(text);
+  const each = text.lastIndexOf("each(", call);
+  if (each < 0) {
+    throw new Error(
+      `iteration-bench.ts has no each call ahead of its helper call at line ${lineOf(text, call)}`,
+    );
+  }
+  return lineOf(text, each);
+}
+
 /** Each storage form the shape analysis distinguishes, with its fixture and whether its shape resolves. */
 const SHAPE_ROWS = [
   { row: "local storage", fixture: "eligible/local-storage", resolves: true },
@@ -550,12 +568,13 @@ describe("storage shape fixtures", () => {
 
 describe("benchmarks", () => {
   const systemsFile = join(BENCHMARK_ROOT, "systems.ts");
+  const iterationFile = join(BENCHMARK_ROOT, "iteration-bench.ts");
   let session: Session;
   let run: CorpusRun;
 
   beforeAll(async () => {
     session = await openSession(join(BENCHMARK_ROOT, "tsconfig.json"));
-    run = await rewriteAll(session, [systemsFile]);
+    run = await rewriteAll(session, [systemsFile, iterationFile]);
   }, CORPUS_TIMEOUT_MS);
 
   afterAll(() => session.close());
@@ -568,6 +587,17 @@ describe("benchmarks", () => {
     expect(
       systems?.rewrites.filter(({ mode }) => mode !== "hoisted").map(({ pos }) => pos.line),
     ).toStrictEqual([]);
+  });
+
+  it("compile the helper_call each call realloc-safe", () => {
+    const line = helperCallLine(readFileSync(iterationFile, "utf8"));
+
+    const modes = run.planned
+      .get(iterationFile)
+      ?.rewrites.filter(({ pos }) => pos.line === line)
+      .map(({ mode }) => mode);
+
+    expect(modes).toStrictEqual(["realloc-safe"]);
   });
 });
 

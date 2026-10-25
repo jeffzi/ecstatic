@@ -1,10 +1,10 @@
 # Benchmarks
 
 Regression-detection benchmarks for ecstatic, timed with
-[mitata](https://github.com/evanwashere/mitata). The
+[tinybench](https://github.com/tinylibs/tinybench). The
 [reference group](../docs/benchmarks/specifications/reference.md) holds hand-inlined twins of two
-iteration benchmarks, `throughput` and `frame`. Each twin runs the column loop a compile-time
-transform would emit for its `each()` call, which sets a speed ceiling for that benchmark. The
+iteration benchmarks, `throughput` and `frame`. Each twin runs the column loop a build-time
+optimizer would emit for its `each()` call, which sets a speed ceiling for that benchmark. The
 reference group is not a regression target.
 
 For what each benchmark measures and why, see [`docs/benchmarks/`](../docs/benchmarks/README.md).
@@ -28,9 +28,47 @@ are always prefixed with the engine (`node/access/get_1field`, `bun/access/get_1
 matches the plain benchmark name (without the engine prefix), so `'^iteration/'` selects the
 iteration group under every requested engine.
 
+Each figure in the report is the median time per call of the benchmark body. `performance.now()`
+advances in steps of about 41.7 ns under both engines on the Apple M2 Max where the suite was
+measured. A net-neutral benchmark leaves the world as it found it, so it times a batch of
+consecutive calls per sample. The driver sizes the batch so one step is at most 1 % of the sample's
+span, then divides the span by the batch size. A world-consuming benchmark times one call per sample
+against a fresh world, so each of its samples is a whole number of steps. At that resolution the
+timer resolves a body near 375 ns to about 11 %, and two readings less than one step apart are
+indistinguishable. [Timing lifecycle](../docs/benchmarks/rationale.md#conventions) explains why
+batching is safe for net-neutral bodies and why world-consuming bodies run one call per sample.
+
 Bare `"ecstatic"` imports resolve through the package's own `exports` map to `dist/`, so both the
 suite and the allocation gate measure the last compiled output; build before running the suite by
 hand.
+
+### Optimized run
+
+`--optimized` measures the suite as the build-time optimizer compiles it:
+
+```bash
+npm run -s build
+npx tsx --expose-gc benchmarks/main.ts --optimized '^iteration/'
+npx tsx --expose-gc benchmarks/main.ts --optimized --engine node,bun
+```
+
+Before measuring anything, the runner opens the benchmark project (`benchmarks/tsconfig.json`) in
+the TypeScript compiler, rewrites every benchmark source through the optimizer in strict mode, and
+emits the JavaScript into `.bench-optimized/` (gitignored), each file at its path from the
+repository root. It compiles once per run, then spawns every child from the compiled
+`benchmarks/main.js` under each requested engine, with no TypeScript loader. The aliases carry an
+`optimized/` segment after the engine (`node/optimized/iteration/throughput`), so a plain report and
+an optimized report merge without colliding. The filter still matches the plain benchmark name.
+
+The output directory sits inside the package and outside `node_modules`, so the compiled
+`import "ecstatic"` and `import "ecstatic/internal"` resolve to `dist/` through the package's
+`exports`, as the plain suite's imports do; build first. The compile also writes the `src/` and
+`scripts/` modules the benchmarks import there; only the `scripts/` copies are loaded.
+
+Strict mode means a benchmark site the optimizer cannot rewrite fails the compile, rather than
+quietly timing the runtime call. A TypeScript error, an optimizer diagnostic, or an output file that
+cannot be written fails the compile; the run then exits 1 before measuring anything, with the cause
+on stderr and nothing on stdout.
 
 Set `BENCH_GENERATION=<n>` to measure worlds whose tracked entity ids sit at generation `n`: the
 world builder recycles the tracked slots until every tracked id is at that generation and leaves
@@ -44,11 +82,11 @@ The pattern is an unanchored regular expression matched against benchmark names.
 matches nothing is an error, not an empty report. A pattern cannot begin with `-`, which would parse
 as a flag.
 
-The suite requires an exposed garbage collector and exits non-zero without one, because mitata would
-otherwise substitute a fallback that allocates a 1 GiB buffer per benchmark to force collection —
-perturbing the timings rather than merely omitting a statistic. The guard lives in the child process
-that measures, and every child is spawned with `--expose-gc`, so it fires only when a child is
-invoked by hand without the flag.
+The suite requires an exposed garbage collector and exits non-zero without one. The driver collects
+garbage once, after warmup and before the first timed sample, so no collection left over from setup
+or warmup lands inside a timed sample. The guard lives in the child process that measures. The
+runner spawns every child with `--expose-gc`, so the guard fires only when someone runs a child by
+hand without the flag.
 
 ### One process per benchmark
 

@@ -30,7 +30,7 @@ each iteration and destroys it after, both outside the clock. Every benchmark en
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register empty archetype |
-| Warmup   | None                                               |
+| Warmup   | 1000 untimed samples, each on a fresh world        |
 
 **Operation:**
 
@@ -52,7 +52,7 @@ amortizes.
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register spawn archetype |
-| Warmup   | None                                               |
+| Warmup   | 1000 untimed samples, each on a fresh world        |
 
 **Operation:**
 
@@ -75,7 +75,7 @@ callers holding a reusable buffer.
 | Property | Value                                                                   |
 | -------- | ----------------------------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register spawn archetype, pre-sized out array |
-| Warmup   | One `spawnMany(..., out)` + `despawnMany()` cycle to size the array     |
+| Warmup   | 1000 untimed samples, each on a fresh world                             |
 
 **Operation:**
 
@@ -95,7 +95,7 @@ Should the out path ever go back to building its own array and copying, the extr
 N-element copy would show up here as a slowdown against its own history.
 
 One comparison to avoid: the raw delta from [`many/spawn_with_data`](#spawn_with_data) is not an
-allocation measurement. The warmup cycle leaves this benchmark's freelist full, so its spawns take
+allocation measurement. The setup cycle leaves this benchmark's freelist full, so its spawns take
 the recycling path. With [`BENCH_GENERATION`](parameters.md#world-population) unset,
 [`many/spawn_with_data`](#spawn_with_data)'s spawns take the growth path, and that difference
 dominates.
@@ -106,10 +106,10 @@ dominates.
 
 **Purpose:** Measure batch removal of a list of entities.
 
-| Property | Value                    |
-| -------- | ------------------------ |
-| Setup    | Pre-populated world (5x) |
-| Warmup   | None                     |
+| Property | Value                                       |
+| -------- | ------------------------------------------- |
+| Setup    | Pre-populated world (5x)                    |
+| Warmup   | 1000 untimed samples, each on a fresh world |
 
 **Operation:**
 
@@ -133,7 +133,7 @@ path that full-batch despawn skips.
 | Property | Value                                                   |
 | -------- | ------------------------------------------------------- |
 | Setup    | Pre-populated world (5x), first N/2 of shuffled tracked |
-| Warmup   | None                                                    |
+| Warmup   | 1000 untimed samples, each on a fresh world             |
 
 **Operation:**
 
@@ -156,10 +156,10 @@ swap-and-pops, it shows the batch form's amortization under realistic partial ch
 
 **Purpose:** Measure clearing an entire archetype through the no-IDs overload.
 
-| Property | Value                    |
-| -------- | ------------------------ |
-| Setup    | Pre-populated world (5x) |
-| Warmup   | None                     |
+| Property | Value                                       |
+| -------- | ------------------------------------------- |
+| Setup    | Pre-populated world (5x)                    |
+| Warmup   | 1000 untimed samples, each on a fresh world |
 
 **Operation:**
 
@@ -181,7 +181,7 @@ everything.
 | Property | Value                                                                              |
 | -------- | ---------------------------------------------------------------------------------- |
 | Setup    | Pre-populated world (5x), 2 archetypes; N/2 IDs taken from each, shuffled together |
-| Warmup   | None                                                                               |
+| Warmup   | 1000 untimed samples, each on a fresh world                                        |
 
 **Operation:**
 

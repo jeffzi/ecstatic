@@ -15,6 +15,7 @@ import {
   parseFile,
   parseText,
   printTree,
+  programErrors,
   programFileNames,
   projectSourceFile,
   type Snapshot,
@@ -68,6 +69,13 @@ export interface ProjectView {
    * @throws When the session is closed or its compiler process exited.
    */
   sourceFileNames(): Promise<readonly string[]>;
+  /**
+   * The type-check errors of the program: its option, global, syntax, and semantic errors.
+   *
+   * @returns The errors as the compiler formats them; empty when the program has none.
+   * @throws When the session is closed or its compiler process exited.
+   */
+  errors(): Promise<string>;
   /**
    * The error a failed compiler call should reject with when the session has ended. It covers
    * calls on any object the checker handed out, not only those made through the checker itself.
@@ -232,6 +240,7 @@ class ProjectSession implements Session {
         await this.#query(async () => await projectSourceFile(project, file)),
       emit: async (file) => await this.#query(async () => await emitJavaScript(project, file)),
       sourceFileNames: async () => await this.#query(async () => await programFileNames(project)),
+      errors: async () => await this.#query(async () => await programErrors(project)),
       endedError: (error) =>
         error instanceof SessionEndedError
           ? error

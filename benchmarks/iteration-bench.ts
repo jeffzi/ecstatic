@@ -19,6 +19,7 @@ import {
 } from "./archetypes.js";
 import {
   benchCreateWorld,
+  DT,
   makeBareWorld,
   makeFrameWorld,
   makeThroughputWorld,
@@ -33,8 +34,8 @@ let sink = 0;
 /**
  * Accumulated field reads and entity counts, kept live so V8 cannot elide the passes.
  *
- * @returns The running sum so far; meaningless as a number, it exists to be fed to
- * `do_not_optimize` after `run` returns.
+ * @returns The running sum so far; meaningless as a number, returned only so the accumulated work
+ * stays reachable.
  */
 export function sinkValue(): number {
   return sink;
@@ -50,6 +51,24 @@ registerBench(
 // Nine systems in a row, one per storage, each `each()` callback a different
 // shape: what a frame of systems costs when they share the `each()` call site.
 registerBench("iteration/frame", warmedBench(makeFrameWorld, frameEach));
+
+function advance(x: number, dx: number): number {
+  return x + dx * DT;
+}
+
+// The call to a helper is what makes this body hazard-bearing: a call may spawn past
+// capacity and reallocate the columns, so the optimizer's realloc-safe mode re-reads them
+// through the storage on each access. The call is the body's only hazard, so set beside
+// `iteration/throughput` it shows what realloc-safe mode costs a plain field update;
+// inlining `advance` would make the body hazard-free and lose that measurement.
+registerBench(
+  "iteration/helper_call",
+  warmedBench(makeThroughputWorld, ({ trackedStorage }) => {
+    each(trackedStorage, (e) => {
+      e.Position.x = advance(e.Position.x, e.Velocity.dx);
+    });
+  }),
+);
 
 // Five rounds of despawning every third entity and respawning the same count
 // leave the freelist and row order fragmented the way a running game does.
@@ -113,8 +132,9 @@ registerBench(
 
 // Despawns every second entity from inside the callback iterating it — the
 // swap-and-pop has to stay correct while the traversal is in flight.
-registerBench("iteration/each_with_despawn", function* () {
-  yield manualBench(
+registerBench(
+  "iteration/each_with_despawn",
+  manualBench(
     () => {
       const ctx = benchCreateWorld({ noBackground: true });
       each(ctx.trackedStorage, () => {});
@@ -130,8 +150,8 @@ registerBench("iteration/each_with_despawn", function* () {
       });
       sink += count;
     },
-  );
-});
+  ),
+);
 
 // The soa_* family varies only in how many fields of one component the pass
 // touches: 1, 2, 5, then 10. The spread is not monotonic in field count:
@@ -195,17 +215,18 @@ registerBench(
   ),
 );
 
+/**
+ * Reused across samples: the collect pass fills it and the flush empties it.
+ * Emptying is not optional — leaving the IDs in place would hand already-dead
+ * entities to `despawnMany` on every later sample.
+ */
+const deferredDead: EntityId[] = [];
+
 // The deferred alternative to each_with_despawn: collect the doomed IDs during
 // the pass, then flush them in one batch once iteration is over.
-registerBench("iteration/deferred_despawn", function* () {
-  /**
-   * Reused across iterations: the collect pass fills it and the flush empties
-   * it. Emptying is not optional — leaving the IDs in place would hand
-   * already-dead entities to `despawnMany` on every later iteration.
-   */
-  const deferredDead: EntityId[] = [];
-
-  yield manualBench(
+registerBench(
+  "iteration/deferred_despawn",
+  manualBench(
     () => {
       const ctx = benchCreateWorld({ noBackground: true });
       const storage = ctx.trackedStorage;
@@ -237,5 +258,5 @@ registerBench("iteration/deferred_despawn", function* () {
       despawnMany(storage, deferredDead);
       deferredDead.length = 0;
     },
-  );
-});
+  ),
+);
