@@ -8,6 +8,7 @@ import {
   type Callback,
   type EscapeKind,
   type FilterElement,
+  type FilterForm,
   iterates,
   type NodeID,
   type Op,
@@ -53,7 +54,7 @@ export function thrownMessage(error: unknown): string {
 export type Mode = "hoisted" | "realloc-safe";
 
 /** A literal filter of an inlined `each` call, folded against the call's one shape. */
-export interface PlannedFilter {
+export interface FoldedPlannedFilter {
   /**
    * The filter's elements, the `all` axis, then `any`, then `none`, each in element order: parallel
    * to `fold.present`. The emitter evaluates them in source order, which an object filter's key
@@ -62,6 +63,22 @@ export interface PlannedFilter {
   readonly elements: readonly FilterElement[];
   readonly fold: FoldedFilter;
 }
+
+/** The forms of a non-literal filter an inlined loop can tell apart at runtime, as `each` does. */
+export type RuntimeFilterForm = Exclude<FilterForm, "unsupported">;
+
+/**
+ * A non-literal filter of an inlined `each` call, which the loop resolves at runtime on every call,
+ * caching the resolution in its call site's slot.
+ */
+export interface RuntimePlannedFilter {
+  /** The filter expression, evaluated once per call. */
+  readonly node: NodeID;
+  readonly form: RuntimeFilterForm;
+}
+
+/** The filter of an inlined `each` call: folded at build time, or resolved at runtime. */
+export type PlannedFilter = FoldedPlannedFilter | RuntimePlannedFilter;
 
 /** An `each` call site whose runtime call becomes an inlined loop over its one storage's columns. */
 export interface EachInlining {
@@ -81,7 +98,7 @@ export interface EachInlining {
    * `realloc-safe` mode, whose loop reads every array afresh after a spawn.
    */
   readonly spawnTargets: readonly SpawnTarget[];
-  /** The call's literal filter; absent on a call without a filter argument. */
+  /** The call's filter; absent on a call without a filter argument. */
   readonly filter?: PlannedFilter;
   readonly pos: Position;
   readonly call: NodeID;
@@ -160,9 +177,11 @@ function siteReason(site: Site): Reason | Callback {
 /**
  * @param site - Eligible `each` site.
  * @param callback - The site's callback.
- * @returns The inlining over the site's one shape, its literal filter folded against that shape.
+ * @returns The inlining over the site's one shape, its literal filter folded against that shape
+ *   and any other filter carried for the loop to resolve at runtime.
  * @throws {Error} When the site does not hold exactly one shape: analysis records a reason on every
- *   `each` site whose storage does not resolve, so an eligible site without one is an analysis bug.
+ *   `each` site whose storage does not resolve, so an eligible site without one is an analysis bug;
+ *   or when its filter's form is unsupported, which keeps an eligible site's runtime call.
  */
 function eachInlining(site: Site, callback: Callback): EachInlining {
   const shape = site.shapes.length === 1 ? site.shapes[0] : undefined;
@@ -180,20 +199,28 @@ function eachInlining(site: Site, callback: Callback): EachInlining {
     spawnTargets: hoisted ? callback.spawnTargets : [],
   };
   const filter = site.filter;
-  if (filter?.kind !== "literal") return inlining;
-  const elements = [...filter.all, ...filter.any, ...filter.none];
-  return { ...inlining, filter: { elements, fold: foldFilter(filter, shape) } };
+  if (filter === undefined) return inlining;
+  if (filter.kind === "literal") {
+    const elements = [...filter.all, ...filter.any, ...filter.none];
+    return { ...inlining, filter: { elements, fold: foldFilter(filter, shape) } };
+  }
+  if (filter.form === "unsupported")
+    throw new Error("eligible each site has an unsupported filter");
+  return { ...inlining, filter: { node: filter.node, form: filter.form } };
 }
 
 /**
- * Whether a site's filter keeps its call a runtime call: a filter argument that is not written as a
- * literal at every level, which the plan cannot fold.
+ * Whether a site's filter keeps its call a runtime call: a filter argument analysis did not report,
+ * or one whose type does not pin it to a component array or a filter object, which the runtime
+ * tells apart from a callback by `typeof` and an inlined loop could not.
  *
  * @param site - Site to check.
- * @returns `true` for a filtered site whose filter is not literal.
+ * @returns `true` for a filtered site whose filter is neither literal nor of a runtime form.
  */
-function unfoldedFilter(site: Site): boolean {
-  return site.filtered && site.filter?.kind !== "literal";
+function keptFilter(site: Site): boolean {
+  if (!site.filtered) return false;
+  const { filter } = site;
+  return filter === undefined || (filter.kind === "non-literal" && filter.form === "unsupported");
 }
 
 class Planner {
@@ -249,7 +276,7 @@ class Planner {
     const escape = this.#escapeVerdict(site, reason);
     if (escape !== undefined) return escape;
     // Inlining an each that holds an inlined each would need loop composition.
-    if (unfoldedFilter(site) || this.#holdsInlined(site.nested)) {
+    if (keptFilter(site) || this.#holdsInlined(site.nested)) {
       return { reason: "OP_NOT_REWRITTEN" };
     }
     // Checked last so it is reported only on a call that would otherwise be inlined.

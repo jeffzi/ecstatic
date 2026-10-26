@@ -1,0 +1,266 @@
+import * as ecstatic_internal from "ecstatic/internal";
+var site, site_1, site_2;
+// rewrite-applies: filter-runtime
+// rewrite-applies: filter-runtime-object
+import {
+  archetype,
+  component,
+  createWorld,
+  each,
+  type EachFilter,
+  register,
+  spawn,
+  type Storage,
+} from "ecstatic";
+
+const Spot = component("PrismSpot", { x: 0 });
+const Red = component("PrismRed");
+const Blue = component("PrismBlue");
+const Dark = component("PrismDark");
+const Prism = archetype([Spot], [Red, Blue]);
+
+/**
+ * Records the rows one call site visits for a filter object.
+ *
+ * @param storage - The storage of the scenario, iterated through one call site.
+ * @param filter - The filter object for this call; the scenario edits it between calls, so the cached resolution must notice.
+ * @returns The `x` of each visited row, in visit order.
+ */
+function visit(storage: Storage<typeof Prism>, filter: EachFilter): number[] {
+  const seen: number[] = [];
+  {
+      const storage_1 = storage;
+      const filter_1 = filter;
+      if (typeof filter_1 !== "object" || filter_1 === null)
+          ecstatic_internal.throwInvalidEachArguments();
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:PrismSpot{1:x=n}|c8:PrismRed{}c9:PrismBlue{}");
+      const all_1 = filter_1.all, any_1 = filter_1.any, none_1 = filter_1.none;
+      site ??= { s: void 0, f: void 0, all: void 0, any: void 0, none: void 0, allIds: void 0, anyIds: void 0, noneIds: void 0, m: void 0 };
+      let hit = site.s === storage_1 && site.f === filter_1 && site.all === all_1 && site.any === any_1 && site.none === none_1;
+      if (hit && all_1 != null) {
+          const ids = site.allIds;
+          hit = all_1.length === ids.length;
+          for (let k = 0; hit && k < ids.length; k++)
+              hit = all_1[k] === ids[k];
+      }
+      if (hit && any_1 != null) {
+          const ids = site.anyIds;
+          hit = any_1.length === ids.length;
+          for (let k = 0; hit && k < ids.length; k++)
+              hit = any_1[k] === ids[k];
+      }
+      if (hit && none_1 != null) {
+          const ids = site.noneIds;
+          hit = none_1.length === ids.length;
+          for (let k = 0; hit && k < ids.length; k++)
+              hit = none_1[k] === ids[k];
+      }
+      let matcher = site.m;
+      if (!hit) {
+          const allIds = all_1 ?? [], anyIds = any_1 ?? [], noneIds = none_1 ?? [];
+          matcher = ecstatic_internal.resolveFilterMasks(storage_1, allIds, anyIds, noneIds);
+          site.s = storage_1;
+          site.f = filter_1;
+          site.all = all_1;
+          site.any = any_1;
+          site.none = none_1;
+          site.allIds = [...allIds];
+          site.anyIds = [...anyIds];
+          site.noneIds = [...noneIds];
+          site.m = matcher;
+      }
+      if (matcher !== false) {
+          const n = storage_1.n;
+          if (n > 0) {
+              const PrismSpotRecord = storage_1.PrismSpot;
+              if (matcher.allMask === 0 && matcher.anyMask === 0 && matcher.noneMask === 0) {
+                  for (let i = n - 1; i >= 0; i--) {
+                      seen.push(PrismSpotRecord.x[i]);
+                  }
+              }
+              else {
+                  for (let i = n - 1; i >= 0; i--) {
+                      if (matcher.matched[i] !== 0) {
+                          seen.push(PrismSpotRecord.x[i]);
+                      }
+                  }
+              }
+          }
+      }
+  }
+  return seen;
+}
+
+/**
+ * Filters by objects held in bindings or built at the call, resolved on every call: absent axes and an axis a
+ * JavaScript caller left `undefined` act as empty ones, each axis is read once per call through a getter, on the
+ * call that resolves the filter and on the one that reuses it, and a change to the object, an axis, or an element
+ * is seen by the next call. Objects built with a shorthand axis, an axis held in a binding, and a spread property
+ * are resolved the same way.
+ *
+ * @returns The rows each call visited, every axis read, and the matchers the storage registered.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), Prism);
+  spawn(storage, { PrismSpot: { x: 1 }, PrismRed: true });
+  spawn(storage, { PrismSpot: { x: 2 }, PrismRed: true, PrismBlue: true });
+  spawn(storage, { PrismSpot: { x: 3 }, PrismBlue: true });
+  spawn(storage, { PrismSpot: { x: 4 } });
+  const reads: string[] = [];
+  const any = [Red, Blue];
+  const none = [Blue];
+  const watched: EachFilter = {
+    get any() {
+      reads.push("any");
+      return any;
+    },
+    get none() {
+      reads.push("none");
+      return none;
+    },
+  };
+  // A JavaScript caller can leave an axis undefined, which the filter's type does not admit.
+  const loose = { all: [Red], any: undefined } as unknown as EachFilter;
+  const filter: { all: (typeof Spot | typeof Red | typeof Dark)[]; none?: (typeof Blue)[] } = {
+    all: [Red],
+  };
+  const all = [Blue] as const;
+  const base: EachFilter = { any: [Red, Blue] };
+
+  const seen = [visit(storage, watched), visit(storage, watched)];
+  reads.push("changed");
+  none.pop();
+  seen.push(visit(storage, watched), visit(storage, loose));
+  seen.push(visit(storage, filter));
+  filter.none = [Blue];
+  seen.push(visit(storage, filter));
+  filter.all[0] = Dark;
+  seen.push(visit(storage, filter));
+  filter.all = [Spot];
+  seen.push(visit(storage, filter), visit(storage, { ...filter }));
+
+  const seenBuilt: number[] = [];
+  {
+      const storage_2 = storage;
+      const filter_2 = { all };
+      if (typeof filter_2 !== "object" || filter_2 === null)
+          ecstatic_internal.throwInvalidEachArguments();
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_2, "c9:PrismSpot{1:x=n}|c8:PrismRed{}c9:PrismBlue{}");
+      const all_2 = filter_2.all, any_2 = filter_2.any, none_2 = filter_2.none;
+      site_1 ??= { s: void 0, f: void 0, all: void 0, any: void 0, none: void 0, allIds: void 0, anyIds: void 0, noneIds: void 0, m: void 0 };
+      let hit_1 = site_1.s === storage_2 && site_1.f === filter_2 && site_1.all === all_2 && site_1.any === any_2 && site_1.none === none_2;
+      if (hit_1 && all_2 != null) {
+          const ids_1 = site_1.allIds;
+          hit_1 = all_2.length === ids_1.length;
+          for (let k_1 = 0; hit_1 && k_1 < ids_1.length; k_1++)
+              hit_1 = all_2[k_1] === ids_1[k_1];
+      }
+      if (hit_1 && any_2 != null) {
+          const ids_1 = site_1.anyIds;
+          hit_1 = any_2.length === ids_1.length;
+          for (let k_1 = 0; hit_1 && k_1 < ids_1.length; k_1++)
+              hit_1 = any_2[k_1] === ids_1[k_1];
+      }
+      if (hit_1 && none_2 != null) {
+          const ids_1 = site_1.noneIds;
+          hit_1 = none_2.length === ids_1.length;
+          for (let k_1 = 0; hit_1 && k_1 < ids_1.length; k_1++)
+              hit_1 = none_2[k_1] === ids_1[k_1];
+      }
+      let matcher_1 = site_1.m;
+      if (!hit_1) {
+          const allIds_1 = all_2 ?? [], anyIds_1 = any_2 ?? [], noneIds_1 = none_2 ?? [];
+          matcher_1 = ecstatic_internal.resolveFilterMasks(storage_2, allIds_1, anyIds_1, noneIds_1);
+          site_1.s = storage_2;
+          site_1.f = filter_2;
+          site_1.all = all_2;
+          site_1.any = any_2;
+          site_1.none = none_2;
+          site_1.allIds = [...allIds_1];
+          site_1.anyIds = [...anyIds_1];
+          site_1.noneIds = [...noneIds_1];
+          site_1.m = matcher_1;
+      }
+      if (matcher_1 !== false) {
+          const n_1 = storage_2.n;
+          if (n_1 > 0) {
+              const PrismSpotRecord_1 = storage_2.PrismSpot;
+              if (matcher_1.allMask === 0 && matcher_1.anyMask === 0 && matcher_1.noneMask === 0) {
+                  for (let i_1 = n_1 - 1; i_1 >= 0; i_1--) {
+                      seenBuilt.push(PrismSpotRecord_1.x[i_1]);
+                  }
+              }
+              else {
+                  for (let i_1 = n_1 - 1; i_1 >= 0; i_1--) {
+                      if (matcher_1.matched[i_1] !== 0) {
+                          seenBuilt.push(PrismSpotRecord_1.x[i_1]);
+                      }
+                  }
+              }
+          }
+      }
+  }
+  {
+      const storage_3 = storage;
+      const filter_3 = { ...base, none: [Red] };
+      if (typeof filter_3 !== "object" || filter_3 === null)
+          ecstatic_internal.throwInvalidEachArguments();
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_3, "c9:PrismSpot{1:x=n}|c8:PrismRed{}c9:PrismBlue{}");
+      const all_3 = filter_3.all, any_3 = filter_3.any, none_3 = filter_3.none;
+      site_2 ??= { s: void 0, f: void 0, all: void 0, any: void 0, none: void 0, allIds: void 0, anyIds: void 0, noneIds: void 0, m: void 0 };
+      let hit_2 = site_2.s === storage_3 && site_2.f === filter_3 && site_2.all === all_3 && site_2.any === any_3 && site_2.none === none_3;
+      if (hit_2 && all_3 != null) {
+          const ids_2 = site_2.allIds;
+          hit_2 = all_3.length === ids_2.length;
+          for (let k_2 = 0; hit_2 && k_2 < ids_2.length; k_2++)
+              hit_2 = all_3[k_2] === ids_2[k_2];
+      }
+      if (hit_2 && any_3 != null) {
+          const ids_2 = site_2.anyIds;
+          hit_2 = any_3.length === ids_2.length;
+          for (let k_2 = 0; hit_2 && k_2 < ids_2.length; k_2++)
+              hit_2 = any_3[k_2] === ids_2[k_2];
+      }
+      if (hit_2 && none_3 != null) {
+          const ids_2 = site_2.noneIds;
+          hit_2 = none_3.length === ids_2.length;
+          for (let k_2 = 0; hit_2 && k_2 < ids_2.length; k_2++)
+              hit_2 = none_3[k_2] === ids_2[k_2];
+      }
+      let matcher_2 = site_2.m;
+      if (!hit_2) {
+          const allIds_2 = all_3 ?? [], anyIds_2 = any_3 ?? [], noneIds_2 = none_3 ?? [];
+          matcher_2 = ecstatic_internal.resolveFilterMasks(storage_3, allIds_2, anyIds_2, noneIds_2);
+          site_2.s = storage_3;
+          site_2.f = filter_3;
+          site_2.all = all_3;
+          site_2.any = any_3;
+          site_2.none = none_3;
+          site_2.allIds = [...allIds_2];
+          site_2.anyIds = [...anyIds_2];
+          site_2.noneIds = [...noneIds_2];
+          site_2.m = matcher_2;
+      }
+      if (matcher_2 !== false) {
+          const n_2 = storage_3.n;
+          if (n_2 > 0) {
+              const PrismSpotRecord_2 = storage_3.PrismSpot;
+              if (matcher_2.allMask === 0 && matcher_2.anyMask === 0 && matcher_2.noneMask === 0) {
+                  for (let i_2 = n_2 - 1; i_2 >= 0; i_2--) {
+                      seenBuilt.push(PrismSpotRecord_2.x[i_2] * 10);
+                  }
+              }
+              else {
+                  for (let i_2 = n_2 - 1; i_2 >= 0; i_2--) {
+                      if (matcher_2.matched[i_2] !== 0) {
+                          seenBuilt.push(PrismSpotRecord_2.x[i_2] * 10);
+                      }
+                  }
+              }
+          }
+      }
+  }
+
+  const matchers = storage.matchers.map((m) => [m.allMask, m.anyMask, m.noneMask]);
+  return { seen, seenBuilt, reads, matchers };
+}

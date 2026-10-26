@@ -5,6 +5,7 @@ import type {
   Callback,
   EscapeKind,
   FilterElement,
+  FilterForm,
   LiteralFilter,
   NodeID,
   NonLiteralFilter,
@@ -123,8 +124,13 @@ const SHIELDED_FILTER: LiteralFilter = {
   none: [element(52, "Boost")],
 };
 
-/** A filter written as a binding, whose type reads as an object. */
-const NON_LITERAL_FILTER: NonLiteralFilter = { kind: "non-literal", node: 50, form: "object" };
+/** A filter written as a binding of form `form`, at node 50. */
+function nonLiteral(form: FilterForm): NonLiteralFilter {
+  return { kind: "non-literal", node: 50, form };
+}
+
+/** A filter written as a binding whose type is no filter form an inlined loop can dispatch on. */
+const UNSUPPORTED_FILTER = nonLiteral("unsupported");
 
 /** `site` with `filter` as its filter argument. */
 function filteredBy(site: Site, filter: LiteralFilter | NonLiteralFilter): Site {
@@ -206,10 +212,10 @@ describe("plan", () => {
             0,
             50,
             viewCallback(),
-            filteredBy(eachAt(1, 70, viewCallback(), placed(has, 2, 80)), NON_LITERAL_FILTER),
+            filteredBy(eachAt(1, 70, viewCallback(), placed(has, 2, 80)), UNSUPPORTED_FILTER),
             placed(has, 3, 60),
           ),
-          NON_LITERAL_FILTER,
+          UNSUPPORTED_FILTER,
         ),
         placed(has, 4, 10),
       ];
@@ -511,6 +517,63 @@ describe("plan", () => {
     });
   });
 
+  describe("when a single-storage each has a non-literal filter", () => {
+    const inlined = (mode: Mode, form: Exclude<FilterForm, "unsupported">): EachInlining => ({
+      call: 3,
+      pos: at(40),
+      shape: SHIP_SHAPE,
+      mode,
+      continues: [],
+      varToLet: [],
+      spawnTargets: [],
+      filter: { node: 50, form },
+    });
+    const runtimeEachAt = (form: FilterForm, cb: Callback, ...nested: Site[]): Site => ({
+      ...filteredBy(placed(statement("each", cb), 3, 40, ...nested), nonLiteral(form)),
+      shapes: [SHIP_SHAPE],
+    });
+
+    it.each<{ form: Exclude<FilterForm, "unsupported"> }>([
+      { form: "array" },
+      { form: "object" },
+      { form: "mixed" },
+    ])("plans a $form filter as resolved at runtime, carrying its node and form", ({ form }) => {
+      const result = plan([runtimeEachAt(form, viewCallback())]);
+
+      expect(result).toStrictEqual({ bails: [], rewrites: [inlined("hoisted", form)] });
+    });
+
+    it.each<{ name: string; site: Site; want: PlanResult }>([
+      {
+        name: "a body with a hazard point is inlined realloc-safe",
+        site: runtimeEachAt("object", viewCallback({ hazards: [7] })),
+        want: { bails: [], rewrites: [inlined("realloc-safe", "object")] },
+      },
+      {
+        name: "an escaping view reference bails naming it",
+        site: runtimeEachAt("mixed", escaping(escapeAt("view", 3, 7))),
+        want: {
+          bails: [viewEscapes(3, 40, "line 3, column 7: the view as a value")],
+          rewrites: [],
+        },
+      },
+      {
+        name: "NDEBUG declared in scope bails",
+        site: runtimeEachAt("object", viewCallback({ ndebugBound: true })),
+        want: { bails: [bailAt(3, 40, "NDEBUG_BOUND")], rewrites: [] },
+      },
+      {
+        name: "holding an inlined each keeps its runtime call silently",
+        site: runtimeEachAt("object", escaping(), eachAt(4, 60, viewCallback())),
+        want: { bails: [bailAt(3, 40, "OP_NOT_REWRITTEN")], rewrites: [inlinedAt(4, 60)] },
+      },
+    ])("plans it as every other call: $name", ({ site, want }) => {
+      const result = plan([site]);
+
+      expect(result).toStrictEqual(want);
+    });
+  });
+
   describe("when NDEBUG is declared in scope at an eligible each call", () => {
     const bound = viewCallback({ ndebugBound: true });
 
@@ -560,8 +623,8 @@ describe("plan", () => {
         want: viewEscapes(2, 20, "line 3, column 7: the view as a value"),
       },
       {
-        name: "each with a non-literal filter",
-        site: filteredBy(eachAt(2, 20, bound), NON_LITERAL_FILTER),
+        name: "each with an unsupported non-literal filter",
+        site: filteredBy(eachAt(2, 20, bound), UNSUPPORTED_FILTER),
         want: bailAt(2, 20, "OP_NOT_REWRITTEN"),
       },
       {
@@ -631,13 +694,13 @@ describe("plan", () => {
 
     it.each([
       {
-        name: "each with a non-literal filter",
-        site: filteredBy(eachAt(2, 20, viewCallback()), NON_LITERAL_FILTER),
+        name: "each with an unsupported non-literal filter",
+        site: filteredBy(eachAt(2, 20, viewCallback()), UNSUPPORTED_FILTER),
         want: notRewritten,
       },
       {
-        name: "each with a non-literal filter and an escaping view reference",
-        site: filteredBy(eachAt(2, 20, cb), NON_LITERAL_FILTER),
+        name: "each with an unsupported non-literal filter and an escaping view reference",
+        site: filteredBy(eachAt(2, 20, cb), UNSUPPORTED_FILTER),
         want: viewEscapes(2, 20, "line 3, column 7: the view as a value"),
       },
       {

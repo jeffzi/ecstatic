@@ -15,7 +15,6 @@
 import { type Expression, NodeFlags, type Statement, SyntaxKind } from "typescript/ast";
 import {
   createBlock,
-  createElementAccessExpression,
   createExpressionStatement,
   createIdentifier,
   createIfStatement,
@@ -27,7 +26,7 @@ import { isExpression } from "typescript/ast/is";
 
 import type { MaskedFold } from "../fold.js";
 import { type NodeTable, tableNode } from "../nodes.js";
-import type { Mode, PlannedFilter } from "../plan.js";
+import type { FoldedPlannedFilter, Mode } from "../plan.js";
 import type { Rule } from "./catalog.js";
 import {
   assignTo,
@@ -36,6 +35,7 @@ import {
   constStatement,
   debugGated,
   declaration,
+  elementAt,
   keyword,
   letStatement,
   member,
@@ -54,10 +54,23 @@ export const FILTER_LOCALS = {
   matched: "matched",
 } as const;
 
+/** What a loop reads from its filter's pass, whether the filter is folded or resolved at runtime. */
+export interface RowFilter {
+  /** Whether the pass leaves no row the loop could visit, so the loop runs no row loop at all. */
+  readonly skips: boolean;
+  /** The file-level slot the pass caches its resolution in, once its matcher has been read. */
+  readonly site: string | undefined;
+  temps(): Statement[];
+  guard(storage: string): Statement[];
+  matcher(storage: string): Statement[];
+  hoists(): Statement[];
+  rowTest(row: string): Expression | undefined;
+}
+
 /** What a {@link FilterPass} is built from, and where it records its names and rules. */
 export interface FilterParts {
   readonly table: NodeTable;
-  readonly filter: PlannedFilter;
+  readonly filter: FoldedPlannedFilter;
   readonly mode: Mode;
   readonly names: NameGenerator;
   readonly applied: Set<Rule>;
@@ -75,7 +88,7 @@ interface ElementTemp {
 }
 
 /** The statements and reads a literal filter adds to one inlined loop. */
-export class FilterPass {
+export class FilterPass implements RowFilter {
   readonly #parts: FilterParts;
   /** The elements in source order, which is the order the runtime call evaluates them in. */
   readonly #elements: readonly ElementTemp[];
@@ -205,7 +218,7 @@ export class FilterPass {
     if (matcher === undefined || this.#parts.mode !== "hoisted") return [];
     const matched = this.#parts.names.unique(FILTER_LOCALS.matched);
     this.#matched = matched;
-    return [constStatement([declaration(matched, member(createIdentifier(matcher), "matched"))])];
+    return [hoistFlags(matcher, matched)];
   }
 
   /**
@@ -218,17 +231,7 @@ export class FilterPass {
   rowTest(row: string): Expression | undefined {
     const matcher = this.#matcher;
     if (matcher === undefined) return undefined;
-    const flags =
-      this.#matched === undefined
-        ? member(createIdentifier(matcher), "matched")
-        : createIdentifier(this.#matched);
-    const flag = createElementAccessExpression(
-      flags,
-      undefined,
-      createIdentifier(row),
-      NodeFlags.None,
-    );
-    return binary(flag, SyntaxKind.ExclamationEqualsEqualsToken, numeric("0"));
+    return rowFlagTest(matcher, this.#matched, row);
   }
 
   /**
@@ -246,6 +249,43 @@ export class FilterPass {
       numeric(String(fold.none)),
     ]);
   }
+}
+
+/**
+ * The test a row must pass to be visited under a matcher, reading the row's flag when the loop
+ * reaches it.
+ *
+ * @param matcher - The name of the matcher local.
+ * @param matched - The name of the local the matcher's flags are hoisted into, or `undefined` to read
+ *   them through the matcher, whose `matched` growth replaces.
+ * @param row - The name of the row index.
+ * @returns `matched[i] !== 0`.
+ */
+export function rowFlagTest(matcher: string, matched: string | undefined, row: string): Expression {
+  const flags = matched === undefined ? matcherFlags(matcher) : createIdentifier(matched);
+  const flag = elementAt(flags, createIdentifier(row));
+  return binary(flag, SyntaxKind.ExclamationEqualsEqualsToken, numeric("0"));
+}
+
+/**
+ * The statement reading a matcher's row flags into a local, once per call.
+ *
+ * @param matcher - The name of the matcher local.
+ * @param matched - The name of the local the flags are read into.
+ * @returns `const matched = matcher.matched;`.
+ */
+export function hoistFlags(matcher: string, matched: string): Statement {
+  return constStatement([declaration(matched, matcherFlags(matcher))]);
+}
+
+/**
+ * A matcher's row flags.
+ *
+ * @param matcher - The name of the matcher local.
+ * @returns `matcher.matched`.
+ */
+function matcherFlags(matcher: string): Expression {
+  return member(createIdentifier(matcher), "matched");
 }
 
 /**

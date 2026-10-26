@@ -1,5 +1,3 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { shapeKey } from "../../../../src/plugin/optimizer/facts.js";
@@ -11,10 +9,12 @@ import {
   EmitProject,
   everyMode,
   everyRun,
+  filterOutcome,
   MODE_SOURCE,
   MODES,
   RUN_TIMEOUT_MS,
   rewriteAt,
+  writeCycle,
 } from "./emit-project.js";
 
 /** The shape guard of a loop, capturing the shape key it checks the storage against. */
@@ -105,28 +105,6 @@ export function scenario(): unknown {
     return early;
 }
 `;
-
-/** The module the entry imports, which calls the entry's `total` as it loads. */
-const CYCLE_PARTNER_SOURCE = `import { total } from "./entry.js";
-
-export const early = total();
-`;
-
-/**
- * Writes `entry` and the partner it imports as the two modules of the cycle in the project
- * directory `dir`, a sibling of `app/`.
- *
- * @param root - The project root.
- * @param dir - The directory's name.
- * @param entry - The entry module's text.
- * @returns The entry module's path relative to `app/`.
- */
-function writeCycle(root: string, dir: string, entry: string): string {
-  mkdirSync(projectPath(root, dir), { recursive: true });
-  writeFileSync(projectPath(root, `${dir}/entry.ts`), entry);
-  writeFileSync(projectPath(root, `${dir}/partner.ts`), CYCLE_PARTNER_SOURCE);
-  return `../${dir}/entry.ts`;
-}
 
 /**
  * The entry module of a cycle whose `total` runs `call`, a spawn into a Statue storage, in an inlined
@@ -518,7 +496,7 @@ describe("EmitFile", () => {
           const stripped = await project.run(modules, true);
 
           expect({
-            fold: rewriteAt(planned, 0).filter?.fold.kind,
+            fold: filterOutcome(rewriteAt(planned, 0)),
             checked,
             stripped,
           }).toStrictEqual({

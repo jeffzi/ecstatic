@@ -7,7 +7,8 @@
  * calls always come from one release. Application code imports `ecstatic` instead.
  */
 
+export { throwInvalidEachArguments } from "./entity/each.js";
 export { disableOne, enableOne } from "./entity/optional.js";
-export { resolveFilterMasks } from "./filter.js";
+export { isArray, resolveFilterMasks } from "./filter.js";
 export { matcherFor } from "./matcher.js";
 export { assertFilterMember, assertShape } from "./shape-guard.js";

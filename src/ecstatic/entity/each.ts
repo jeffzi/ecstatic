@@ -397,7 +397,7 @@ export function each(
   } else {
     // oxlint-disable-next-line typescript/no-unnecessary-condition -- guards untyped callers: typeof null is "object"
     if (typeof filterOrFn !== "object" || filterOrFn === null || typeof maybeFn !== "function") {
-      throw new Error("invalid each arguments");
+      throwInvalidEachArguments();
     }
     fn = maybeFn;
     filterArg = filterOrFn;
@@ -412,6 +412,16 @@ export function each(
   }
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- non-array narrows to the single storage
   eachStorage(storageOrStorages as Storage, filterArg, fn);
+}
+
+/**
+ * Throws the error `each` throws for arguments it cannot read as a storage, a filter, and a
+ * callback, so code generated for an inlined call throws the same error without naming a global.
+ *
+ * @throws Error saying the `each` arguments are invalid, always.
+ */
+export function throwInvalidEachArguments(): never {
+  throw new Error("invalid each arguments");
 }
 
 function eachStorage(

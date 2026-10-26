@@ -40,8 +40,10 @@ describe("ecstatic/internal", () => {
       "assertShape",
       "disableOne",
       "enableOne",
+      "isArray",
       "matcherFor",
       "resolveFilterMasks",
+      "throwInvalidEachArguments",
     ]);
   });
 

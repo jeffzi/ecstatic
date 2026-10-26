@@ -16,6 +16,16 @@ export const RULES = [
   // Visits the rows the storage's matcher for the folded masks flags, the matcher cached in the
   // call site's slot.
   "filter-masked",
+  // Resolves a non-literal filter on every call, through a snapshot of its storage, object, axes,
+  // and elements cached in the call site's slot, and visits every row or the matcher's, as the
+  // resolution decides.
+  "filter-runtime",
+  // Reads a component array filter as its `all` axis.
+  "filter-runtime-array",
+  // Reads a filter object's `all`, `any`, and `none` once each.
+  "filter-runtime-object",
+  // Tells a component array from a filter object with `Array.isArray`, as the runtime does.
+  "filter-runtime-mixed",
   // Checks under DEBUG that each literal element is, or is not, in the storage, as the fold took it.
   "filter-element-guard",
 

@@ -106,6 +106,12 @@ export function findArchetypes(
 }
 
 /**
+ * `Array.isArray`, the test `normalizeFilter` tells a component array from a filter object with,
+ * exposed so generated code makes the same test without reading the global `Array`.
+ */
+export const isArray: (value: unknown) => value is readonly unknown[] = Array.isArray;
+
+/**
  * Decompose a filter (descriptor object or bare `{all}` component array)
  * into its three axes, defaulting absent axes to the shared empty sentinel.
  * Shared by `resolveFilter` and `query`, which both accept the same

@@ -141,7 +141,18 @@ export function member(object: Expression, name: string): Expression {
       NodeFlags.None,
     );
   }
-  return createElementAccessExpression(object, undefined, string(name), NodeFlags.None);
+  return elementAt(object, string(name));
+}
+
+/**
+ * An element read by index.
+ *
+ * @param array - The array read from.
+ * @param index - The index.
+ * @returns `array[index]`.
+ */
+export function elementAt(array: Expression, index: Expression): Expression {
+  return createElementAccessExpression(array, undefined, index, NodeFlags.None);
 }
 
 /**

@@ -67,10 +67,11 @@ import {
   string,
   type Visit,
 } from "./expressions.js";
-import { FILTER_LOCALS, FilterPass, siteDeclarations } from "./filter.js";
+import { FILTER_LOCALS, FilterPass, type RowFilter, siteDeclarations } from "./filter.js";
 import { Lowering } from "./lowering.js";
 import { NameGenerator } from "./names.js";
 import { printSpliced, type PrintedFile, type Replacement } from "./print.js";
+import { RUNTIME_FILTER_LOCALS, RuntimeFilterPass } from "./runtime-filter.js";
 import { expressionStatement, Transplant } from "./transplant.js";
 
 /** The entry point generated code reaches the runtime through. */
@@ -93,7 +94,7 @@ export interface EmitFileOptions {
 /** One source file whose `each` calls are being inlined. */
 export interface EmitFile {
   /**
-   * Replaces the call of `inlining` with the loop of `eachStorageMatched`
+   * Replaces the call of `inlining` with the loops of `eachStorage` and `eachStorageMatched`
    * (`src/ecstatic/entity/each.ts`), lowering `uses`, the view uses of its callback. A throw
    * leaves the file as it was before the call, so the caller can keep that site's runtime call.
    *
@@ -251,7 +252,7 @@ interface RowPass {
   readonly uses: readonly ViewUse[];
   /** The name of the loop's storage local. */
   readonly storage: string;
-  readonly filter: FilterPass | undefined;
+  readonly filter: RowFilter | undefined;
 }
 
 /**
@@ -301,8 +302,9 @@ class Loop {
   }
 
   /**
-   * The file-level slot the loop caches its filter's matcher in, once {@link Loop.build} has built a
-   * loop whose filter folds to a matcher.
+   * The file-level slot the loop caches its filter's resolution in, once {@link Loop.build} has
+   * built a loop with one: a literal filter that folds to a matcher, or a filter resolved at
+   * runtime.
    */
   get site(): string | undefined {
     return this.#site;
@@ -313,13 +315,17 @@ class Loop {
    * (`src/ecstatic/entity/each.ts`): the storage is evaluated once, then a literal filter's
    * elements in source order, before the guards; a filter that folds to a matcher reads it before
    * the row count is read once; and rows run from the last to the first, each visited when the
-   * matcher flags it when the loop reaches it. A filter that folds to a skip leaves no loop.
+   * matcher flags it when the loop reaches it. A filter that folds to a skip leaves no loop. A
+   * filter resolved at runtime is evaluated once into a temp and checked as the runtime checks its
+   * arguments, then resolved through the slot on every call; the block then runs the unfiltered or
+   * the filtered row loop, as the resolution says.
    *
    * @param call - The inlined call.
    * @param uses - The view uses of its callback.
    * @returns The block.
    * @throws Error when the call has no storage or no inline callback, or a use, return, spawn
-   *   target, or filter element is not in the node table or has no lowering.
+   *   target, filter element, or filter resolved at runtime is not in the node table or has no
+   *   lowering.
    */
   build(call: CallExpression, uses: readonly ViewUse[]): Block {
     const [storageArgument] = call.arguments;
@@ -328,7 +334,7 @@ class Loop {
       throw new Error("emit: the call has no storage or no inline callback");
     }
     const storage = this.#names.unique(LOOP_LOCALS.storage);
-    const filter: FilterPass | undefined = this.#filterPass();
+    const filter = this.#filterPass();
     const prologue = [
       constStatement([declaration(storage, storageArgument)]),
       ...(filter?.temps() ?? []),
@@ -342,7 +348,9 @@ class Loop {
 
   /**
    * The statements after a loop's guards: a filter's matcher, then the row count, read once, and
-   * the row loop when it is positive.
+   * the row loop when it is positive. A filter resolved at runtime runs them only when it resolves
+   * to a matcher, and holds two row loops, each with its own copy of the body: one visiting every
+   * row, taken for a matcher whose masks are 0, and one visiting the rows the matcher flags.
    *
    * @param pass - The call, its callback and view uses, the storage local, and the filter pass.
    * @returns The statements.
@@ -374,47 +382,55 @@ class Loop {
       applied: this.#applied,
     });
     this.#noteCallback(callback);
-    const body = this.#rowBody(callback, {
-      lowering,
-      transplant,
-      spawnTargets: this.#spawnTargets(),
-    });
-    const filterHoists = filter?.hoists() ?? [];
-    const rowLoop = rowsFromLast(n, i, body, filter?.rowTest(i));
+    const rewrites = { lowering, transplant, spawnTargets: this.#spawnTargets() };
+    const rowLoop = (rowTest: Expression | undefined): Statement =>
+      transplant.labeled(rowsFromLast(n, i, this.#rowBody(callback, rewrites), rowTest));
+    let loops: Statement[];
+    if (filter instanceof RuntimeFilterPass) {
+      const unfiltered = rowLoop(undefined);
+      const filtered = [...filter.hoists(), rowLoop(filter.rowTest(i))];
+      loops = [filter.branch(unfiltered, filtered)];
+    } else {
+      const filterHoists = filter?.hoists() ?? [];
+      loops = [...filterHoists, rowLoop(filter?.rowTest(i))];
+    }
     transplant.noteOuterReferences(call, callback, [
       ...Object.values(LOOP_LOCALS),
-      ...(filter === undefined ? [] : Object.values(FILTER_LOCALS)),
+      ...filterLocals(filter),
       ...lowering.baseNames,
     ]);
-    return [
-      ...matcher,
+    const counted = [
       constStatement([declaration(n, member(createIdentifier(storage), "n"))]),
       createIfStatement(
         binary(createIdentifier(n), SyntaxKind.GreaterThanToken, numeric("0")),
-        createBlock([...lowering.hoists(), ...filterHoists, transplant.labeled(rowLoop)], true),
+        createBlock([...lowering.hoists(), ...loops], true),
       ),
     ];
+    if (filter instanceof RuntimeFilterPass) return [...matcher, filter.whenResolved(counted)];
+    return [...matcher, ...counted];
   }
 
   /**
-   * The parts the loop's literal filter adds, when it has one.
+   * The parts the loop's filter adds, when it has one.
    *
-   * @returns The filter pass, or `undefined` for a call without a filter argument.
-   * @throws Error when an element of the filter is not in the node table or is no expression.
+   * @returns The pass of a literal filter or of one resolved at runtime, or `undefined` for a call
+   *   without a filter argument.
+   * @throws Error when an element of a literal filter, or a filter resolved at runtime, is not in
+   *   the node table or is no expression.
    */
-  #filterPass(): FilterPass | undefined {
+  #filterPass(): RowFilter | undefined {
     const { filter, mode } = this.#inlining;
     if (filter === undefined) return undefined;
     const { namespace, debug } = this.#guard;
-    return new FilterPass({
+    const parts = {
       table: this.#table,
-      filter,
       mode,
       names: this.#names,
       applied: this.#applied,
       namespace,
-      debug,
-    });
+    };
+    if ("form" in filter) return new RuntimeFilterPass({ ...parts, filter });
+    return new FilterPass({ ...parts, filter, debug });
   }
 
   /**
@@ -527,6 +543,17 @@ class Loop {
     if (parameters === undefined) return statements;
     return [letStatement(parameters), createBlock(statements, true)];
   }
+}
+
+/**
+ * The base names of the locals a loop's filter adds.
+ *
+ * @param filter - The loop's filter pass, if any.
+ * @returns The names, none for a loop without a filter.
+ */
+function filterLocals(filter: RowFilter | undefined): string[] {
+  if (filter === undefined) return [];
+  return Object.values(filter instanceof RuntimeFilterPass ? RUNTIME_FILTER_LOCALS : FILTER_LOCALS);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 
 import type { SourceFile } from "typescript/ast";
@@ -168,6 +168,35 @@ export function rewriteAt(planned: PlannedCase, index: number): EachInlining {
   const inlining = planned.rewrites[index];
   if (inlining === undefined) throw new Error(`${planned.rel} plans no inlining ${index}`);
   return inlining;
+}
+
+/** The filter outcome `inlining` plans: its fold's kind, `"runtime"`, or `undefined` when unfiltered. */
+export function filterOutcome(inlining: EachInlining): string | undefined {
+  const { filter } = inlining;
+  if (filter === undefined) return undefined;
+  return "fold" in filter ? filter.fold.kind : "runtime";
+}
+
+/** The module the entry imports, which calls the entry's `total` as it loads. */
+const CYCLE_PARTNER_SOURCE = `import { total } from "./entry.js";
+
+export const early = total();
+`;
+
+/**
+ * Writes `entry` and the partner it imports as the two modules of the cycle in the project
+ * directory `dir`, a sibling of `app/`.
+ *
+ * @param root - The project root.
+ * @param dir - The directory's name.
+ * @param entry - The entry module's text.
+ * @returns The entry module's path relative to `app/`.
+ */
+export function writeCycle(root: string, dir: string, entry: string): string {
+  mkdirSync(projectPath(root, dir), { recursive: true });
+  writeFileSync(projectPath(root, `${dir}/entry.ts`), entry);
+  writeFileSync(projectPath(root, `${dir}/partner.ts`), CYCLE_PARTNER_SOURCE);
+  return `../${dir}/entry.ts`;
 }
 
 /** A case file served through the session, analyzed and planned. */
