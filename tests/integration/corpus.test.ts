@@ -426,24 +426,28 @@ function isFilteredInlineEach(site: Site): boolean {
 }
 
 /**
- * Every filtered single-storage each call with an inline callback that `run` planned no rewrite for,
- * nested calls included.
+ * Every filtered single-storage each call with an inline callback that keeps its runtime call in
+ * `run`'s output, nested calls included: one its plan bails on, one whose planned rewrite failed to
+ * emit, and one the plan neither rewrites nor bails on.
  *
- * @param run - The run whose sites and plans are read.
- * @returns Each such call with the reason its plan gives, sorted by file then line.
+ * @param run - The run whose sites, plans, and rewritten modules are read.
+ * @returns Each such call with the reason its module's bail gives, sorted by file then line.
  */
 function keptFilteredCalls(run: CorpusRun): KeptCall[] {
   return [...run.analyzed]
     .flatMap(([file, sites]) => {
-      const result = run.planned.get(file);
-      const rewritten = new Set(result?.rewrites.map(({ call }) => call));
+      const rewritten = new Set(run.planned.get(file)?.rewrites.map(({ call }) => call));
+      const bailed = new Map(moduleOf(run, file).bails.map((bail) => [bail.call, bail]));
       return sites
         .flatMap(withNested)
-        .filter((site) => isFilteredInlineEach(site) && !rewritten.has(site.call))
+        .filter(
+          (site) =>
+            isFilteredInlineEach(site) && (bailed.has(site.call) || !rewritten.has(site.call)),
+        )
         .map((site) => ({
           file: relativePath(REPO_ROOT, file),
           line: site.pos.line,
-          reason: result?.bails.find(({ call }) => call === site.call)?.reason,
+          reason: bailed.get(site.call)?.reason,
         }));
     })
     .toSorted((a, b) => {

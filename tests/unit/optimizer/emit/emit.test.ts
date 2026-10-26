@@ -779,6 +779,14 @@ export function scenario(): unknown {
           expectPresent: true,
           stripped: { outcome: "returned", visited: [1], matchers: 1 },
         },
+        {
+          name: "an element present where the fold took it absent and skipped the pass",
+          lie: "Shield as unknown as typeof Velocity",
+          filter: "{ all: [lie] }",
+          actual: "Shield",
+          expectPresent: false,
+          stripped: { outcome: "returned", visited: [], matchers: 0 },
+        },
       ])(
         "throws the filter guard's error before any row or matcher with DEBUG on, and visits the fold's rows under NDEBUG, for $name",
         async ({ lie, filter, actual, expectPresent, stripped }) => {
