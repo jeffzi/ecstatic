@@ -1,6 +1,7 @@
 /** Finds and watches the compiler processes this test process starts, such as the one a session opens. */
-import { execFile } from "node:child_process";
-import { basename } from "node:path";
+import { execFile, execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 import { expect, vi } from "vitest";
@@ -64,6 +65,43 @@ export function isAlive(pid: number): boolean {
     return true;
   } catch (error) {
     return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
+}
+
+/**
+ * Suspends `pid` with SIGSTOP and waits until none of its threads can run.
+ *
+ * Linux stops a process one thread at a time: the signal goes to one thread, which stops the
+ * others once it is scheduled. On a loaded machine the other threads go on running meanwhile, long
+ * enough to answer a request sent right after the signal. Linux is therefore asked about every
+ * thread; other platforms suspend the whole process at once and report it stopped.
+ *
+ * @param pid - The process to suspend.
+ * @throws When the process has not stopped within the default `vi.waitFor` timeout.
+ */
+export async function suspend(pid: number): Promise<void> {
+  process.kill(pid, "SIGSTOP");
+  await vi.waitFor(() => {
+    expect(isStopped(pid)).toBe(true);
+  });
+}
+
+function isStopped(pid: number): boolean {
+  if (process.platform !== "linux") return processState(pid)?.startsWith("T") === true;
+  const tasks = `/proc/${pid}/task`;
+  return readdirSync(tasks).every((thread) => {
+    const stat = readFileSync(join(tasks, thread, "stat"), "utf8");
+    // The state follows the command name, which is in parentheses and may itself hold any byte.
+    return stat.slice(stat.lastIndexOf(")") + 2).startsWith("T");
+  });
+}
+
+/** The `ps` state code of `pid`, or undefined once the process is gone. */
+export function processState(pid: number): string | undefined {
+  try {
+    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim();
+  } catch {
+    return undefined;
   }
 }
 

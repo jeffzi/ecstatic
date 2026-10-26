@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -20,7 +19,14 @@ import {
   SessionEndedError,
   type SessionOptions,
 } from "../../../src/plugin/optimizer/session.js";
-import { isAlive, processesStartedSince, runningProcesses, waitUntilDead } from "./processes.js";
+import {
+  isAlive,
+  processesStartedSince,
+  processState,
+  runningProcesses,
+  suspend,
+  waitUntilDead,
+} from "./processes.js";
 import {
   appTsconfig,
   killCompiler,
@@ -108,15 +114,6 @@ function killUnobserved(pid: number): void {
   while (processState(pid)?.startsWith("Z") === false) {
     if (Date.now() > deadline) throw new Error(`process ${pid} outlived SIGKILL`);
     Atomics.wait(pause, 0, 0, 5);
-  }
-}
-
-/** The `ps` state code of `pid`, or undefined once the process is gone. */
-function processState(pid: number): string | undefined {
-  try {
-    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim();
-  } catch {
-    return undefined;
   }
 }
 
@@ -410,7 +407,7 @@ describe("Session.close", () => {
       const { session: stalled, pid, dir } = await openOwnSession({ closeTimeoutMs: 100 });
       killWhenTestFinishes(pid);
       await stalled.parse(file("node_modules/ecstatic/src/ecstatic/debug.ts", dir));
-      process.kill(pid, "SIGSTOP");
+      await suspend(pid);
 
       const closing = stalled.close();
 
@@ -425,7 +422,7 @@ describe("Session.close", () => {
     async () => {
       const { session: stalled, pid, dir } = await openOwnSession({ closeTimeoutMs: 100 });
       killWhenTestFinishes(pid);
-      process.kill(pid, "SIGSTOP");
+      await suspend(pid);
       const parsing = stalled.parse(file("node_modules/ecstatic/src/ecstatic/debug.ts", dir));
 
       const closing = stalled.close();
@@ -472,7 +469,7 @@ describe("when the compiler process exits mid-session", () => {
     {
       moment: "while the close waits on a suspended process",
       close: async (crashed: Session, pid: number) => {
-        process.kill(pid, "SIGSTOP");
+        await suspend(pid);
         const closing = crashed.close();
         await delay(SUSPENDED_SETTLE_MS);
         process.kill(pid, "SIGKILL");
@@ -508,7 +505,7 @@ describe("when the compiler process exits mid-session", () => {
     {
       moment: "after the query reached the suspended process",
       query: async (crashed: Session, pid: number, dir: string) => {
-        process.kill(pid, "SIGSTOP");
+        await suspend(pid);
         const updating = updateServed(crashed, dir);
         await delay(SUSPENDED_SETTLE_MS);
         process.kill(pid, "SIGKILL");

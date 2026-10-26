@@ -23,7 +23,12 @@ import {
   mainProject,
   STATUES_CALL,
 } from "../optimizer/main-project.js";
-import { processesStartedSince, runningProcesses, waitUntilDead } from "../optimizer/processes.js";
+import {
+  processesStartedSince,
+  runningProcesses,
+  suspend,
+  waitUntilDead,
+} from "../optimizer/processes.js";
 import { projectPath, SPAWN_TIMEOUT_MS } from "../optimizer/project.js";
 import { createProject, removeTempDirs, writeFixture } from "./tsconfig-fixtures.js";
 import { startPlugin, transformCollecting } from "./vite-host.js";
@@ -583,7 +588,7 @@ describe("ecstatic() for Vite", () => {
       const host = await startPlugin(root, ecstatic());
       onTestFinished(() => host.close());
       const started = await processesStartedSince(before);
-      for (const pid of started) process.kill(pid, "SIGSTOP");
+      await Promise.all(started.map(suspend));
 
       const transforming = host.transform(MAIN_SOURCE, viteId(root, MAIN_FILE));
       await sleep(SUSPENDED_SETTLE_MS);
