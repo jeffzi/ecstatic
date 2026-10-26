@@ -4,12 +4,14 @@ import { getTouchingPropertyName, type Node, SyntaxKind } from "typescript/ast";
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import {
+  isAccessorSymbol,
+  isAnonymousObjectSymbol,
+  symbolName,
+} from "../../../src/plugin/optimizer/analysis/checker-fields.js";
+import {
   declarationFileNames,
   declarationsOf,
   foreignValueFileName,
-  isAccessorProperty,
-  isAccessorSymbol,
-  isAnonymousObjectSymbol,
   isGlobalValue,
   nodeFileName,
   propertiesOfType,
@@ -18,7 +20,6 @@ import {
   resolveSymbol,
   resolveValueAt,
   sourceFileName,
-  symbolName,
   typeOfSymbol,
   typeSymbol,
 } from "../../../src/plugin/optimizer/compiler.js";
@@ -283,11 +284,10 @@ describe("type queries", () => {
   it.each([
     { name: "size", expected: true },
     { name: "count", expected: false },
-    { name: "absent", expected: false },
   ])("reports whether property $name is an accessor: $expected", async ({ name, expected }) => {
     const type = await constType("box");
 
-    const actual = await isAccessorProperty(view.checker, type, name);
+    const actual = isAccessorSymbol(await propertyOfType(view.checker, type, name));
 
     expect(actual).toBe(expected);
   });

@@ -1,6 +1,13 @@
-import { type Expression, type NodeArray, SyntaxKind, type TypeNode } from "typescript/ast";
+import {
+  type Expression,
+  type Node,
+  type NodeArray,
+  SyntaxKind,
+  type TypeNode,
+} from "typescript/ast";
 import {
   isArrayLiteralExpression,
+  isIdentifier,
   isParenthesizedTypeNode,
   isPropertySignatureDeclaration,
   isSpreadElement,
@@ -15,17 +22,11 @@ import {
   declarationFileNames,
   declarationsOf,
   foreignValueFileName,
-  isAnyOrUnknown,
   isArrayLike,
-  isBooleanType,
-  isNumberType,
-  isSymbolKeyed,
   nonNullableType,
   propertiesOfType,
   propertyOfType,
   requiredTupleElements,
-  stringLiteralValue,
-  symbolName,
   type Type,
   typeAtLocation,
   typeOfSymbol,
@@ -40,6 +41,14 @@ import {
   type Reason,
   shapeKey,
 } from "../facts.js";
+import {
+  isAnyOrUnknown,
+  isBooleanType,
+  isNumberType,
+  isSymbolKeyed,
+  stringLiteralValue,
+  symbolName,
+} from "./checker-fields.js";
 
 /** What an `each` call's storages argument says about the archetypes it iterates. */
 export interface ShapeResolution {
@@ -101,25 +110,44 @@ export async function resolveStorageShape(
 
 /**
  * The static type of an expression. The checker types a value declared in another file, an
- * imported one or a property of an imported object, from that file, so that file is consulted.
+ * imported one, a property of an imported object, or the result of calling an imported function,
+ * from that file, so the files declaring `expr` and every identifier under it are consulted.
  *
  * @param checker - Checker of the program holding `expr`.
  * @param expr - The expression to type.
- * @param files - The consulted declaration files, which the declaring file joins.
+ * @param files - The consulted declaration files, which the files declaring `expr` and the
+ *   identifiers under it join.
  * @returns Its static type.
- * @throws When the declaring file is no longer available.
+ * @throws When a declaring file is no longer available, or the compiler process has exited.
  */
 export async function consultedType(
   checker: Checker,
   expr: Expression,
   files: Set<string>,
 ): Promise<Type> {
-  const [file, type] = await Promise.all([
-    foreignValueFileName(checker, expr),
+  const [type, ...declaringFiles] = await Promise.all([
     typeAtLocation(checker, expr),
+    ...readNames(expr).map(async (name) => await foreignValueFileName(checker, name)),
   ]);
-  if (file !== undefined) files.add(file);
+  for (const file of declaringFiles) if (file !== undefined) files.add(file);
   return type;
+}
+
+/**
+ * The nodes of an expression that read a declared value: the expression itself and every
+ * identifier under it, in source order.
+ *
+ * @param expr - The expression to read.
+ * @returns `expr` first, then each identifier below it.
+ */
+function readNames(expr: Expression): Node[] {
+  const names: Node[] = [expr];
+  const visit = (node: Node): void => {
+    if (isIdentifier(node)) names.push(node);
+    node.forEachChild(visit);
+  };
+  expr.forEachChild(visit);
+  return names;
 }
 
 /**
@@ -177,6 +205,18 @@ export async function consultDeclarations(
   files: Set<string>,
 ): Promise<void> {
   for (const file of await declarationFileNames(symbol)) files.add(file);
+}
+
+/**
+ * Adds the files declaring a type's symbol to the consulted declaration files.
+ *
+ * @param type - The type; one with no symbol, such as a primitive, declares nothing.
+ * @param files - The consulted declaration files, which the files declaring the type's symbol join.
+ * @throws When a declaration's source file is no longer available, or the compiler process has
+ *   exited.
+ */
+export async function consultTypeDeclarations(type: Type, files: Set<string>): Promise<void> {
+  await consultDeclarations(await typeSymbol(type), files);
 }
 
 /**
@@ -310,7 +350,7 @@ class ShapeResolver {
 
   async #archetypeShape(archetype: Type): Promise<ArchShape | undefined> {
     const [, required, optional] = await Promise.all([
-      this.#consultType(archetype),
+      consultTypeDeclarations(archetype, this.files),
       this.#componentList(archetype, "components"),
       this.#componentList(archetype, "optionals"),
     ]);
@@ -431,9 +471,5 @@ class ShapeResolver {
    */
   async #property(type: Type, name: string): Promise<Type | undefined> {
     return await consultedProperty(this.#checker, type, name, this.files);
-  }
-
-  async #consultType(type: Type): Promise<void> {
-    await consultDeclarations(await typeSymbol(type), this.files);
   }
 }

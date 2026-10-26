@@ -77,6 +77,7 @@ export function isAlive(pid: number): boolean {
  * thread; other platforms suspend the whole process at once and report it stopped.
  *
  * @param pid - The process to suspend.
+ * @throws When `pid` cannot be signalled, such as when no such process exists.
  * @throws When the process has not stopped within the default `vi.waitFor` timeout.
  */
 export async function suspend(pid: number): Promise<void> {
@@ -86,17 +87,25 @@ export async function suspend(pid: number): Promise<void> {
   });
 }
 
+/** The stopped state code, in both the `ps` stat column and `/proc` stat. */
+const STOPPED_STATE = "T";
+
 function isStopped(pid: number): boolean {
-  if (process.platform !== "linux") return processState(pid)?.startsWith("T") === true;
+  if (process.platform !== "linux") return processState(pid)?.startsWith(STOPPED_STATE) === true;
   const tasks = `/proc/${pid}/task`;
   return readdirSync(tasks).every((thread) => {
     const stat = readFileSync(join(tasks, thread, "stat"), "utf8");
     // The state follows the command name, which is in parentheses and may itself hold any byte.
-    return stat.slice(stat.lastIndexOf(")") + 2).startsWith("T");
+    return stat.slice(stat.lastIndexOf(")") + 2).startsWith(STOPPED_STATE);
   });
 }
 
-/** The `ps` state code of `pid`, or undefined once the process is gone. */
+/**
+ * Reads the `ps` state code of a process.
+ *
+ * @param pid - The process to look up.
+ * @returns The state code, or `undefined` once the process is gone.
+ */
 export function processState(pid: number): string | undefined {
   try {
     return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim();

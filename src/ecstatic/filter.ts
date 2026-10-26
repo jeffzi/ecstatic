@@ -108,6 +108,9 @@ export function findArchetypes(
 /**
  * `Array.isArray`, the test `normalizeFilter` tells a component array from a filter object with,
  * exposed so generated code makes the same test without reading the global `Array`.
+ *
+ * @param value - Filter argument the call site holds.
+ * @returns `true` when `value` is an array, the bare `{all}` component-list form.
  */
 export const isArray: (value: unknown) => value is readonly unknown[] = Array.isArray;
 

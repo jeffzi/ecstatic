@@ -63,7 +63,7 @@ const EMIT_DIR = "emit/";
 const ANALYSIS_DIR = "analysis/";
 
 const TSGO = "only compiler.ts reaches tsgo";
-const PURE = "facts.ts, fold.ts, and plan.ts import nothing from typescript";
+const PURE = `${new Intl.ListFormat("en", { type: "conjunction" }).format([...PURE_MODULES])} import nothing from typescript`;
 const EMIT = "emit imports nothing from analysis";
 const SYNTAX = "syntax.ts imports nothing from emit";
 

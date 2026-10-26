@@ -450,10 +450,7 @@ function keptFilteredCalls(run: CorpusRun): KeptCall[] {
           reason: bailed.get(site.call)?.reason,
         }));
     })
-    .toSorted((a, b) => {
-      const byFile = compareCodeUnits(a.file, b.file);
-      return byFile === 0 ? a.line - b.line : byFile;
-    });
+    .toSorted((a, b) => (a.file === b.file ? a.line - b.line : compareCodeUnits(a.file, b.file)));
 }
 
 /** The module `run` rewrote from `file`; throws when the run did not rewrite it. */
@@ -476,6 +473,21 @@ function runDiagnostics(run: CorpusRun, strict: boolean): readonly BailDiagnosti
 /** The 1-based line of `index` in `text`. */
 function lineOf(text: string, index: number): number {
   return text.slice(0, index).split("\n").length;
+}
+
+/**
+ * The kept call the one occurrence of a snippet opens in a repository file, whose plan neither
+ * rewrites nor bails it.
+ *
+ * @param file - The slash-separated path of the file, relative to the repository.
+ * @param snippet - The source text that opens the call.
+ * @returns The kept call, on the 1-based line where `snippet` starts.
+ * @throws When `snippet` occurs in `file` zero times or more than once.
+ */
+function keptCall(file: string, snippet: string): KeptCall {
+  const text = readFileSync(join(REPO_ROOT, file), "utf8");
+  if (text.split(snippet).length !== 2) throw new Error(`${file} must hold one ${snippet}`);
+  return { file, line: lineOf(text, text.indexOf(snippet)), reason: "OP_NOT_REWRITTEN" };
 }
 
 /** The 1-based line on which the each call of the iteration/helper_call benchmark starts in `text`. */
@@ -672,15 +684,6 @@ describe("benchmarks", () => {
 });
 
 describe("unit suite", () => {
-  /**
-   * The filtered calls of the unit suite that keep their runtime call, sorted by file then line:
-   * - a number as the filter matches no filter form;
-   * - the outer call holds an inlined each, so it keeps its runtime call.
-   */
-  const KEPT: readonly KeptCall[] = [
-    { file: "tests/unit/entity/each.test.ts", line: 420, reason: "OP_NOT_REWRITTEN" },
-    { file: "tests/unit/filter.test.ts", line: 369, reason: "OP_NOT_REWRITTEN" },
-  ];
   let session: Session;
   let run: CorpusRun;
 
@@ -691,8 +694,17 @@ describe("unit suite", () => {
 
   afterAll(() => session.close());
 
+  // The kept calls, sorted by file then line, each located by the source snippet that opens it:
+  // a number as the filter matches no filter form, and the outer call holds an inlined each.
   it("rewrites every filtered single-storage each with an inline callback but the kept ones", () => {
-    expect(keptFilteredCalls(run)).toStrictEqual(KEPT);
+    const expected = [
+      keptCall("tests/unit/entity/each.test.ts", "each(storage, 42,"),
+      keptCall("tests/unit/filter.test.ts", "each(storage, { all: [Stunned] }, (outer) =>"),
+    ];
+
+    const kept = keptFilteredCalls(run);
+
+    expect(kept).toStrictEqual(expected);
   });
 });
 

@@ -4,6 +4,7 @@ import type {
   ArchShape,
   Callback,
   EscapeKind,
+  Filter,
   FilterElement,
   FilterForm,
   LiteralFilter,
@@ -17,12 +18,15 @@ import type {
   SpawnTarget,
   ViewEscape,
 } from "../../../src/plugin/optimizer/facts.js";
+import { foldFilter } from "../../../src/plugin/optimizer/fold.js";
 import {
   type Bail,
   type EachInlining,
   type Mode,
   plan,
+  type PlannedFilter,
   type PlanResult,
+  type RuntimeFilterForm,
 } from "../../../src/plugin/optimizer/plan.js";
 
 /** The position of a call starting at `offset` on the first line of main.ts. */
@@ -116,38 +120,49 @@ function element(node: NodeID, name: string): FilterElement {
   return { node, name };
 }
 
+/** The node of a filter written as a binding. */
+const FILTER_NODE: NodeID = 50;
+
+/** The `Shield` element of a literal filter. */
+const SHIELD_ELEMENT = element(51, "Shield");
+
+/** The `Boost` element of a literal filter. */
+const BOOST_ELEMENT = element(52, "Boost");
+
 /** A literal `{ all: [Shield], none: [Boost] }` filter, which folds to a Masked outcome on the ship shape. */
 const SHIELDED_FILTER: LiteralFilter = {
   kind: "literal",
-  all: [element(51, "Shield")],
+  all: [SHIELD_ELEMENT],
   any: [],
-  none: [element(52, "Boost")],
+  none: [BOOST_ELEMENT],
 };
 
-/** A filter written as a binding of form `form`, at node 50. */
+/** A filter written as a binding of form `form`, at {@link FILTER_NODE}. */
 function nonLiteral(form: FilterForm): NonLiteralFilter {
-  return { kind: "non-literal", node: 50, form };
+  return { kind: "non-literal", node: FILTER_NODE, form };
 }
 
 /** A filter written as a binding whose type is no filter form an inlined loop can dispatch on. */
 const UNSUPPORTED_FILTER = nonLiteral("unsupported");
 
 /** `site` with `filter` as its filter argument. */
-function filteredBy(site: Site, filter: LiteralFilter | NonLiteralFilter): Site {
+function filteredBy(site: Site, filter: Filter): Site {
   return { ...site, filtered: true, filter };
-}
-
-/** An each call over the ship shape with ID `call` at `offset`, filtered by {@link SHIELDED_FILTER}. */
-function shieldedEachAt(call: NodeID, offset: number, cb: Callback, ...nested: Site[]): Site {
-  return {
-    ...filteredBy(placed(statement("each", cb), call, offset, ...nested), SHIELDED_FILTER),
-    shapes: [SHIP_SHAPE],
-  };
 }
 
 /** An each call over the mover shape with ID `call` at `offset`, holding `nested`. */
 function eachAt(call: NodeID, offset: number, cb: Callback, ...nested: Site[]): Site {
   return { ...placed(statement("each", cb), call, offset, ...nested), shapes: [MOVER_SHAPE] };
+}
+
+/** An each call over the ship shape with ID `call` at `offset`, holding `nested`. */
+function shipEachAt(call: NodeID, offset: number, cb: Callback, ...nested: Site[]): Site {
+  return { ...eachAt(call, offset, cb, ...nested), shapes: [SHIP_SHAPE] };
+}
+
+/** An each call over the ship shape with ID `call` at `offset`, filtered by {@link SHIELDED_FILTER}. */
+function shieldedEachAt(call: NodeID, offset: number, cb: Callback, ...nested: Site[]): Site {
+  return filteredBy(shipEachAt(call, offset, cb, ...nested), SHIELDED_FILTER);
 }
 
 /** The hoisted inlining of an each call over the mover shape with ID `call` at `offset`. */
@@ -161,6 +176,11 @@ function inlinedAt(call: NodeID, offset: number): EachInlining {
     varToLet: [],
     spawnTargets: [],
   };
+}
+
+/** The inlining of each call 3 at offset 40 over the ship shape in `mode`, with `filter`. */
+function shipInlinedAt(mode: Mode, filter: PlannedFilter): EachInlining {
+  return { ...inlinedAt(3, 40), shape: SHIP_SHAPE, mode, filter };
 }
 
 /** The bail of the call of `op` with ID `call` at `offset` for `reason`. */
@@ -457,19 +477,11 @@ describe("plan", () => {
   });
 
   describe("when a single-storage each has a literal filter", () => {
-    const inlined = (mode: Mode): EachInlining => ({
-      call: 3,
-      pos: at(40),
-      shape: SHIP_SHAPE,
-      mode,
-      continues: [],
-      varToLet: [],
-      spawnTargets: [],
-      filter: {
-        elements: [element(51, "Shield"), element(52, "Boost")],
-        fold: { kind: "masked", all: 1, any: 0, none: 2, present: [true, true] },
-      },
-    });
+    const inlined = (mode: Mode): EachInlining =>
+      shipInlinedAt(mode, {
+        elements: [SHIELD_ELEMENT, BOOST_ELEMENT],
+        fold: foldFilter(SHIELDED_FILTER, SHIP_SHAPE),
+      });
 
     it.each<{ name: string; site: Site; want: PlanResult }>([
       {
@@ -518,22 +530,12 @@ describe("plan", () => {
   });
 
   describe("when a single-storage each has a non-literal filter", () => {
-    const inlined = (mode: Mode, form: Exclude<FilterForm, "unsupported">): EachInlining => ({
-      call: 3,
-      pos: at(40),
-      shape: SHIP_SHAPE,
-      mode,
-      continues: [],
-      varToLet: [],
-      spawnTargets: [],
-      filter: { node: 50, form },
-    });
-    const runtimeEachAt = (form: FilterForm, cb: Callback, ...nested: Site[]): Site => ({
-      ...filteredBy(placed(statement("each", cb), 3, 40, ...nested), nonLiteral(form)),
-      shapes: [SHIP_SHAPE],
-    });
+    const inlined = (mode: Mode, form: RuntimeFilterForm): EachInlining =>
+      shipInlinedAt(mode, { node: FILTER_NODE, form });
+    const runtimeEachAt = (form: FilterForm, cb: Callback, ...nested: Site[]): Site =>
+      filteredBy(shipEachAt(3, 40, cb, ...nested), nonLiteral(form));
 
-    it.each<{ form: Exclude<FilterForm, "unsupported"> }>([
+    it.each<{ form: RuntimeFilterForm }>([
       { form: "array" },
       { form: "object" },
       { form: "mixed" },
@@ -694,8 +696,8 @@ describe("plan", () => {
 
     it.each([
       {
-        name: "each with an unsupported non-literal filter",
-        site: filteredBy(eachAt(2, 20, viewCallback()), UNSUPPORTED_FILTER),
+        name: "filtered each whose filter analysis did not report",
+        site: { ...eachAt(2, 20, viewCallback()), filtered: true },
         want: notRewritten,
       },
       {

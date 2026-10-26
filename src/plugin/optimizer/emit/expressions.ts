@@ -145,7 +145,7 @@ export function member(object: Expression, name: string): Expression {
 }
 
 /**
- * An element read by index.
+ * A plain, non-optional element access node: reads `array` at a computed index.
  *
  * @param array - The array read from.
  * @param index - The index.

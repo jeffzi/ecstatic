@@ -118,10 +118,10 @@ export function assertShape(storage: unknown, key: string): void {
  * invoke it.
  *
  * Membership is by descriptor identity: a different descriptor that shares the component's name
- * is not held. The input is untrusted, as for {@link assertShape}.
+ * is not held.
  *
- * @param storage - Value the call site reads as a storage; only its `archetype` metadata is
- *   consulted.
+ * @param storage - Value the call site reads as a storage; untrusted, as for {@link assertShape}.
+ *   Only its `archetype` metadata is consulted.
  * @param component - Component the build resolved the filter against.
  * @param expectPresent - Whether the build expected `component` in the storage's archetype.
  * @throws Error naming `component` and the expected presence when the archetype disagrees.
@@ -134,24 +134,28 @@ export function assertFilterMember(
 ): void {
   const arch = typeof storage === "object" && storage !== null ? archetypeOf(storage) : undefined;
   if (arch === undefined) {
-    throw new Error(
-      `ecstatic: filter guard expected ${expectation(component, expectPresent)}, got a value with no archetype`,
-    );
+    throw filterGuardError(component, expectPresent, ", got a value with no archetype");
   }
   if (arch.componentLookup.has(component) !== expectPresent) {
-    throw new Error(
-      `ecstatic: filter guard expected ${expectation(component, expectPresent)} in the storage's archetype`,
-    );
+    throw filterGuardError(component, expectPresent, " in the storage's archetype");
   }
 }
 
 /**
- * Words the filter guard's expectation for its errors.
+ * Error for a storage that fails the filter guard.
  *
  * @param component - Component the build resolved the filter against.
  * @param expectPresent - Whether the build expected it in the storage's archetype.
- * @returns The component's name, then `present` or `absent`.
+ * @param detail - Suffix appended verbatim after the expectation, including its leading separator.
+ * @returns The error whose message names the component and whether the build expected it present
+ *   or absent, then appends `detail`.
  */
-function expectation(component: ComponentDescriptor, expectPresent: boolean): string {
-  return `${component.__ecstatic_name} ${expectPresent ? "present" : "absent"}`;
+function filterGuardError(
+  component: ComponentDescriptor,
+  expectPresent: boolean,
+  detail: string,
+): Error {
+  return new Error(
+    `ecstatic: filter guard expected ${component.__ecstatic_name} ${expectPresent ? "present" : "absent"}${detail}`,
+  );
 }

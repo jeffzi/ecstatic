@@ -180,16 +180,22 @@ export interface FilterElement {
 }
 
 /**
+ * The axes of a filter, in the order `normalizeFilter` reads them and `resolveFilterMasks` takes
+ * them.
+ */
+export const FILTER_AXES = ["all", "any", "none"] as const;
+
+/** One axis of a filter. */
+export type FilterAxis = (typeof FILTER_AXES)[number];
+
+/**
  * A filter written as a literal at every level: an array literal, read as its `all` axis, or an
  * object literal whose every property is an axis written as `key: [ … ]`, with no spread, and every
  * element's type pinning one component name. Each axis lists its elements in source order; an
  * omitted axis is empty.
  */
-export interface LiteralFilter {
+export interface LiteralFilter extends Readonly<Record<FilterAxis, readonly FilterElement[]>> {
   readonly kind: "literal";
-  readonly all: readonly FilterElement[];
-  readonly any: readonly FilterElement[];
-  readonly none: readonly FilterElement[];
 }
 
 /**

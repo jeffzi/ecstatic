@@ -12,6 +12,7 @@ import {
   filterOutcome,
   MODE_SOURCE,
   MODES,
+  type PlannedCase,
   RUN_TIMEOUT_MS,
   rewriteAt,
   writeCycle,
@@ -85,17 +86,24 @@ export function scenario(): unknown {
 `;
 
 /**
- * The entry module of a cycle whose `total` sums, over a Guarded storage, the rows an inlined loop's
- * literal filter folds to a matcher for.
+ * The entry module of a cycle whose `total` sums the rows of a Guarded storage that an inlined loop
+ * visits for the filter `{ all: [Shield] }`, written in the loop's call or held in a binding.
+ *
+ * @param bound - Whether the filter is held in a binding, which is resolved at runtime.
+ * @returns The entry module's text.
  */
-const CYCLE_MASKED_ENTRY_SOURCE = `import { each } from "../src/ecstatic/index.js";
+function cycleGuardedSource(bound: boolean): string {
+  const imports = bound ? "each, type EachFilter" : "each";
+  const binding = bound ? "    const filter: EachFilter = { all: [Shield] };\n" : "";
+  const filter = bound ? "filter" : "{ all: [Shield] }";
+  return `import { ${imports} } from "../src/ecstatic/index.js";
 import { Shield, guarded } from "../app/schema.js";
 import { early } from "./partner.js";
 
 export function total(): number {
     const { storage } = guarded();
-    let sum = 0;
-    each(storage, { all: [Shield] }, (e) => {
+${binding}    let sum = 0;
+    each(storage, ${filter}, (e) => {
         sum += e.Position.x;
     });
     return sum;
@@ -105,6 +113,13 @@ export function scenario(): unknown {
     return early;
 }
 `;
+}
+
+/**
+ * The entry module of a cycle whose `total` sums, over a Guarded storage, the rows an inlined loop's
+ * literal filter folds to a matcher for.
+ */
+const CYCLE_MASKED_ENTRY_SOURCE = cycleGuardedSource(false);
 
 /**
  * The entry module of a cycle whose `total` runs `call`, a spawn into a Statue storage, in an inlined
@@ -134,9 +149,39 @@ export function scenario(): unknown {
 `;
 }
 
+/**
+ * The entry module of a cycle whose `total` sums, over a Guarded storage, the rows an inlined loop
+ * visits for a filter held in a binding, which is resolved at runtime.
+ */
+const CYCLE_RUNTIME_FILTER_ENTRY_SOURCE = cycleGuardedSource(true);
+
 /** The module path, relative to `app/`, of `planned`'s case file as written, which runs on the runtime. */
 function runtimeModule(planned: { readonly rel: string }): string {
   return `./${planned.rel.slice("app/".length, -".ts".length)}.js`;
+}
+
+/**
+ * Plans and emits the cycle whose entry module is `entry`, writes it and its emitted rewrite as the
+ * project directories `${dir}-runtime` and `${dir}-rewritten`, and runs both with the checks on and
+ * stripped.
+ *
+ * @param dir - The prefix of the two directories' names.
+ * @param entry - The entry module's text.
+ * @returns The planned case, the emitted text, and each setting's result keyed by `runtime` and
+ *   `rewritten`.
+ */
+async function runCycle(
+  dir: string,
+  entry: string,
+): Promise<{ planned: PlannedCase; text: string; checked: unknown; stripped: unknown }> {
+  const planned = await project.planned(entry);
+  const { text } = await project.emit(planned);
+  const modules = {
+    runtime: writeCycle(project.root, `${dir}-runtime`, entry),
+    rewritten: writeCycle(project.root, `${dir}-rewritten`, text),
+  };
+  const [checked, stripped] = await Promise.all([project.run(modules), project.run(modules, true)]);
+  return { planned, text, checked, stripped };
 }
 
 /** Two `each` calls over Mover storages and one over a Statue storage, in a strict-mode file. */
@@ -482,18 +527,17 @@ describe("EmitFile", () => {
           fold: "masked",
           expected: 1,
         },
+        {
+          name: "a loop whose filter is resolved at runtime",
+          dir: "cycle-runtime-filter",
+          entry: CYCLE_RUNTIME_FILTER_ENTRY_SOURCE,
+          fold: "runtime",
+          expected: 1,
+        },
       ])(
         "runs $name as the runtime call does, with checks on and stripped",
         async ({ dir, entry, fold, expected }) => {
-          const planned = await project.planned(entry);
-          const { text } = await project.emit(planned);
-          const modules = {
-            runtime: writeCycle(project.root, `${dir}-runtime`, entry),
-            rewritten: writeCycle(project.root, `${dir}-rewritten`, text),
-          };
-
-          const checked = await project.run(modules);
-          const stripped = await project.run(modules, true);
+          const { planned, checked, stripped } = await runCycle(dir, entry);
 
           expect({
             fold: filterOutcome(rewriteAt(planned, 0)),
@@ -515,15 +559,8 @@ describe("EmitFile", () => {
         "runs a loop whose $op into another storage is guarded as the runtime call does, with checks on and stripped",
         async ({ op, call, expected }) => {
           const source = cycleSpawnSource(call);
-          const planned = await project.planned(source);
-          const { text } = await project.emit(planned);
-          const modules = {
-            runtime: writeCycle(project.root, `cycle-${op}-runtime`, source),
-            rewritten: writeCycle(project.root, `cycle-${op}-rewritten`, text),
-          };
 
-          const checked = await project.run(modules);
-          const stripped = await project.run(modules, true);
+          const { planned, text, checked, stripped } = await runCycle(`cycle-${op}`, source);
 
           expect({
             mode: rewriteAt(planned, 0).mode,
@@ -716,23 +753,6 @@ export function scenario(): unknown {
     });
 
     describe("when guarding a literal filter's elements", () => {
-      it.each([
-        { name: "a filter without elements", filter: "{ any: [] }", guarded: false },
-        { name: "a filter with an element", filter: "[Position]", guarded: true },
-      ])("records the element guard rule only for $name", async ({ filter, guarded }) => {
-        const source = `${CASE_PRELUDE}export const seen: unknown[] = [];
-const { storage } = guarded();
-each(storage, ${filter}, (e) => {
-    seen.push(e.id);
-});
-`;
-
-        const { applied } = await project.rewrite(source);
-
-        expect(applied).toContain("filter-trivial");
-        expect(applied.includes("filter-element-guard")).toBe(guarded);
-      });
-
       /** A module whose filtered loop casts a component's type, reporting the throw, rows, and matchers. */
       const filterGuardSource = (
         lie: string,
@@ -764,7 +784,7 @@ export function scenario(): unknown {
 
       it.each([
         {
-          name: "an element present where the fold took it absent",
+          name: "an element present where the fold took it absent and dropped the filter",
           lie: "Shield as unknown as typeof Velocity",
           filter: "{ none: [lie] }",
           actual: "Shield",
@@ -772,7 +792,7 @@ export function scenario(): unknown {
           stripped: { outcome: "returned", visited: [2, 1], matchers: 0 },
         },
         {
-          name: "an element absent where the fold took it present",
+          name: "an element absent where the fold took it present and built a matcher",
           lie: "Velocity as unknown as typeof Shield",
           filter: "{ all: [lie] }",
           actual: "Velocity",
@@ -788,19 +808,21 @@ export function scenario(): unknown {
           stripped: { outcome: "returned", visited: [], matchers: 0 },
         },
       ])(
-        "throws the filter guard's error before any row or matcher with DEBUG on, and visits the fold's rows under NDEBUG, for $name",
-        async ({ lie, filter, actual, expectPresent, stripped }) => {
+        "guards the fold's element presence only with DEBUG on, for $name",
+        async ({ lie, filter, actual, expectPresent, stripped: expectedStripped }) => {
           const planned = await project.planned(
             filterGuardSource(lie, filter, actual, expectPresent),
           );
           const module = await project.emitModule(planned, "filter-guarded");
 
-          const checkedRun = await project.run({ rewritten: module });
-          const strippedRun = await project.run({ rewritten: module }, true);
+          const [checked, stripped] = await Promise.all([
+            project.run({ rewritten: module }),
+            project.run({ rewritten: module }, true),
+          ]);
 
-          expect({ checked: checkedRun, stripped: strippedRun }).toStrictEqual({
+          expect({ checked, stripped }).toStrictEqual({
             checked: { rewritten: { outcome: "filter guard", visited: [], matchers: 0 } },
-            stripped: { rewritten: stripped },
+            stripped: { rewritten: expectedStripped },
           });
         },
         RUN_TIMEOUT_MS,

@@ -8,7 +8,6 @@ import {
 
 import { type Checker, sourceFileName } from "../compiler.js";
 import {
-  type ArchShape,
   type Callback,
   type Filter,
   iterates,
@@ -24,7 +23,7 @@ import type { InlineCallback } from "../syntax.js";
 import { type CallbackScope, inlineCallback, prepareCallback } from "./callback.js";
 import { type FilterReading, readFilter } from "./filter.js";
 import { type PackageRoots, type Recognized, recognize } from "./roots.js";
-import { resolveShapes } from "./shape.js";
+import { resolveShapes, type ShapeResolution } from "./shape.js";
 
 /** The ecstatic call sites of one source file, with the node table their node IDs index. */
 export interface FileAnalysis {
@@ -82,11 +81,11 @@ interface Draft extends RecognizedCall {
   readonly nested: Draft[];
 }
 
-/** A site whose queries have all answered, its callback's nodes not yet registered. */
+/** A site whose queries have all answered, its filter's and callback's nodes not yet registered. */
 interface PreparedSite {
   readonly site: Site;
   readonly registerFilter: (() => Filter) | undefined;
-  readonly register: (() => Callback) | undefined;
+  readonly registerCallback: (() => Callback) | undefined;
   readonly nested: readonly PreparedSite[];
 }
 
@@ -152,6 +151,9 @@ async function prepareTree(scope: CallbackScope, draft: Draft): Promise<Prepared
   return { ...own, nested };
 }
 
+/** The argument count of the `each` overload that takes a filter: `each(storages, filter, callback)`. */
+const FILTERED_EACH_ARG_COUNT = 3;
+
 /**
  * Gathers the facts of one site: its argument count, how an `each` passes its storages and filter
  * and what they resolve to, and the queries its inline callback needs.
@@ -171,8 +173,8 @@ async function prepareSite(
   const mismatch = iterates(op) && !matchesArgCount(op, args.length);
   // A call that keeps its runtime form never needs its shapes.
   const storages = op === "each" && !mismatch ? args[0] : undefined;
-  const filter = args.length === 3 ? args[1] : undefined;
-  const each = storages === undefined ? NO_EACH : await readEach(scope, storages, filter);
+  const filterArg = args.length === FILTERED_EACH_ARG_COUNT ? args[1] : undefined;
+  const each = storages === undefined ? NO_EACH : await readEach(scope, storages, filterArg);
   const reasons: Reason[] = mismatch ? ["ARG_COUNT"] : [];
   if (each.reason !== undefined) reasons.push(each.reason);
   const site: Site = {
@@ -189,17 +191,13 @@ async function prepareSite(
     filtered: each.filter !== undefined,
     arrayLiteral: each.arrayLiteral,
   };
-  const register =
+  const registerCallback =
     draft.callback === undefined ? undefined : await prepareCallback(scope, site, draft.callback);
-  return { site, registerFilter: each.filter?.register, register };
+  return { site, registerFilter: each.filter?.register, registerCallback };
 }
 
 /** What the storages and filter arguments of an `each` call resolve to. */
-interface EachReading {
-  /** One shape for a single storage, one per element for an array literal; empty when unresolved. */
-  readonly shapes: readonly ArchShape[];
-  /** Why the shapes are not known statically; undefined when they resolved. */
-  readonly reason: Reason | undefined;
+interface EachReading extends ShapeResolution {
   /** The filter argument's reading; undefined when the call passes none. */
   readonly filter: FilterReading | undefined;
   /** The declaration files both readings consulted, sorted and without duplicates. */
@@ -240,8 +238,7 @@ async function readEach(
     ...(filter?.declarationFiles ?? []),
   ]);
   return {
-    shapes: resolution.shapes,
-    reason: resolution.reason,
+    ...resolution,
     filter,
     declarationFiles: [...declarationFiles].toSorted(),
     arrayLiteral: isArrayLiteralExpression(storages),
@@ -257,7 +254,7 @@ async function readEach(
  */
 function finish(prepared: PreparedSite): Site {
   const filter = prepared.registerFilter?.();
-  const callback = prepared.register?.();
+  const callback = prepared.registerCallback?.();
   const site: Site = { ...prepared.site, callback, nested: prepared.nested.map(finish) };
   return filter === undefined ? site : { ...site, filter };
 }

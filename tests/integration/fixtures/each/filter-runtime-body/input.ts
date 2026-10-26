@@ -39,6 +39,7 @@ export function scenario(): unknown {
     spawn(storage, { RelaySpot: { x: 1 }, RelayCoil: { turns: 3 } }),
     spawn(storage, { RelaySpot: { x: 2 }, RelayFuse: true }),
     spawn(storage, { RelaySpot: { x: 3 }, RelayCoil: { turns: 2 }, RelayFuse: true }),
+    spawn(storage, { RelaySpot: { x: 4 } }),
   ];
   const every: EachFilter = { all: [Spot] };
   const wired: EachFilter = { any: [Coil, Fuse] };

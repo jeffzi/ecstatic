@@ -5,11 +5,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { getTouchingPropertyName, type Node, type SourceFile } from "typescript/ast";
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { symbolName } from "../../../src/plugin/optimizer/analysis/checker-fields.js";
 import {
   propertiesOfType,
   resolveSymbol,
   sourceFileName,
-  symbolName,
   typeOfSymbol,
 } from "../../../src/plugin/optimizer/compiler.js";
 import {

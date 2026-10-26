@@ -67,11 +67,11 @@ import {
   string,
   type Visit,
 } from "./expressions.js";
-import { FILTER_LOCALS, FilterPass, type RowFilter, siteDeclarations } from "./filter.js";
+import { FilterPass, type RowFilter, siteDeclarations } from "./filter.js";
 import { Lowering } from "./lowering.js";
 import { NameGenerator } from "./names.js";
 import { printSpliced, type PrintedFile, type Replacement } from "./print.js";
-import { RUNTIME_FILTER_LOCALS, RuntimeFilterPass } from "./runtime-filter.js";
+import { RuntimeFilterPass } from "./runtime-filter.js";
 import { expressionStatement, Transplant } from "./transplant.js";
 
 /** The entry point generated code reaches the runtime through. */
@@ -284,6 +284,44 @@ function rowsFromLast(
   );
 }
 
+/**
+ * The row loops of a filtered or unfiltered call: one, or the branch between two at runtime.
+ *
+ * @param filter - The call's filter, or `undefined` for an unfiltered call.
+ * @param row - The name of the row index.
+ * @param rowLoop - Builds a row loop from the test a row must pass, or from `undefined` to visit
+ *   every row.
+ * @returns The filter's hoisted statements and its loop, or the branch between the unfiltered and
+ *   filtered loops for a filter resolved at runtime.
+ * @throws Error when the filter is resolved at runtime and its matcher has not been built.
+ */
+function filterLoops(
+  filter: RowFilter | undefined,
+  row: string,
+  rowLoop: (rowTest: Expression | undefined) => Statement,
+): Statement[] {
+  if (filter instanceof RuntimeFilterPass) {
+    const unfiltered = rowLoop(undefined);
+    const filtered = [...filter.hoists(), rowLoop(filter.rowTest(row))];
+    return [filter.branch(unfiltered, filtered)];
+  }
+  const filterHoists = filter?.hoists() ?? [];
+  return [...filterHoists, rowLoop(filter?.rowTest(row))];
+}
+
+/**
+ * The counted statements, gated on the resolution for a filter resolved at runtime.
+ *
+ * @param filter - The call's filter, or `undefined` for an unfiltered call.
+ * @param counted - The row count read and the loops.
+ * @returns `counted`, under `if (matcher !== false)` for a filter resolved at runtime.
+ * @throws Error when the filter is resolved at runtime and its matcher has not been built.
+ */
+function resolvedOrAlways(filter: RowFilter | undefined, counted: Statement[]): Statement[] {
+  if (filter instanceof RuntimeFilterPass) return [filter.whenResolved(counted)];
+  return counted;
+}
+
 /** Builds the block that replaces one `each` call. */
 class Loop {
   readonly #table: NodeTable;
@@ -385,18 +423,10 @@ class Loop {
     const rewrites = { lowering, transplant, spawnTargets: this.#spawnTargets() };
     const rowLoop = (rowTest: Expression | undefined): Statement =>
       transplant.labeled(rowsFromLast(n, i, this.#rowBody(callback, rewrites), rowTest));
-    let loops: Statement[];
-    if (filter instanceof RuntimeFilterPass) {
-      const unfiltered = rowLoop(undefined);
-      const filtered = [...filter.hoists(), rowLoop(filter.rowTest(i))];
-      loops = [filter.branch(unfiltered, filtered)];
-    } else {
-      const filterHoists = filter?.hoists() ?? [];
-      loops = [...filterHoists, rowLoop(filter?.rowTest(i))];
-    }
+    const loops = filterLoops(filter, i, rowLoop);
     transplant.noteOuterReferences(call, callback, [
       ...Object.values(LOOP_LOCALS),
-      ...filterLocals(filter),
+      ...(filter?.locals ?? []),
       ...lowering.baseNames,
     ]);
     const counted = [
@@ -406,8 +436,7 @@ class Loop {
         createBlock([...lowering.hoists(), ...loops], true),
       ),
     ];
-    if (filter instanceof RuntimeFilterPass) return [...matcher, filter.whenResolved(counted)];
-    return [...matcher, ...counted];
+    return [...matcher, ...resolvedOrAlways(filter, counted)];
   }
 
   /**
@@ -543,17 +572,6 @@ class Loop {
     if (parameters === undefined) return statements;
     return [letStatement(parameters), createBlock(statements, true)];
   }
-}
-
-/**
- * The base names of the locals a loop's filter adds.
- *
- * @param filter - The loop's filter pass, if any.
- * @returns The names, none for a loop without a filter.
- */
-function filterLocals(filter: RowFilter | undefined): string[] {
-  if (filter === undefined) return [];
-  return Object.values(filter instanceof RuntimeFilterPass ? RUNTIME_FILTER_LOCALS : FILTER_LOCALS);
 }
 
 /**

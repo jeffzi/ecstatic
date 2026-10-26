@@ -18,11 +18,13 @@ design — never add references to Lua, TSTL, or "the port" there.
 - `src/ecstatic/` — the runtime, the package's main entry.
 - `src/plugin/` — the Vite plugin, which runs the build-time optimizer.
 - `src/plugin/optimizer/` — the optimizer pipeline: analysis (`analysis/`) reports each call site as
-  facts, `plan.ts` decides what to do with each site, and `emit/` splices in the rewritten loops.
-  Only `src/plugin/optimizer/compiler.ts` makes calls that reach the TypeScript compiler process,
-  `facts.ts`, `fold.ts`, and `plan.ts` import nothing from `typescript`, `emit/` imports nothing
-  from `analysis/`, and `syntax.ts`, which both share, imports nothing from `emit/`;
-  `tests/unit/optimizer/boundary.test.ts` enforces all four rules.
+  facts, `fold.ts` folds a literal filter against the storage's shape, `plan.ts` decides what to do
+  with each site, and `emit/` splices in the rewritten loops.
+  `tests/unit/optimizer/boundary.test.ts` enforces four boundary rules:
+  - Only `src/plugin/optimizer/compiler.ts` makes calls that reach the TypeScript compiler process.
+  - `facts.ts`, `fold.ts`, and `plan.ts` import nothing from `typescript`.
+  - `emit/` imports nothing from `analysis/`.
+  - `syntax.ts`, which `emit/` and `analysis/` share, imports nothing from `emit/`.
 
 ## Commands
 

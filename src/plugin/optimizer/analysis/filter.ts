@@ -1,6 +1,6 @@
 /**
  * Reads an `each` call's filter argument: literal when its syntax and its elements' types pin every
- * component it names, otherwise the form its static type gives.
+ * component it names, otherwise the form its syntax fixes, or failing that its static type gives.
  */
 
 import type { Expression } from "typescript/ast";
@@ -14,20 +14,24 @@ import {
 } from "typescript/ast/is";
 
 import {
+  admitsArray,
   apparentType,
   type Checker,
   hasCallSignatures,
-  isAnyOrUnknown,
   isArrayLike,
-  isNullishOrVoid,
   type Type,
-  typeId,
-  typeSymbol,
   unionMembers,
 } from "../compiler.js";
-import type { Filter, FilterElement, FilterForm } from "../facts.js";
+import {
+  type Filter,
+  FILTER_AXES,
+  type FilterAxis,
+  type FilterElement,
+  type FilterForm,
+} from "../facts.js";
 import type { NodeTable } from "../nodes.js";
-import { componentName, consultDeclarations, consultedType, resolvedAll } from "./shape.js";
+import { isAnyOrUnknown, isNullishOrVoid, typeId } from "./checker-fields.js";
+import { componentName, consultedType, consultTypeDeclarations, resolvedAll } from "./shape.js";
 import { isPrimitiveType } from "./type-reads.js";
 
 /** An `each` call's filter argument, read, its nodes not yet registered. */
@@ -38,13 +42,11 @@ export interface FilterReading {
   readonly register: () => Filter;
 }
 
-type Axis = "all" | "any" | "none";
-
-const AXES: ReadonlySet<string> = new Set(["all", "any", "none"]);
+const AXES: ReadonlySet<string> = new Set(FILTER_AXES);
 
 /** A literal filter's element, before its node is registered. */
 interface LiteralElement {
-  readonly axis: Axis;
+  readonly axis: FilterAxis;
   readonly node: Expression;
 }
 
@@ -59,7 +61,8 @@ type MemberForm = "array" | "object" | "unsupported";
 /**
  * Reads an `each` call's filter argument. A literal filter reports each element's component name;
  * any other filter, one whose syntax is not literal or one with an element whose type does not pin
- * a single name, reports its type's form.
+ * a single name, reports its form: an array or object literal's from its syntax, any other
+ * expression's from its static type.
  *
  * @param checker - Checker of the program holding `filter`.
  * @param table - The file's node table, which the filter's nodes join on registration.
@@ -75,17 +78,30 @@ export async function readFilter(
   const files = new Set<string>();
   const elements = literalElements(filter);
   const named = elements === undefined ? undefined : await namedElements(checker, elements, files);
+  let register: () => Filter;
   if (named !== undefined) {
-    return {
-      declarationFiles: [...files].toSorted(),
-      register: () => registerLiteral(table, named),
-    };
+    register = () => registerLiteral(table, named);
+  } else {
+    const form =
+      syntacticForm(filter) ??
+      (await filterForm(checker, await consultedType(checker, filter, files), files));
+    register = () => ({ kind: "non-literal", node: table.register(filter), form });
   }
-  const form = await filterForm(checker, await consultedType(checker, filter, files), files);
-  return {
-    declarationFiles: [...files].toSorted(),
-    register: () => ({ kind: "non-literal", node: table.register(filter), form }),
-  };
+  return { declarationFiles: [...files].toSorted(), register };
+}
+
+/**
+ * The form a filter's syntax alone fixes: an array literal is an array and an object literal an
+ * object, whatever its contents' types. Reading the form from syntax keeps the files declaring
+ * those contents out of the site's declaration files, since no change to them can change the form.
+ *
+ * @param filter - The filter argument.
+ * @returns `"array"` or `"object"` for a literal, undefined for any other expression.
+ */
+function syntacticForm(filter: Expression): FilterForm | undefined {
+  if (isArrayLiteralExpression(filter)) return "array";
+  if (isObjectLiteralExpression(filter)) return "object";
+  return undefined;
 }
 
 /**
@@ -94,7 +110,7 @@ export async function readFilter(
  * @param key - The property key.
  * @returns Whether it is `all`, `any`, or `none`.
  */
-function isAxis(key: string): key is Axis {
+function isAxis(key: string): key is FilterAxis {
   return AXES.has(key);
 }
 
@@ -109,7 +125,7 @@ function isAxis(key: string): key is Axis {
 function literalElements(filter: Expression): LiteralElement[] | undefined {
   if (isArrayLiteralExpression(filter)) return axisElements("all", filter.elements);
   if (!isObjectLiteralExpression(filter)) return undefined;
-  const seen = new Set<Axis>();
+  const seen = new Set<FilterAxis>();
   const elements: LiteralElement[] = [];
   for (const property of filter.properties) {
     if (!isPropertyAssignment(property) || !isIdentifier(property.name)) return undefined;
@@ -133,7 +149,10 @@ function literalElements(filter: Expression): LiteralElement[] | undefined {
  * @param nodes - The array literal's elements.
  * @returns The elements, or undefined when one is a spread or omitted.
  */
-function axisElements(axis: Axis, nodes: readonly Expression[]): LiteralElement[] | undefined {
+function axisElements(
+  axis: FilterAxis,
+  nodes: readonly Expression[],
+): LiteralElement[] | undefined {
   if (nodes.some((node) => isSpreadElement(node) || isOmittedExpression(node))) return undefined;
   return nodes.map((node) => ({ axis, node }));
 }
@@ -171,7 +190,7 @@ async function namedElements(
  * @returns The literal filter.
  */
 function registerLiteral(table: NodeTable, elements: readonly NamedElement[]): Filter {
-  const axes: Record<Axis, FilterElement[]> = { all: [], any: [], none: [] };
+  const axes: Record<FilterAxis, FilterElement[]> = { all: [], any: [], none: [] };
   for (const { axis, node, name } of elements) {
     axes[axis].push({ node: table.register(node), name });
   }
@@ -200,7 +219,9 @@ async function filterForm(checker: Checker, type: Type, files: Set<string>): Pro
  * @param checker - Checker that produced `type`.
  * @param type - The type, a union split into its members.
  * @param files - The consulted declaration files, which those of each member's declaration join.
- * @returns One form per member.
+ * @returns One form per member, and both `"array"` and `"object"` for a member that is not
+ *   array-like but that an array is assignable to, such as `object`: `each` tells the two apart
+ *   at runtime.
  * @throws When a consulted declaration's source file is no longer available.
  */
 async function memberForms(
@@ -220,10 +241,11 @@ async function memberForms(
   const apparent = await apparentType(checker, type);
   if (typeId(apparent) !== typeId(type)) return await memberForms(checker, apparent, files);
   const [, callable, arrayLike] = await Promise.all([
-    consultDeclarations(await typeSymbol(type), files),
+    consultTypeDeclarations(type, files),
     hasCallSignatures(checker, type),
     isArrayLike(checker, type),
   ]);
   if (callable) return ["unsupported"];
-  return [arrayLike ? "array" : "object"];
+  if (arrayLike) return ["array"];
+  return (await admitsArray(checker, type)) ? ["array", "object"] : ["object"];
 }

@@ -24,7 +24,6 @@ import {
   type VariableDeclarationList,
 } from "typescript/ast";
 import {
-  createElementAccessExpression,
   createIdentifier,
   createPrefixUnaryExpression,
   createVariableDeclarationList,
@@ -57,6 +56,7 @@ import {
   constStatement,
   declaration,
   decode,
+  elementAt,
   IDENTIFIER_NAME,
   keyword,
   letStatement,
@@ -405,12 +405,7 @@ export class Lowering {
    * @returns `array[i]`.
    */
   atRow(array: Expression): Expression {
-    return createElementAccessExpression(
-      array,
-      undefined,
-      createIdentifier(this.#row),
-      NodeFlags.None,
-    );
+    return elementAt(array, createIdentifier(this.#row));
   }
 
   /**

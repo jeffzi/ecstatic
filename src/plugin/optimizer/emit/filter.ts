@@ -46,13 +46,20 @@ import {
 } from "./expressions.js";
 import type { NameGenerator } from "./names.js";
 
+/** The base name of each local a pass adds to hold its call-site slot and matcher. */
+export const MATCHER_LOCALS = { site: "site", matcher: "matcher", matched: "matched" } as const;
+
 /** The base name of each local a filtered loop adds. */
 export const FILTER_LOCALS = {
   element: "element",
-  site: "site",
-  matcher: "matcher",
-  matched: "matched",
+  ...MATCHER_LOCALS,
 } as const;
+
+/**
+ * The keys of the call-site slot a filtered loop caches its resolution in: the storage it resolved
+ * against, the filter value it resolved (a non-literal filter only), and the matcher it got.
+ */
+export const SLOT = { storage: "s", filter: "f", matcher: "m" } as const;
 
 /** What a loop reads from its filter's pass, whether the filter is folded or resolved at runtime. */
 export interface RowFilter {
@@ -60,11 +67,128 @@ export interface RowFilter {
   readonly skips: boolean;
   /** The file-level slot the pass caches its resolution in, once its matcher has been read. */
   readonly site: string | undefined;
+  /** The base names of the locals the pass adds to a loop. */
+  readonly locals: readonly string[];
+  /** The statements evaluating the filter into the temps the loop reads it from. */
   temps(): Statement[];
+  /** The `DEBUG` check of the filter's elements against the storage; none for a pass without one. */
   guard(storage: string): Statement[];
+  /**
+   * The statements that resolve the filter against the storage into the pass's matcher, which the
+   * pass caches in its call site's slot. Call it before {@link RowFilter.hoists} and
+   * {@link RowFilter.rowTest}, which read the matcher it takes.
+   *
+   * @param storage - The name of the loop's storage local.
+   * @returns The statements.
+   */
   matcher(storage: string): Statement[];
+  /**
+   * In hoisted mode, the statement reading the matcher's row flags into a local once per call. Call
+   * it after {@link RowFilter.matcher} and before {@link RowFilter.rowTest}, which reads the local.
+   *
+   * @returns The statement, or none in realloc-safe mode.
+   */
   hoists(): Statement[];
+  /**
+   * The test a row must pass to be visited. Call it after {@link RowFilter.matcher} and
+   * {@link RowFilter.hoists}.
+   *
+   * @param row - The name of the row index.
+   * @returns The test, or `undefined` when the loop visits every row.
+   */
   rowTest(row: string): Expression | undefined;
+}
+
+/**
+ * A member of a call-site slot.
+ *
+ * @param site - The name of the slot's file-level variable.
+ * @param key - The slot key.
+ * @returns `site.key`.
+ */
+function slotRead(site: string, key: string): Expression {
+  return member(createIdentifier(site), key);
+}
+
+/**
+ * The statement that fills a call-site slot on its first run.
+ *
+ * @param site - The name of the slot's file-level variable.
+ * @param keys - The slot keys, in the order they are declared.
+ * @returns `site ??= { key: void 0, ... };`.
+ */
+export function slotInit(site: string, keys: readonly string[]): Statement {
+  const empty = createObjectLiteralExpression(
+    keys.map((key) => propertyAssignment(createIdentifier(key), undefinedValue())),
+    false,
+  );
+  return createExpressionStatement(
+    binary(createIdentifier(site), SyntaxKind.QuestionQuestionEqualsToken, empty),
+  );
+}
+
+/** The names {@link MatcherSlot.take} chose, and the reader of the slot's members. */
+interface TakenSlot {
+  /** The name of the slot's file-level variable. */
+  readonly site: string;
+  /** The name of the local holding the matcher. */
+  readonly matcher: string;
+  /** A member of the slot. */
+  readonly slot: (key: string) => Expression;
+}
+
+/**
+ * The names a pass gives its call-site slot, its matcher local, and the local its matcher's row
+ * flags are hoisted into, once the pass has taken them.
+ */
+export class MatcherSlot {
+  #site: string | undefined;
+  #matcher: string | undefined;
+  #matched: string | undefined;
+
+  /** The name of the slot's file-level variable, once {@link MatcherSlot.take} has run. */
+  get site(): string | undefined {
+    return this.#site;
+  }
+
+  /** The name of the matcher local, once {@link MatcherSlot.take} has run. */
+  get matcher(): string | undefined {
+    return this.#matcher;
+  }
+
+  /** The name of the local the row flags are hoisted into, once {@link MatcherSlot.hoists} ran. */
+  get matched(): string | undefined {
+    return this.#matched;
+  }
+
+  /**
+   * Chooses the names of the slot and of the matcher local, in that order.
+   *
+   * @param names - The generator the names are drawn from.
+   * @returns The two names and a reader of the slot's members.
+   */
+  take(names: NameGenerator): TakenSlot {
+    const site = names.unique(MATCHER_LOCALS.site);
+    const matcher = names.unique(MATCHER_LOCALS.matcher);
+    this.#site = site;
+    this.#matcher = matcher;
+    return { site, matcher, slot: (key) => slotRead(site, key) };
+  }
+
+  /**
+   * In hoisted mode, the statement reading the matcher's row flags into a local once per call.
+   *
+   * @param mode - The loop's mode.
+   * @param names - The generator the local's name is drawn from.
+   * @returns The statement, or none in realloc-safe mode or before {@link MatcherSlot.take} has run.
+   */
+  hoists(mode: Mode, names: NameGenerator): Statement[] {
+    const matcher = this.#matcher;
+    if (matcher === undefined || mode !== "hoisted") return [];
+    const matched = names.unique(MATCHER_LOCALS.matched);
+    this.#matched = matched;
+    return [hoistFlags(matcher, matched)];
+  }
 }
 
 /** What a {@link FilterPass} is built from, and where it records its names and rules. */
@@ -89,12 +213,11 @@ interface ElementTemp {
 
 /** The statements and reads a literal filter adds to one inlined loop. */
 export class FilterPass implements RowFilter {
+  readonly locals: readonly string[] = Object.values(FILTER_LOCALS);
   readonly #parts: FilterParts;
   /** The elements in source order, which is the order the runtime call evaluates them in. */
   readonly #elements: readonly ElementTemp[];
-  #matcher: string | undefined;
-  #matched: string | undefined;
-  #site: string | undefined;
+  readonly #slot = new MatcherSlot();
 
   /**
    * @param parts - The loop's filter and what its statements are built from.
@@ -124,7 +247,7 @@ export class FilterPass implements RowFilter {
    * has taken it.
    */
   get site(): string | undefined {
-    return this.#site;
+    return this.#slot.site;
   }
 
   /**
@@ -148,7 +271,6 @@ export class FilterPass implements RowFilter {
    *   ...)`, or none for a filter without elements.
    */
   guard(storage: string): Statement[] {
-    if (this.#elements.length === 0) return [];
     const { namespace, debug } = this.#parts;
     const checks = this.#elements.map(({ temp, present }) =>
       namespaceCall(namespace, "assertFilterMember", [
@@ -173,33 +295,23 @@ export class FilterPass implements RowFilter {
   matcher(storage: string): Statement[] {
     const { fold } = this.#parts.filter;
     if (fold.kind !== "masked") return [];
-    const { names } = this.#parts;
-    const site = names.unique(FILTER_LOCALS.site);
-    const matcher = names.unique(FILTER_LOCALS.matcher);
-    this.#site = site;
-    this.#matcher = matcher;
-    const slot = (key: "s" | "m"): Expression => member(createIdentifier(site), key);
-    const empty = createObjectLiteralExpression(
-      [
-        propertyAssignment(createIdentifier("s"), undefinedValue()),
-        propertyAssignment(createIdentifier("m"), undefinedValue()),
-      ],
-      false,
-    );
+    const { site, matcher, slot } = this.#slot.take(this.#parts.names);
     return [
-      createExpressionStatement(
-        binary(createIdentifier(site), SyntaxKind.QuestionQuestionEqualsToken, empty),
-      ),
-      letStatement([declaration(matcher, slot("m"))]),
+      slotInit(site, [SLOT.storage, SLOT.matcher]),
+      letStatement([declaration(matcher, slot(SLOT.matcher))]),
       createIfStatement(
-        binary(slot("s"), SyntaxKind.ExclamationEqualsEqualsToken, createIdentifier(storage)),
+        binary(
+          slot(SLOT.storage),
+          SyntaxKind.ExclamationEqualsEqualsToken,
+          createIdentifier(storage),
+        ),
         createBlock(
           [
             createExpressionStatement(
               assignTo(createIdentifier(matcher), this.#matcherFor(storage, fold)),
             ),
-            createExpressionStatement(assignTo(slot("s"), createIdentifier(storage))),
-            createExpressionStatement(assignTo(slot("m"), createIdentifier(matcher))),
+            createExpressionStatement(assignTo(slot(SLOT.storage), createIdentifier(storage))),
+            createExpressionStatement(assignTo(slot(SLOT.matcher), createIdentifier(matcher))),
           ],
           true,
         ),
@@ -214,11 +326,7 @@ export class FilterPass implements RowFilter {
    * @returns The statement, or none in realloc-safe mode or without a matcher.
    */
   hoists(): Statement[] {
-    const matcher = this.#matcher;
-    if (matcher === undefined || this.#parts.mode !== "hoisted") return [];
-    const matched = this.#parts.names.unique(FILTER_LOCALS.matched);
-    this.#matched = matched;
-    return [hoistFlags(matcher, matched)];
+    return this.#slot.hoists(this.#parts.mode, this.#parts.names);
   }
 
   /**
@@ -229,9 +337,9 @@ export class FilterPass implements RowFilter {
    * @returns `matched[i] !== 0`, or `undefined` when the loop visits every row.
    */
   rowTest(row: string): Expression | undefined {
-    const matcher = this.#matcher;
+    const matcher = this.#slot.matcher;
     if (matcher === undefined) return undefined;
-    return rowFlagTest(matcher, this.#matched, row);
+    return rowFlagTest(matcher, this.#slot.matched, row);
   }
 
   /**
@@ -274,7 +382,7 @@ export function rowFlagTest(matcher: string, matched: string | undefined, row: s
  * @param matched - The name of the local the flags are read into.
  * @returns `const matched = matcher.matched;`.
  */
-export function hoistFlags(matcher: string, matched: string): Statement {
+function hoistFlags(matcher: string, matched: string): Statement {
   return constStatement([declaration(matched, matcherFlags(matcher))]);
 }
 

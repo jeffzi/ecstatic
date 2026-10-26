@@ -22,10 +22,20 @@ const SEEN_UNKNOWN = "export const seen: unknown[] = [];\n";
 /** Opens an each call over a fresh Mover storage, whose callback the case closes. */
 const MOVER_EACH = "each(register(createWorld(), Mover), (e) => {\n";
 
+/** An each call over a Guarded storage, with `filterArgument` before the callback that runs `lines`. */
+function guardedEachCall(filterArgument: string, lines: readonly string[]): string {
+  const body = lines.map((line) => `    ${line}\n`).join("");
+  return `${SEEN_UNKNOWN}const { storage } = guarded();\neach(storage, ${filterArgument}(e) => {\n${body}});\n`;
+}
+
 /** An each call over a Guarded storage whose callback runs `lines`, one statement per entry. */
 function guardedEach(...lines: readonly string[]): string {
-  const body = lines.map((line) => `    ${line}\n`).join("");
-  return `${SEEN_UNKNOWN}const { storage } = guarded();\neach(storage, (e) => {\n${body}});\n`;
+  return guardedEachCall("", lines);
+}
+
+/** An each call over a Guarded storage filtered by the literal `filter`, whose callback runs `lines`. */
+function guardedFilteredEach(filter: string, ...lines: readonly string[]): string {
+  return guardedEachCall(`${filter}, `, lines);
 }
 
 /**
@@ -149,77 +159,6 @@ function deadZoneSource(body: string, after: string): string {
 }
 
 describe("RULES", () => {
-  it("names every rule of the rewrite catalog in catalog order", () => {
-    expect(RULES).toStrictEqual([
-      "mode-hoisted",
-      "mode-realloc-safe",
-      "filter-skip",
-      "filter-trivial",
-      "filter-masked",
-      "filter-runtime",
-      "filter-runtime-array",
-      "filter-runtime-object",
-      "filter-runtime-mixed",
-      "filter-element-guard",
-      "entity-id",
-      "read-required-field",
-      "read-optional-field",
-      "read-boolean-field",
-      "write-required-field",
-      "write-optional-field",
-      "write-boolean-field",
-      "boolean-assignment-value",
-      "update-field",
-      "relation-data-field",
-      "non-null-slot",
-      "optional-chain-read",
-      "presence-optional",
-      "presence-required",
-      "compare-null-strict-equal",
-      "compare-null-strict-not-equal",
-      "coalesce-optional",
-      "coalesce-required",
-      "required-tag",
-      "optional-tag",
-      "alias",
-      "destructure-slot",
-      "destructure-parameter",
-      "destructure-parameter-nested",
-      "destructure-id",
-      "destructure-view",
-      "destructure-view-nested",
-      "destructure-optional-slot",
-      "destructure-optional-tag",
-      "destructure-default-typed",
-      "destructure-default-plain",
-      "callback-arrow",
-      "callback-function",
-      "callback-without-parameter",
-      "callback-typed-parameter",
-      "return-void",
-      "return-value",
-      "return-object-literal",
-      "return-function-expression",
-      "return-class-expression",
-      "return-labeled",
-      "return-in-finally",
-      "return-in-nested-function",
-      "expression-body",
-      "outer-binding",
-      "block-scoped-declaration",
-      "closure",
-      "outer-let-dead-zone",
-      "this",
-      "arguments",
-      "new-target",
-      "super",
-      "var-to-let",
-      "user-label",
-      "user-label-renamed",
-      "throw",
-    ]);
-  });
-
   it("names each rule once", () => {
     const distinct = new Set(RULES);
 
@@ -480,6 +419,17 @@ describe("EmitFile", () => {
           name: "a component slot's fields only",
           source: `${SEEN_UNKNOWN}${MOVER_EACH}    seen.push(e.Position.x);\n});\n`,
           absent: ["relation-data-field"],
+        },
+        {
+          name: "a literal filter without elements",
+          source: guardedFilteredEach("{ any: [] }", "seen.push(e.id);"),
+          expected: ["filter-trivial"],
+          absent: ["filter-element-guard"],
+        },
+        {
+          name: "a literal filter with an element",
+          source: guardedFilteredEach("[Position]", "seen.push(e.id);"),
+          expected: ["filter-trivial", "filter-element-guard"],
         },
         {
           name: "a returned object literal",

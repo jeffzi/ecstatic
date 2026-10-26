@@ -28,7 +28,7 @@ import { Enemy } from "../archetypes.js";
 import { Boost, Shield, Stunned } from "../components.js";
 import { Position } from "../position.js";
 import { Glow, type GlowFilter } from "../glow.js";
-import { sharedFilter } from "../filter-value.js";
+import { makeFilter, sharedFilter } from "../filter-value.js";
 declare const s: Storage<typeof Enemy>;
 `;
 
@@ -44,10 +44,11 @@ export interface GlowFilter {
 }
 `;
 
-/** A filter value declared in its own file, typed by the runtime's filter type. */
+/** A filter value and a filter factory declared in their own file, typed by the runtime's filter type. */
 const FILTER_VALUE_SOURCE = `import type { EachFilter } from "../src/ecstatic/index.js";
 
 export declare const sharedFilter: EachFilter;
+export declare function makeFilter(): EachFilter;
 `;
 
 /** A literal element as the test reads it: the element's source text and its component name. */
@@ -66,19 +67,20 @@ type FilterSummary =
     }
   | { readonly kind: "non-literal"; readonly node: string; readonly form: FilterForm };
 
-interface LiteralCase {
+interface FilterCase {
   readonly name: string;
   readonly declarations?: string;
   readonly filter: string;
+  readonly source?: string;
+}
+
+interface LiteralCase extends FilterCase {
   readonly all?: readonly ElementSummary[];
   readonly any?: readonly ElementSummary[];
   readonly none?: readonly ElementSummary[];
 }
 
-interface NonLiteralCase {
-  readonly name: string;
-  readonly declarations?: string;
-  readonly filter: string;
+interface NonLiteralCase extends FilterCase {
   readonly form: FilterForm;
 }
 
@@ -223,11 +225,35 @@ const NON_LITERAL_CASES: readonly NonLiteralCase[] = [
     filter: "[either]",
     form: "array",
   },
+  {
+    name: "an unconstrained type parameter",
+    source: "function run<F>(f: F): void {\n  each(s, f, () => {});\n}\n",
+    filter: "f",
+    form: "unsupported",
+  },
+  {
+    name: "a type parameter constrained to a filter object",
+    source: "function run<F extends EachFilter>(f: F): void {\n  each(s, f, () => {});\n}\n",
+    filter: "f",
+    form: "object",
+  },
+  {
+    name: "a binding typed object, which a component array satisfies",
+    declarations: "declare const f: object;\n",
+    filter: "f",
+    form: "mixed",
+  },
+  {
+    name: "a binding typed Object, whose members a component array has",
+    declarations: "declare const f: Object;\n",
+    filter: "f",
+    form: "mixed",
+  },
 ];
 
-/** The text of a case file calling `each` over `s` with `filter`, after `declarations`. */
-function filteredEach(declarations: string, filter: string): string {
-  return `${declarations}each(s, ${filter}, () => {});\n`;
+/** A case's file text: its `source`, else `each` over `s` with its `filter` after `declarations`. */
+function filteredEach({ declarations = "", filter, source }: FilterCase): string {
+  return source ?? `${declarations}each(s, ${filter}, () => {});\n`;
 }
 
 const PRESENCE_SOURCE = "each(s, () => {});\neach(s, [Position], () => {});\n";
@@ -236,38 +262,31 @@ const DECLARATION_FILES_SOURCE = "each(s, () => {});\neach(s, [Glow], () => {});
 
 const OMITTED_ELEMENT_SOURCE = "each(s, [Glow, , Glow], () => {});\n";
 
+const OMITTED_AXIS_ELEMENT_SOURCE = "each(s, { all: [Glow, , Glow] }, () => {});\n";
+
 const FOREIGN_VALUE_SOURCE = "each(s, () => {});\neach(s, sharedFilter, () => {});\n";
+
+const FOREIGN_CALL_SOURCE = "each(s, () => {});\neach(s, makeFilter(), () => {});\n";
 
 const FOREIGN_TYPE_SOURCE =
   "declare const f: GlowFilter;\neach(s, () => {});\neach(s, f, () => {});\n";
 
-/** Filters typed by a type parameter, read through its constraint. */
-const TYPE_PARAMETER_CASES = [
-  {
-    name: "an unconstrained type parameter",
-    source: "function run<F>(f: F): void {\n  each(s, f, () => {});\n}\n",
-    form: "unsupported",
-  },
-  {
-    name: "a type parameter constrained to a filter object",
-    source: "function run<F extends EachFilter>(f: F): void {\n  each(s, f, () => {});\n}\n",
-    form: "object",
-  },
-] as const satisfies readonly { name: string; source: string; form: FilterForm }[];
-
 const SOURCES = [
-  ...[...LITERAL_CASES, ...NON_LITERAL_CASES].map(({ declarations = "", filter }) =>
-    filteredEach(declarations, filter),
-  ),
+  ...[...LITERAL_CASES, ...NON_LITERAL_CASES].map(filteredEach),
   PRESENCE_SOURCE,
   DECLARATION_FILES_SOURCE,
   FOREIGN_VALUE_SOURCE,
+  FOREIGN_CALL_SOURCE,
   FOREIGN_TYPE_SOURCE,
   OMITTED_ELEMENT_SOURCE,
-  ...TYPE_PARAMETER_CASES.map(({ source }) => source),
+  OMITTED_AXIS_ELEMENT_SOURCE,
 ];
 
 const CASE_STEM = "app/filter/case";
+
+const GLOW_PATH = "app/glow.ts";
+
+const FILTER_VALUE_PATH = "app/filter-value.ts";
 
 let root = "";
 let session: Session;
@@ -277,8 +296,8 @@ beforeAll(async () => {
   ({ root, session, view } = await openProject(
     runtimeProject({
       ...SHARED_ARCHETYPE_FILES,
-      "app/glow.ts": GLOW_SOURCE,
-      "app/filter-value.ts": FILTER_VALUE_SOURCE,
+      [GLOW_PATH]: GLOW_SOURCE,
+      [FILTER_VALUE_PATH]: FILTER_VALUE_SOURCE,
       ...caseFiles(CASE_STEM, SOURCES, CASE_PRELUDE),
     }),
   ));
@@ -297,19 +316,19 @@ async function eachSites(
   return { sites: sites.filter(({ op }) => op === "each"), table };
 }
 
-/** The source text of the node `table` registers under `id`. */
-function nodeText(table: NodeTable, id: NodeID): string | undefined {
-  return table.node(id)?.getText();
+/** The source text of the node `table` registers under `id`, or `""` when it registers none. */
+function nodeText(table: NodeTable, id: NodeID): string {
+  return table.node(id)?.getText() ?? "";
 }
 
 /** `filter` with its node IDs replaced by their nodes' source text. */
 function summarizeFilter(table: NodeTable, filter: Filter | undefined): FilterSummary | undefined {
   if (filter === undefined) return undefined;
   if (filter.kind === "non-literal") {
-    return { kind: "non-literal", node: nodeText(table, filter.node) ?? "", form: filter.form };
+    return { kind: "non-literal", node: nodeText(table, filter.node), form: filter.form };
   }
   const axis = (elements: LiteralFilter["all"]): ElementSummary[] =>
-    elements.map(({ node, name }) => ({ node: nodeText(table, node) ?? "", name }));
+    elements.map(({ node, name }) => ({ node: nodeText(table, node), name }));
   return { kind: "literal", all: axis(filter.all), any: axis(filter.any), none: axis(filter.none) };
 }
 
@@ -320,94 +339,78 @@ async function filterOf(source: string): Promise<FilterSummary | undefined> {
   return summarizeFilter(table, site?.filter);
 }
 
+/** Whether each `each` site of the case file holding `source` lists `file` as a declaration file. */
+async function consultsFile(source: string, file: string): Promise<boolean[]> {
+  const path = projectPath(root, file);
+  const { sites } = await eachSites(source);
+  return sites.map(({ declarationFiles }) => declarationFiles.includes(path));
+}
+
 describe("each filter analysis", () => {
-  it.each(LITERAL_CASES)(
-    "reports $name as literal, per axis in source order",
-    async ({ declarations = "", filter, all = [], any = [], none = [] }) => {
-      const found = await filterOf(filteredEach(declarations, filter));
+  it.each(LITERAL_CASES)("reports $name as literal, per axis in source order", async (testCase) => {
+    const { all = [], any = [], none = [] } = testCase;
 
-      expect(found).toStrictEqual({ kind: "literal", all, any, none });
-    },
-  );
+    const found = await filterOf(filteredEach(testCase));
 
-  it.each(NON_LITERAL_CASES)(
-    "reports $name as non-literal of form $form",
-    async ({ declarations = "", filter, form }) => {
-      const found = await filterOf(filteredEach(declarations, filter));
-
-      expect(found).toStrictEqual({ kind: "non-literal", node: filter, form });
-    },
-  );
-
-  it.each(TYPE_PARAMETER_CASES)(
-    "reports $name as non-literal of form $form",
-    async ({ source, form }) => {
-      const found = await filterOf(source);
-
-      expect(found).toStrictEqual({ kind: "non-literal", node: "f", form });
-    },
-  );
-
-  it("reports a filter only for a call the filtered flag marks as passing one", async () => {
-    const { sites, table } = await eachSites(PRESENCE_SOURCE);
-
-    expect(
-      sites.map((site) => ({
-        filtered: site.filtered,
-        filter: summarizeFilter(table, site.filter),
-      })),
-    ).toStrictEqual([
-      { filtered: false, filter: undefined },
-      {
-        filtered: true,
-        filter: { kind: "literal", all: [named("Position")], any: [], none: [] },
-      },
-    ]);
+    expect(found).toStrictEqual({ kind: "literal", all, any, none });
   });
 
-  it("lists the declaration files a filter consulted among its site's", async () => {
-    const glow = projectPath(root, "app/glow.ts");
+  it.each(NON_LITERAL_CASES)("reports $name as non-literal of form $form", async (testCase) => {
+    const found = await filterOf(filteredEach(testCase));
 
-    const { sites } = await eachSites(DECLARATION_FILES_SOURCE);
+    expect(found).toStrictEqual({
+      kind: "non-literal",
+      node: testCase.filter,
+      form: testCase.form,
+    });
+  });
 
-    expect(sites.map(({ declarationFiles }) => declarationFiles.includes(glow))).toStrictEqual([
-      false,
-      true,
-    ]);
+  it("reports a filter only for a call that passes one", async () => {
+    const { sites } = await eachSites(PRESENCE_SOURCE);
+
+    expect(sites.map(({ filter }) => filter?.kind)).toStrictEqual([undefined, "literal"]);
   });
 
   it.each([
     {
-      name: "value",
-      source: FOREIGN_VALUE_SOURCE,
-      file: "app/filter-value.ts",
+      name: "lists the declaration files a filter consulted among its site's",
+      source: DECLARATION_FILES_SOURCE,
+      file: GLOW_PATH,
+      expected: [false, true],
     },
     {
-      name: "type",
+      name: "lists the file declaring a non-literal filter's value among its site's declaration files",
+      source: FOREIGN_VALUE_SOURCE,
+      file: FILTER_VALUE_PATH,
+      expected: [false, true],
+    },
+    {
+      name: "lists the file declaring the function a non-literal filter calls among its site's declaration files",
+      source: FOREIGN_CALL_SOURCE,
+      file: FILTER_VALUE_PATH,
+      expected: [false, true],
+    },
+    {
+      name: "lists the file declaring a non-literal filter's type among its site's declaration files",
       source: FOREIGN_TYPE_SOURCE,
-      file: "app/glow.ts",
+      file: GLOW_PATH,
+      expected: [false, true],
     },
-  ])(
-    "lists the file declaring a non-literal filter's $name among its site's declaration files",
-    async ({ source, file }) => {
-      const path = projectPath(root, file);
-
-      const { sites } = await eachSites(source);
-
-      expect(sites.map(({ declarationFiles }) => declarationFiles.includes(path))).toStrictEqual([
-        false,
-        true,
-      ]);
+    {
+      name: "leaves the elements' declaration files out of a filter an omitted element makes non-literal",
+      source: OMITTED_ELEMENT_SOURCE,
+      file: GLOW_PATH,
+      expected: [false],
     },
-  );
+    {
+      name: "leaves the elements' declaration files out of a filter object an omitted element makes non-literal",
+      source: OMITTED_AXIS_ELEMENT_SOURCE,
+      file: GLOW_PATH,
+      expected: [false],
+    },
+  ])("$name", async ({ source, file, expected }) => {
+    const found = await consultsFile(source, file);
 
-  it("leaves the elements' declaration files out of a filter an omitted element makes non-literal", async () => {
-    const glow = projectPath(root, "app/glow.ts");
-
-    const { sites } = await eachSites(OMITTED_ELEMENT_SOURCE);
-
-    expect(sites.map(({ declarationFiles }) => declarationFiles.includes(glow))).toStrictEqual([
-      false,
-    ]);
+    expect(found).toStrictEqual(expected);
   });
 });

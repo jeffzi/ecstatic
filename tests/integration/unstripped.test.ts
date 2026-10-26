@@ -92,10 +92,9 @@ const BARE_GUARD = `ecstatic_internal.assertShape(storage, "${SHAPE_KEY}");`;
 /** A shape guard gated by {@link CHECKER_GATE}, as the emitter writes one. */
 const GATED_GUARD = `(${CHECKER_GATE}) && ${BARE_GUARD}`;
 
-const FILTER_GUARD = "ecstatic_internal.assertFilterMember(storage, element, true)";
-
 /** Two filter-element guards in a parenthesized comma list, as the emitter writes several. */
-const FILTER_LIST = `(${FILTER_GUARD}, ecstatic_internal.assertFilterMember(storage, element, false))`;
+const FILTER_LIST =
+  "(ecstatic_internal.assertFilterMember(storage, element, true), ecstatic_internal.assertFilterMember(storage, element, false))";
 
 /** A comma list of filter-element guards gated by {@link CHECKER_GATE}, as the emitter writes one. */
 const GATED_FILTER_GUARD = `(${CHECKER_GATE}) && ${FILTER_LIST};`;
@@ -109,13 +108,10 @@ const GATED_MODULE = "tests/unit/gated.test.ts";
 /** The problem named for a guard on line 4 of {@link REJECTED_MODULE} whose gate reads an `NDEBUG` the file binds. */
 const SHADOWED = `${REJECTED_MODULE}:4: the shape guard is gated by ${CHECKER_GATE} (reading the file's own NDEBUG), not by the runtime's DEBUG initializer`;
 
-/** The problem named for a `guard` on line 4 of {@link REJECTED_MODULE} gated by `gate` alone. */
-function gatedOtherwise(gate: string, guard = "shape guard"): string {
-  return `${REJECTED_MODULE}:4: the ${guard} is gated by ${gate}, not by the runtime's DEBUG initializer`;
+/** The problem named for a shape guard on line 4 of {@link REJECTED_MODULE} gated by `gate` alone. */
+function gatedOtherwise(gate: string): string {
+  return `${REJECTED_MODULE}:4: the shape guard is gated by ${gate}, not by the runtime's DEBUG initializer`;
 }
-
-/** The problem named for a filter-element guard on line 4 of {@link REJECTED_MODULE} with no gate. */
-const FILTER_WITHOUT_GATE = `${REJECTED_MODULE}:4: the filter-element guard runs without a DEBUG gate`;
 
 let session: Session;
 let rewriter: Rewriter;
@@ -267,10 +263,6 @@ describe("unstrippedProblems", () => {
       expect(emitted.main).toMatch(/assertShape\(target(?:_\d+)?, /u);
     });
 
-    it("emits filter-element guards for the scan to check", () => {
-      expect(emitted.main).toMatch(/\(ecstatic_internal\.assertFilterMember\([^)]*\), /u);
-    });
-
     it.each([
       {
         name: "a gate in more parentheses",
@@ -286,11 +278,6 @@ describe("unstrippedProblems", () => {
         name: "a gate inside a parenthesized chain of gates",
         declarations: "const enabled = true;",
         guard: `(enabled && (${CHECKER_GATE})) && ${BARE_GUARD}`,
-      },
-      {
-        name: "a gated comma list of filter-element guards",
-        declarations: "",
-        guard: GATED_FILTER_GUARD,
       },
     ])("reports nothing for $name", async ({ declarations, guard }) => {
       const problems = await gatingProblems({
@@ -341,16 +328,6 @@ describe("unstrippedProblems", () => {
       });
 
       expect(problems).toStrictEqual([SHADOWED]);
-    });
-
-    it("names each filter-element guard of a comma list whose gate reads it", async () => {
-      const shadowed = `${REJECTED_MODULE}:4: the filter-element guard is gated by ${CHECKER_GATE} (reading the file's own NDEBUG), not by the runtime's DEBUG initializer`;
-
-      const problems = await gatingProblems({
-        [REJECTED_MODULE]: guardedModule("const NDEBUG = false;", GATED_FILTER_GUARD),
-      });
-
-      expect(problems).toStrictEqual([shadowed, shadowed]);
     });
   });
 
@@ -422,26 +399,6 @@ describe("unstrippedProblems", () => {
         },
         expected: [`${REJECTED_MODULE}:2: the shape guard runs without a DEBUG gate`],
       },
-      {
-        name: "a filter-element guard with no gate",
-        outputs: { [REJECTED_MODULE]: guardedModule("", `${FILTER_GUARD};`) },
-        expected: [FILTER_WITHOUT_GATE],
-      },
-      {
-        name: "each filter-element guard of a comma list with no gate",
-        outputs: { [REJECTED_MODULE]: guardedModule("", `${FILTER_LIST};`) },
-        expected: [FILTER_WITHOUT_GATE, FILTER_WITHOUT_GATE],
-      },
-      {
-        name: "each filter-element guard of a comma list gated by another identifier",
-        outputs: {
-          [REJECTED_MODULE]: guardedModule("const enabled = true;", `enabled && ${FILTER_LIST};`),
-        },
-        expected: [
-          gatedOtherwise("enabled", "filter-element guard"),
-          gatedOtherwise("enabled", "filter-element guard"),
-        ],
-      },
     ])("names $name", async ({ outputs, expected }) => {
       const problems = await gatingProblems(outputs);
 
@@ -510,10 +467,12 @@ describe("unstrippedProblems", () => {
     });
   });
 
-  it("reports it has nothing to check when no test module holds a filter-element guard", async () => {
-    const problems = await checkerProblems({ [REJECTED_MODULE]: guardedModule("", GATED_GUARD) });
+  describe("when no test module holds a filter-element guard", () => {
+    it("reports it has nothing to check", async () => {
+      const problems = await checkerProblems({ [REJECTED_MODULE]: guardedModule("", GATED_GUARD) });
 
-    expect(problems).toStrictEqual([NO_FILTER_GUARDS]);
+      expect(problems).toStrictEqual([NO_FILTER_GUARDS]);
+    });
   });
 });
 

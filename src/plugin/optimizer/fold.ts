@@ -3,7 +3,7 @@
  * `resolveFilterMasks` gives for the same components on a storage of that shape, computed from
  * component names alone.
  */
-import type { ArchShape, FilterElement, LiteralFilter } from "./facts.js";
+import { type ArchShape, FILTER_AXES, type FilterElement, type LiteralFilter } from "./facts.js";
 
 interface FoldBase {
   /**
@@ -46,6 +46,16 @@ function bitIn(shape: ArchShape, name: string): number | undefined {
   const index = shape.optional.findIndex((component) => component.name === name);
   if (index !== -1) return 1 << index;
   return shape.required.some((component) => component.name === name) ? 0 : undefined;
+}
+
+/**
+ * Flattens a literal filter's axes into the one list `FoldBase.present` is parallel to.
+ *
+ * @param filter - The literal filter.
+ * @returns Every element, the `all` axis, then `any`, then `none`, each in element order.
+ */
+export function literalElements(filter: LiteralFilter): readonly FilterElement[] {
+  return FILTER_AXES.flatMap((axis) => filter[axis]);
 }
 
 /**

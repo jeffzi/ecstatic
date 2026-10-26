@@ -23,7 +23,6 @@ import {
   createIdentifier,
   createIfStatement,
   createKeywordExpression,
-  createObjectLiteralExpression,
   createPostfixUnaryExpression,
   createPrefixUnaryExpression,
   createSpreadElement,
@@ -32,6 +31,7 @@ import {
 } from "typescript/ast/factory";
 import { isExpression } from "typescript/ast/is";
 
+import { FILTER_AXES, type FilterAxis } from "../facts.js";
 import { type NodeTable, tableNode } from "../nodes.js";
 import type { Mode, RuntimePlannedFilter } from "../plan.js";
 import type { Rule } from "./catalog.js";
@@ -47,12 +47,24 @@ import {
   member,
   namespaceCall,
   numeric,
-  propertyAssignment,
   string,
   undefinedValue,
 } from "./expressions.js";
-import { hoistFlags, type RowFilter, rowFlagTest } from "./filter.js";
+import {
+  MATCHER_LOCALS,
+  MatcherSlot,
+  type RowFilter,
+  rowFlagTest,
+  SLOT,
+  slotInit,
+} from "./filter.js";
 import type { NameGenerator } from "./names.js";
+
+/** The snapshot key, and the base name of the local, of each axis's elements as resolved. */
+const IDS = { all: "allIds", any: "anyIds", none: "noneIds" } as const satisfies Record<
+  FilterAxis,
+  string
+>;
 
 /** The base name of each local a loop with a non-literal filter adds. */
 export const RUNTIME_FILTER_LOCALS = {
@@ -61,27 +73,14 @@ export const RUNTIME_FILTER_LOCALS = {
   all: "all",
   any: "any",
   none: "none",
-  allIds: "allIds",
-  anyIds: "anyIds",
-  noneIds: "noneIds",
+  allIds: IDS.all,
+  anyIds: IDS.any,
+  noneIds: IDS.none,
   hit: "hit",
   ids: "ids",
   index: "k",
-  site: "site",
-  matcher: "matcher",
-  matched: "matched",
+  ...MATCHER_LOCALS,
 } as const;
-
-/** The axes of a filter, in the order `normalizeFilter` reads them and `resolveFilterMasks` takes them. */
-const AXES = ["all", "any", "none"] as const;
-
-type AxisKey = (typeof AXES)[number];
-
-/** The snapshot key, and the base name of the local, of each axis's elements as resolved. */
-const IDS = { all: "allIds", any: "anyIds", none: "noneIds" } as const satisfies Record<
-  AxisKey,
-  string
->;
 
 /** What a {@link RuntimeFilterPass} is built from, and where it records its names and rules. */
 export interface RuntimeFilterParts {
@@ -96,7 +95,7 @@ export interface RuntimeFilterParts {
 
 /** One axis the loop reads from the filter value. */
 interface Axis {
-  readonly key: AxisKey;
+  readonly key: FilterAxis;
   /** The name of the local holding the axis as read: the filter's own for a component array. */
   readonly local: string;
   /**
@@ -113,12 +112,6 @@ interface CompareLocals {
   readonly index: string;
 }
 
-/**
- * `name` as an identifier.
- *
- * @param name - The name.
- * @returns The identifier.
- */
 function id(name: string): Expression {
   return createIdentifier(name);
 }
@@ -178,12 +171,11 @@ function emptyArray(): Expression {
 export class RuntimeFilterPass implements RowFilter {
   /** A filter resolved at runtime may match, so the loop is always built. */
   readonly skips = false;
+  readonly locals: readonly string[] = Object.values(RUNTIME_FILTER_LOCALS);
   readonly #parts: RuntimeFilterParts;
   readonly #value: Expression;
   readonly #filter: string;
-  #matcher: string | undefined;
-  #matched: string | undefined;
-  #site: string | undefined;
+  readonly #slot = new MatcherSlot();
 
   /**
    * @param parts - The loop's filter and what its statements are built from.
@@ -203,7 +195,7 @@ export class RuntimeFilterPass implements RowFilter {
    * {@link RuntimeFilterPass.matcher} has taken it.
    */
   get site(): string | undefined {
-    return this.#site;
+    return this.#slot.site;
   }
 
   /**
@@ -252,36 +244,34 @@ export class RuntimeFilterPass implements RowFilter {
    */
   matcher(storage: string): Statement[] {
     const { names } = this.#parts;
-    const site = names.unique(RUNTIME_FILTER_LOCALS.site);
-    const matcher = names.unique(RUNTIME_FILTER_LOCALS.matcher);
+    const { site, matcher, slot } = this.#slot.take(names);
     const hit = names.unique(RUNTIME_FILTER_LOCALS.hit);
-    this.#site = site;
-    this.#matcher = matcher;
     const { reads, axes } = this.#axes();
     const locals = {
       hit,
       ids: names.unique(RUNTIME_FILTER_LOCALS.ids),
       index: names.unique(RUNTIME_FILTER_LOCALS.index),
     };
-    const slot = (key: string): Expression => member(id(site), key);
     // A component array is its own `all` axis, which the filter's identity already compares.
     const own = this.#parts.filter.form === "array" ? [] : axes;
-    const keys = ["s", "f", ...own.map(({ key }) => key), ...axes.map(({ key }) => IDS[key]), "m"];
-    const empty = createObjectLiteralExpression(
-      keys.map((key) => propertyAssignment(createIdentifier(key), undefinedValue())),
-      false,
-    );
+    const keys = [
+      SLOT.storage,
+      SLOT.filter,
+      ...own.map(({ key }) => key),
+      ...axes.map(({ key }) => IDS[key]),
+      SLOT.matcher,
+    ];
     const identities = every(
-      same(slot("s"), id(storage)),
-      same(slot("f"), id(this.#filter)),
+      same(slot(SLOT.storage), id(storage)),
+      same(slot(SLOT.filter), id(this.#filter)),
       ...own.map(({ key, local }) => same(slot(key), id(local))),
     );
     return [
       ...reads,
-      createExpressionStatement(binary(id(site), SyntaxKind.QuestionQuestionEqualsToken, empty)),
+      slotInit(site, keys),
       letStatement([declaration(hit, identities)]),
       ...axes.map((axis) => this.#elementCheck(axis, slot(IDS[axis.key]), locals)),
-      letStatement([declaration(matcher, slot("m"))]),
+      letStatement([declaration(matcher, slot(SLOT.matcher))]),
       createIfStatement(
         createPrefixUnaryExpression(SyntaxKind.ExclamationToken, id(hit)),
         createBlock(this.#miss(storage, axes, own, slot), true),
@@ -297,11 +287,8 @@ export class RuntimeFilterPass implements RowFilter {
    * @throws Error when {@link RuntimeFilterPass.matcher} has not run.
    */
   hoists(): Statement[] {
-    const matcher = this.#requireMatcher();
-    if (this.#parts.mode !== "hoisted") return [];
-    const matched = this.#parts.names.unique(RUNTIME_FILTER_LOCALS.matched);
-    this.#matched = matched;
-    return [hoistFlags(matcher, matched)];
+    this.#requireMatcher();
+    return this.#slot.hoists(this.#parts.mode, this.#parts.names);
   }
 
   /**
@@ -312,7 +299,7 @@ export class RuntimeFilterPass implements RowFilter {
    * @throws Error when {@link RuntimeFilterPass.matcher} has not run.
    */
   rowTest(row: string): Expression {
-    return rowFlagTest(this.#requireMatcher(), this.#matched, row);
+    return rowFlagTest(this.#requireMatcher(), this.#slot.matched, row);
   }
 
   /**
@@ -362,10 +349,10 @@ export class RuntimeFilterPass implements RowFilter {
     if (form === "array") {
       return { reads: [], axes: [{ key: "all", local: this.#filter, resolved: undefined }] };
     }
-    const axes = AXES.map((key) => ({
+    const axes = FILTER_AXES.map((key) => ({
       key,
       local: names.unique(RUNTIME_FILTER_LOCALS[key]),
-      resolved: names.unique(RUNTIME_FILTER_LOCALS[IDS[key]]),
+      resolved: names.unique(IDS[key]),
     }));
     if (form === "object") {
       const reads = axes.map(({ key, local }) => declaration(local, member(filter, key)));
@@ -373,7 +360,7 @@ export class RuntimeFilterPass implements RowFilter {
     }
     const array = names.unique(RUNTIME_FILTER_LOCALS.array);
     const isArray = namespaceCall(this.#parts.namespace, "isArray", [filter]);
-    const read = (key: AxisKey): Expression =>
+    const read = (key: FilterAxis): Expression =>
       conditional(id(array), key === "all" ? filter : undefinedValue(), member(filter, key));
     return {
       reads: [
@@ -447,7 +434,7 @@ export class RuntimeFilterPass implements RowFilter {
           ],
     );
     const resolvedOf = (axis: Axis): Expression => id(axis.resolved ?? axis.local);
-    const args = AXES.map((key) => {
+    const args = FILTER_AXES.map((key) => {
       const axis = axes.find((candidate) => candidate.key === key);
       return axis === undefined ? emptyArray() : resolvedOf(axis);
     });
@@ -456,11 +443,11 @@ export class RuntimeFilterPass implements RowFilter {
         id(matcher),
         namespaceCall(this.#parts.namespace, "resolveFilterMasks", [id(storage), ...args]),
       ),
-      assignTo(slot("s"), id(storage)),
-      assignTo(slot("f"), id(this.#filter)),
+      assignTo(slot(SLOT.storage), id(storage)),
+      assignTo(slot(SLOT.filter), id(this.#filter)),
       ...own.map(({ key, local }) => assignTo(slot(key), id(local))),
       ...axes.map((axis) => assignTo(slot(IDS[axis.key]), copied(resolvedOf(axis)))),
-      assignTo(slot("m"), id(matcher)),
+      assignTo(slot(SLOT.matcher), id(matcher)),
     ];
     return [
       ...(defaults.length === 0 ? [] : [constStatement(defaults)]),
@@ -475,7 +462,7 @@ export class RuntimeFilterPass implements RowFilter {
    * @throws Error when {@link RuntimeFilterPass.matcher} has not run.
    */
   #requireMatcher(): string {
-    const matcher = this.#matcher;
+    const matcher = this.#slot.matcher;
     if (matcher === undefined) {
       throw new Error("emit: a non-literal filter's matcher is read before it is resolved");
     }

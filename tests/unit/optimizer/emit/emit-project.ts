@@ -170,7 +170,12 @@ export function rewriteAt(planned: PlannedCase, index: number): EachInlining {
   return inlining;
 }
 
-/** The filter outcome `inlining` plans: its fold's kind, `"runtime"`, or `undefined` when unfiltered. */
+/**
+ * Classifies how an inlining's filter is applied: folded at build time, resolved at runtime, or absent.
+ *
+ * @param inlining - The inlining whose planned filter is classified.
+ * @returns The fold's kind, `"runtime"`, or `undefined` when unfiltered.
+ */
 export function filterOutcome(inlining: EachInlining): string | undefined {
   const { filter } = inlining;
   if (filter === undefined) return undefined;

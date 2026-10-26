@@ -50,13 +50,22 @@ import {
 /** The module the emitter imports the guards' namespace from. */
 const INTERNAL_ENTRY = "ecstatic/internal";
 
+/** What problems call the guard on `assertShape`. */
+const SHAPE_LABEL = "shape guard";
+
+/** What problems call the guard on `assertFilterMember`. */
+const FILTER_LABEL = "filter-element guard";
+
+/** The problem reported when no module holds a guard labeled `label`, so that the check cannot pass vacuously. */
+function nothingToCheck(label: string): string {
+  return `no test module's output holds a ${label}, so the check has nothing to check`;
+}
+
 /** The problem reported when no module holds a shape guard, so that the check cannot pass vacuously. */
-export const NO_GUARDS =
-  "no test module's output holds a shape guard, so the check has nothing to check";
+export const NO_GUARDS = nothingToCheck(SHAPE_LABEL);
 
 /** The problem reported when no module holds a filter-element guard, so that the check cannot pass vacuously. */
-export const NO_FILTER_GUARDS =
-  "no test module's output holds a filter-element guard, so the check has nothing to check";
+export const NO_FILTER_GUARDS = nothingToCheck(FILTER_LABEL);
 
 /** A guard the emitter writes under the debug gate. */
 interface GuardKind {
@@ -64,15 +73,13 @@ interface GuardKind {
   readonly name: string;
   /** What problems call the guard. */
   readonly label: string;
-  /** The problem reported when no module holds the guard. */
-  readonly missing: string;
 }
 
 /** Every guard the scan checks, keyed by the export of {@link INTERNAL_ENTRY} it calls. */
 const GUARD_KINDS: ReadonlyMap<string, GuardKind> = new Map(
   [
-    { name: "assertShape", label: "shape guard", missing: NO_GUARDS },
-    { name: "assertFilterMember", label: "filter-element guard", missing: NO_FILTER_GUARDS },
+    { name: "assertShape", label: SHAPE_LABEL },
+    { name: "assertFilterMember", label: FILTER_LABEL },
   ].map((kind) => [kind.name, kind]),
 );
 
@@ -458,7 +465,7 @@ export function unstrippedProblems(
     problems.push(...found.problems);
   }
   for (const kind of GUARD_KINDS.values()) {
-    if (!held.has(kind)) problems.push(kind.missing);
+    if (!held.has(kind)) problems.push(nothingToCheck(kind.label));
   }
   return problems;
 }

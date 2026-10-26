@@ -4,8 +4,9 @@ import { dirname, join, relative } from "node:path";
 import type { CallExpression, Identifier, Node } from "typescript/ast";
 import { isIdentifier, isPropertyAccessExpression } from "typescript/ast/is";
 
-import { type Checker, declarationFileNames, resolveSymbol, symbolName } from "../compiler.js";
+import { type Checker, declarationFileNames, resolveSymbol } from "../compiler.js";
 import { type Op, opByName } from "../facts.js";
+import { symbolName } from "./checker-fields.js";
 
 /** A path, relative to a package root, inside its runtime: its sources or its build. */
 const RUNTIME_PATH = /^(?:src|dist)[/\\]/;

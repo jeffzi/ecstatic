@@ -8,20 +8,22 @@ import {
   type Checker,
   hasCallSignatures,
   intersectionMembers,
-  isAccessorProperty,
-  isAccessorSymbol,
-  isAnonymousObjectSymbol,
-  isAnyOrUnknown,
   isArrayOrTuple,
-  isNullishOrVoid,
-  isPrimitiveOrNever,
   propertiesOfType,
+  propertyOfType,
   type Type,
-  typeId,
   typeOfSymbol,
   typeSymbol,
   unionMembers,
 } from "../compiler.js";
+import {
+  isAccessorSymbol,
+  isAnonymousObjectSymbol,
+  isAnyOrUnknown,
+  isNullishOrVoid,
+  isPrimitiveOrNever,
+  typeId,
+} from "./checker-fields.js";
 
 /**
  * The members of a union or intersection.
@@ -120,7 +122,7 @@ export async function typeReadRuns(checker: Checker, type: Type, name: string): 
     async (member) => await typeReadRuns(checker, member, name),
   );
   if (settled !== undefined) return settled;
-  return await isAccessorProperty(checker, await apparentType(checker, type), name);
+  return isAccessorSymbol(await propertyOfType(checker, await apparentType(checker, type), name));
 }
 
 /**

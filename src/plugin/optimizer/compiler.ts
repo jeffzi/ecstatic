@@ -1,7 +1,8 @@
 /**
  * Every call the optimizer makes into the compiler process lives here: checker, symbol, type,
- * program, snapshot, parse, emit, and printer calls. The other optimizer modules read nodes and
- * plain values, so a compiler API upgrade edits this file alone.
+ * program, snapshot, parse, emit, and printer calls. The other optimizer modules read nodes, plain
+ * values, and the flags this file re-exports, so a compiler API upgrade edits this file alone, save
+ * a renamed flag, which fails the type check where it is read.
  */
 
 import { setImmediate } from "node:timers/promises";
@@ -30,6 +31,7 @@ import {
 import { compilerFileName, nativeFileName } from "./file-names.js";
 
 export type { API, Checker, CheckerSymbol, Snapshot, Type };
+export { isStringLiteralType, SymbolFlags, TypeFlags };
 
 // ---------------------------------------------------------------------------
 // Compiler process
@@ -543,16 +545,6 @@ export async function declarationsOf(symbol: CheckerSymbol | undefined): Promise
 }
 
 /**
- * The display name of `symbol`.
- *
- * @param symbol - Symbol to name.
- * @returns Its name without escaping.
- */
-export function symbolName(symbol: CheckerSymbol): string {
-  return symbol.name;
-}
-
-/**
  * The file name of `file`, in the platform's spelling.
  *
  * @param file - Source file to name.
@@ -641,47 +633,6 @@ export async function typeOfSymbol(checker: Checker, symbol: CheckerSymbol): Pro
  */
 export async function typeSymbol(type: Type): Promise<CheckerSymbol | undefined> {
   return await type.getSymbol();
-}
-
-/**
- * Whether the property of `type` named `name` is a get or set accessor.
- *
- * @param checker - Checker that produced `type`.
- * @param type - Type to inspect.
- * @param name - Property name.
- * @returns Whether the property exists and is an accessor.
- * @throws When the compiler process has exited.
- */
-export async function isAccessorProperty(
-  checker: Checker,
-  type: Type,
-  name: string,
-): Promise<boolean> {
-  return isAccessorSymbol(await propertyOfType(checker, type, name));
-}
-
-/**
- * Whether `symbol` is a get or set accessor.
- *
- * @param symbol - Symbol to inspect; undefined is no accessor.
- * @returns Whether `symbol` is an accessor.
- */
-export function isAccessorSymbol(symbol: CheckerSymbol | undefined): boolean {
-  return symbol !== undefined && (symbol.flags & SymbolFlags.Accessor) !== 0;
-}
-
-/**
- * Whether `symbol`, a type's symbol, names an object literal, a type literal, or no declaration at
- * all: an object type with no class or interface behind it.
- *
- * @param symbol - The type's symbol; undefined for a type no declaration names.
- * @returns Whether the type is anonymous.
- */
-export function isAnonymousObjectSymbol(symbol: CheckerSymbol | undefined): boolean {
-  return (
-    symbol === undefined ||
-    (symbol.flags & (SymbolFlags.ObjectLiteral | SymbolFlags.TypeLiteral)) !== 0
-  );
 }
 
 /**
@@ -783,43 +734,18 @@ export async function isArrayLike(checker: Checker, type: Type): Promise<boolean
 }
 
 /**
- * Whether `type` is `any` or `unknown`.
+ * Whether a value of `type` can be an array, as one typed `object`, `{}` or `Object` can: the
+ * global `Array` type is assignable to it. Without a global `Array` to test, any value may be one.
  *
+ * @param checker - Checker that produced `type`.
  * @param type - Type to test.
- * @returns Whether it is `any` or `unknown`.
+ * @returns Whether an array is assignable to `type`.
+ * @throws When the compiler process has exited.
  */
-export function isAnyOrUnknown(type: Type): boolean {
-  return (type.flags & TypeFlags.AnyOrUnknown) !== 0;
-}
-
-/**
- * Whether `type` is `boolean` or a boolean literal.
- *
- * @param type - Type to test.
- * @returns Whether it is boolean.
- */
-export function isBooleanType(type: Type): boolean {
-  return (type.flags & TypeFlags.BooleanLike) !== 0;
-}
-
-/**
- * Whether `type` is `number` or a number literal.
- *
- * @param type - Type to test.
- * @returns Whether it is a number.
- */
-export function isNumberType(type: Type): boolean {
-  return (type.flags & TypeFlags.NumberLike) !== 0;
-}
-
-/**
- * The value of a single string literal type.
- *
- * @param type - Type to read; undefined has no value.
- * @returns The literal's value, or undefined for any other type, a union of literals included.
- */
-export function stringLiteralValue(type: Type | undefined): string | undefined {
-  return type !== undefined && isStringLiteralType(type) ? type.value : undefined;
+export async function admitsArray(checker: Checker, type: Type): Promise<boolean> {
+  const array = await checker.resolveName("Array", SymbolFlags.Type);
+  if (array === undefined) return true;
+  return await checker.isTypeAssignableTo(await checker.getDeclaredTypeOfSymbol(array), type);
 }
 
 /**
@@ -842,36 +768,6 @@ export async function unionMembers(type: Type): Promise<readonly Type[] | undefi
  */
 export async function intersectionMembers(type: Type): Promise<readonly Type[] | undefined> {
   return isIntersectionType(type) ? await type.getTypes() : undefined;
-}
-
-/**
- * The identity of `type` within its program, the same for every object that stands for it.
- *
- * @param type - Type to identify.
- * @returns Its ID.
- */
-export function typeId(type: Type): number {
-  return type.id;
-}
-
-/**
- * Whether `type` is a primitive, such as `number` or a string literal, or `never`.
- *
- * @param type - Type to test; a union or intersection tests as neither.
- * @returns Whether every value of `type` is a primitive.
- */
-export function isPrimitiveOrNever(type: Type): boolean {
-  return (type.flags & (TypeFlags.Primitive | TypeFlags.Never)) !== 0;
-}
-
-/**
- * Whether `type` is `null`, `undefined`, or `void`.
- *
- * @param type - Type to test; a union tests as none of them.
- * @returns Whether `type` holds only `null` or `undefined`.
- */
-export function isNullishOrVoid(type: Type): boolean {
-  return (type.flags & (TypeFlags.Nullable | TypeFlags.Void)) !== 0;
 }
 
 /**
@@ -921,18 +817,4 @@ export async function requiredTupleElements(
   if (flags.some((flag) => flag !== ElementFlags.Required)) return undefined;
   // A tuple reference's type arguments may end with its `this` type.
   return typeArguments.slice(0, flags.length);
-}
-
-/** How the compiler API spells the name of a property keyed by a unique symbol: `__@iterator@12`. */
-const SYMBOL_KEY_PREFIX = "__@";
-
-/**
- * Whether `symbol` is a property keyed by a symbol value, such as `[Symbol.iterator]`, rather than
- * by a name. Such a key has no string the runtime could enumerate.
- *
- * @param symbol - Property to test.
- * @returns Whether its key is a symbol.
- */
-export function isSymbolKeyed(symbol: CheckerSymbol): boolean {
-  return symbol.name.startsWith(SYMBOL_KEY_PREFIX);
 }

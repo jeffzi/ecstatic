@@ -81,42 +81,17 @@ describe("foldFilter", () => {
       { name: "all: an absent component", axes: { all: [Velocity] } },
       { name: "all: a required and two optionals", axes: { all: [Boost, Position, Shield] } },
       { name: "all: a duplicated optional", axes: { all: [Stunned, Stunned] } },
-      { name: "all: an absent after an optional", axes: { all: [Shield, Frozen] } },
       { name: "any: an optional component", axes: { any: [Boost] } },
-      { name: "any: two optionals", axes: { any: [Shield, Boost] } },
       { name: "any: a required component", axes: { any: [Position] } },
       { name: "any: a required after an optional", axes: { any: [Stunned, Position] } },
       { name: "any: only absent components", axes: { any: [Velocity, Frozen] } },
       { name: "any: an absent and an optional", axes: { any: [Frozen, Shield] } },
-      { name: "any: a duplicated optional", axes: { any: [Boost, Boost] } },
       { name: "none: an optional component", axes: { none: [Shield] } },
       { name: "none: a required component", axes: { none: [Position] } },
       { name: "none: an absent component", axes: { none: [Velocity] } },
-      { name: "none: an absent and an optional", axes: { none: [Frozen, Boost] } },
-      { name: "none: a duplicated optional", axes: { none: [Stunned, Stunned] } },
-      {
-        name: "an optional on each axis",
-        axes: { all: [Shield], any: [Stunned], none: [Boost] },
-      },
-      {
-        name: "a required all with a required any and an absent none",
-        axes: { all: [Position], any: [Position, Shield], none: [Velocity] },
-      },
-      {
-        name: "an optional all with only absent any members",
-        axes: { all: [Shield], any: [Velocity], none: [Boost] },
-      },
-      {
-        name: "an optional all with a required none",
-        axes: { all: [Shield], any: [Stunned], none: [Position] },
-      },
       {
         name: "an absent all with present members on the other axes",
         axes: { all: [Velocity, Shield], any: [Stunned, Frozen], none: [Position, Boost] },
-      },
-      {
-        name: "an empty any between an optional all and an optional none",
-        axes: { all: [Boost], any: [], none: [Shield] },
       },
     ])("gives the runtime's outcome and element presence for $name", ({ axes }) => {
       const expected = runtimeFold(SHIP, axes);

@@ -19,7 +19,7 @@ import {
   type SpawnTarget,
   type ViewEscape,
 } from "./facts.js";
-import { type FoldedFilter, foldFilter } from "./fold.js";
+import { type FoldedFilter, foldFilter, literalElements } from "./fold.js";
 
 /** A call site that keeps its runtime call, with the reason it does. */
 export interface Bail {
@@ -201,7 +201,7 @@ function eachInlining(site: Site, callback: Callback): EachInlining {
   const filter = site.filter;
   if (filter === undefined) return inlining;
   if (filter.kind === "literal") {
-    const elements = [...filter.all, ...filter.any, ...filter.none];
+    const elements = literalElements(filter);
     return { ...inlining, filter: { elements, fold: foldFilter(filter, shape) } };
   }
   if (filter.form === "unsupported")
@@ -217,7 +217,7 @@ function eachInlining(site: Site, callback: Callback): EachInlining {
  * @param site - Site to check.
  * @returns `true` for a filtered site whose filter is neither literal nor of a runtime form.
  */
-function keptFilter(site: Site): boolean {
+function filterKeepsCall(site: Site): boolean {
   if (!site.filtered) return false;
   const { filter } = site;
   return filter === undefined || (filter.kind === "non-literal" && filter.form === "unsupported");
@@ -275,8 +275,9 @@ class Planner {
     if (typeof reason === "string") return { reason };
     const escape = this.#escapeVerdict(site, reason);
     if (escape !== undefined) return escape;
-    // Inlining an each that holds an inlined each would need loop composition.
-    if (keptFilter(site) || this.#holdsInlined(site.nested)) {
+    // Keep the runtime call for a filter an inlined loop cannot read (unreported or of unsupported
+    // form), and for an each that holds an inlined each, which would need loop composition.
+    if (filterKeepsCall(site) || this.#holdsInlined(site.nested)) {
       return { reason: "OP_NOT_REWRITTEN" };
     }
     // Checked last so it is reported only on a call that would otherwise be inlined.

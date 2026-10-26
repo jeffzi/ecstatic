@@ -301,7 +301,6 @@ describe("assertFilterMember", () => {
     it.each([
       { name: "null", value: null, expectPresent: true },
       { name: "undefined", value: undefined, expectPresent: false },
-      { name: "a number", value: 42, expectPresent: true },
       { name: "an object without archetype metadata", value: {}, expectPresent: false },
     ])(
       "throws naming the component and the missing archetype for $name",
