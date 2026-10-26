@@ -17,7 +17,6 @@ import {
   type Identifier,
   type Node,
   type ObjectLiteralElementLike,
-  type PropertyName,
   type ReturnStatement,
   type Statement,
   SyntaxKind,
@@ -33,7 +32,6 @@ import {
   createLabeledStatement,
   createObjectLiteralExpression,
   createOmittedExpression,
-  createPropertyAssignment,
   createShorthandPropertyAssignment,
   createSpreadAssignment,
   createSpreadElement,
@@ -81,6 +79,7 @@ import {
   declaration,
   letStatement,
   parenthesized,
+  propertyAssignment,
   type Visit,
 } from "./expressions.js";
 import type { NameGenerator } from "./names.js";
@@ -561,18 +560,6 @@ export class Transplant {
  */
 function withDefault(target: Expression, fallback: Expression | undefined): Expression {
   return fallback === undefined ? target : assignTo(target, fallback);
-}
-
-/**
- * `key: value` in an object literal or assignment pattern.
- *
- * @param key - The property name.
- * @param value - The value, or the assignment target.
- * @returns The property assignment.
- */
-function propertyAssignment(key: PropertyName, value: Expression): ObjectLiteralElementLike {
-  // @ts-expect-error -- the generated factory types the type annotation as required, though a property assignment never has one
-  return createPropertyAssignment(undefined, key, undefined, undefined, value);
 }
 
 /**

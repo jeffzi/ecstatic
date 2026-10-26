@@ -153,6 +153,10 @@ describe("RULES", () => {
     expect(RULES).toStrictEqual([
       "mode-hoisted",
       "mode-realloc-safe",
+      "filter-skip",
+      "filter-trivial",
+      "filter-masked",
+      "filter-element-guard",
       "entity-id",
       "read-required-field",
       "read-optional-field",

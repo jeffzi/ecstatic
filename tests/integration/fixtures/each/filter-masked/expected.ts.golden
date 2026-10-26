@@ -1,0 +1,141 @@
+import * as ecstatic_internal from "ecstatic/internal";
+var site, site_1, site_2;
+// rewrite-applies: mode-hoisted
+// rewrite-applies: filter-masked
+// rewrite-applies: filter-element-guard
+import {
+  archetype,
+  component,
+  createWorld,
+  disable,
+  each,
+  enable,
+  get,
+  register,
+  spawn,
+} from "ecstatic";
+
+const Spot = component("SieveSpot", { x: 0, order: 0 });
+const Shield = component("SieveShield", { hp: 0 });
+const Boost = component("SieveBoost");
+const Stun = component("SieveStun");
+const Sieve = archetype([Spot], [Shield, Boost, Stun]);
+
+/**
+ * Visits, from the last row to the first, exactly the rows a literal filter's matcher flags when the loop reaches
+ * them, in a body that compiles hoisted. The first call registers the matcher before testing the row count, even on
+ * an empty storage, and every later call reuses it. An `enable` or `disable` in the body changes which rows not yet
+ * visited are visited.
+ *
+ * @returns Each row's visit record after every sweep, the matchers registered by the sweep over the empty storage,
+ * and the matchers registered once every sweep ran.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), Sieve);
+  const matchers = (): number[][] =>
+    storage.matchers.map((m) => [m.allMask, m.anyMask, m.noneMask]);
+  let step = 0;
+  const sweep = (): void => {
+    step = 0;
+    {
+        const storage_1 = storage;
+        const element = Shield, element_1 = Stun;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:SieveSpot{5:order=n,1:x=n}|c11:SieveShield{2:hp=n}c10:SieveBoost{}c9:SieveStun{}");
+        (typeof NDEBUG === "undefined" || !NDEBUG) && (ecstatic_internal.assertFilterMember(storage_1, element, true), ecstatic_internal.assertFilterMember(storage_1, element_1, true));
+        site ??= { s: void 0, m: void 0 };
+        let matcher = site.m;
+        if (site.s !== storage_1) {
+            matcher = ecstatic_internal.matcherFor(storage_1, 1, 0, 4);
+            site.s = storage_1;
+            site.m = matcher;
+        }
+        const n = storage_1.n;
+        if (n > 0) {
+            const SieveSpotRecord = storage_1.SieveSpot;
+            const orderColumn = SieveSpotRecord.order;
+            const matched = matcher.matched;
+            for (let i = n - 1; i >= 0; i--) {
+                if (matched[i] !== 0) {
+                    step += 1;
+                    orderColumn[i] = orderColumn[i] * 10 + step;
+                }
+            }
+        }
+    }
+    {
+        const storage_2 = storage;
+        const element_2 = Boost, element_3 = Stun;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_2, "c9:SieveSpot{5:order=n,1:x=n}|c11:SieveShield{2:hp=n}c10:SieveBoost{}c9:SieveStun{}");
+        (typeof NDEBUG === "undefined" || !NDEBUG) && (ecstatic_internal.assertFilterMember(storage_2, element_2, true), ecstatic_internal.assertFilterMember(storage_2, element_3, true));
+        site_1 ??= { s: void 0, m: void 0 };
+        let matcher_1 = site_1.m;
+        if (site_1.s !== storage_2) {
+            matcher_1 = ecstatic_internal.matcherFor(storage_2, 0, 6, 0);
+            site_1.s = storage_2;
+            site_1.m = matcher_1;
+        }
+        const n_1 = storage_2.n;
+        if (n_1 > 0) {
+            const SieveSpotRecord_1 = storage_2.SieveSpot;
+            const orderColumn_1 = SieveSpotRecord_1.order;
+            const matched_1 = matcher_1.matched;
+            for (let i_1 = n_1 - 1; i_1 >= 0; i_1--) {
+                if (matched_1[i_1] !== 0) {
+                    step += 1;
+                    orderColumn_1[i_1] = orderColumn_1[i_1] * 10 + step;
+                }
+            }
+        }
+    }
+  };
+
+  sweep();
+  const registeredEmpty = matchers();
+  const first = spawn(storage, { SieveSpot: { x: 1 }, SieveShield: { hp: 1 } });
+  const second = spawn(storage, { SieveSpot: { x: 2 }, SieveShield: { hp: 2 }, SieveStun: true });
+  const third = spawn(storage, { SieveSpot: { x: 3 } });
+  const fourth = spawn(storage, { SieveSpot: { x: 4 }, SieveShield: { hp: 4 }, SieveBoost: true });
+  const fifth = spawn(storage, { SieveSpot: { x: 5 }, SieveBoost: true });
+  const ids = [first, second, third, fourth, fifth];
+  const orders: number[][] = [];
+  const record = (): void => {
+    orders.push(ids.map((id) => get(storage, id, Spot.order)));
+  };
+  sweep();
+  record();
+  sweep();
+  record();
+
+  {
+      const storage_3 = storage;
+      const element_4 = Shield;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_3, "c9:SieveSpot{5:order=n,1:x=n}|c11:SieveShield{2:hp=n}c10:SieveBoost{}c9:SieveStun{}");
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertFilterMember(storage_3, element_4, true);
+      site_2 ??= { s: void 0, m: void 0 };
+      let matcher_2 = site_2.m;
+      if (site_2.s !== storage_3) {
+          matcher_2 = ecstatic_internal.matcherFor(storage_3, 1, 0, 0);
+          site_2.s = storage_3;
+          site_2.m = matcher_2;
+      }
+      const n_2 = storage_3.n;
+      if (n_2 > 0) {
+          const SieveSpotRecord_2 = storage_3.SieveSpot;
+          const orderColumn_2 = SieveSpotRecord_2.order, xColumn = SieveSpotRecord_2.x;
+          const matched_2 = matcher_2.matched;
+          for (let i_2 = n_2 - 1; i_2 >= 0; i_2--) {
+              if (matched_2[i_2] !== 0) {
+                  step += 1;
+                  orderColumn_2[i_2] = step;
+                  if (xColumn[i_2] === 4) {
+                      disable(storage, first, Shield);
+                      enable(storage, third, Shield);
+                  }
+              }
+          }
+      }
+  }
+  record();
+
+  return { orders, registeredEmpty, matchers: matchers() };
+}

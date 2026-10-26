@@ -1,0 +1,50 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: filter-skip
+// rewrite-applies: filter-element-guard
+import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
+
+const Spot = component("MoatSpot", { x: 0 });
+const Shield = component("MoatShield");
+const Frozen = component("MoatFrozen");
+const Keep = archetype([Spot], [Shield]);
+
+/**
+ * Skips a pass whose literal filter no row of the storage can satisfy: a bare array naming an absent component, an
+ * absent `all` member beside a present one, only absent `any` members, and a required `none` member. The callback
+ * never runs and no matcher is registered.
+ *
+ * @returns How many rows the callbacks visited and how many matchers the storage holds.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), Keep);
+  spawn(storage, { MoatSpot: { x: 1 }, MoatShield: true });
+  spawn(storage, { MoatSpot: { x: 2 } });
+  let rows = 0;
+
+  {
+      const storage_1 = storage;
+      const element = Frozen;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c8:MoatSpot{1:x=n}|c10:MoatShield{}");
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertFilterMember(storage_1, element, false);
+  }
+  {
+      const storage_2 = storage;
+      const element_1 = Shield, element_2 = Frozen;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_2, "c8:MoatSpot{1:x=n}|c10:MoatShield{}");
+      (typeof NDEBUG === "undefined" || !NDEBUG) && (ecstatic_internal.assertFilterMember(storage_2, element_1, true), ecstatic_internal.assertFilterMember(storage_2, element_2, false));
+  }
+  {
+      const storage_3 = storage;
+      const element_3 = Frozen;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_3, "c8:MoatSpot{1:x=n}|c10:MoatShield{}");
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertFilterMember(storage_3, element_3, false);
+  }
+  {
+      const storage_4 = storage;
+      const element_4 = Shield, element_5 = Spot;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_4, "c8:MoatSpot{1:x=n}|c10:MoatShield{}");
+      (typeof NDEBUG === "undefined" || !NDEBUG) && (ecstatic_internal.assertFilterMember(storage_4, element_4, true), ecstatic_internal.assertFilterMember(storage_4, element_5, true));
+  }
+
+  return { rows, matchers: storage.matchers.length };
+}

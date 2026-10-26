@@ -9,6 +9,16 @@ export const RULES = [
   "mode-hoisted",
   "mode-realloc-safe",
 
+  // Evaluates a literal filter's elements and visits no row: no storage of the shape can match.
+  "filter-skip",
+  // Evaluates a literal filter's elements and visits every row, as an unfiltered loop does.
+  "filter-trivial",
+  // Visits the rows the storage's matcher for the folded masks flags, the matcher cached in the
+  // call site's slot.
+  "filter-masked",
+  // Checks under DEBUG that each literal element is, or is not, in the storage, as the fold took it.
+  "filter-element-guard",
+
   "entity-id",
   "read-required-field",
   "read-optional-field",

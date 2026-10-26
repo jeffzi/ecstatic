@@ -2,11 +2,12 @@
  * The rewrite of one file: the inlined loop that replaces each rewritten `each` call, and the
  * preamble those loops share, printed as the source text with them spliced in.
  *
- * The preamble holds nothing but the namespace import of the internal entry. A loop can run while
- * its module is still loading, when a circular import calls it before the module's body has run;
- * an import binding is live by then, a top-level `const` is not. So each shape guard carries its
- * own copy of the runtime's `DEBUG` initializer and its shape key as a literal, and a bundler's
- * `NDEBUG` define folds the copy in place.
+ * The preamble holds nothing but the namespace import of the internal entry and the uninitialized
+ * `var` slots of the call sites that cache a filter's matcher. A loop can run while its module is
+ * still loading, when a circular import calls it before the module's body has run; an import
+ * binding is live by then, and a `var` binding exists as `undefined`, but a top-level `const` is in
+ * its temporal dead zone. So each guard carries its own copy of the runtime's `DEBUG` initializer
+ * and its shape key as a literal, and a bundler's `NDEBUG` define folds the copy in place.
  *
  * It builds through the factory from the file's nodes, the node table, and the plan, and never
  * queries the checker.
@@ -16,7 +17,6 @@ import {
   type Block,
   type CallExpression,
   type Expression,
-  getSynthesizedDeepClone,
   type Node,
   type NodeArray,
   NodeFlags,
@@ -26,7 +26,6 @@ import {
 } from "typescript/ast";
 import {
   createBlock,
-  createCallExpression,
   createExpressionStatement,
   createForStatement,
   createIdentifier,
@@ -59,14 +58,16 @@ import {
   binary,
   commaList,
   constStatement,
+  debugGated,
   declaration,
   letStatement,
   member,
+  namespaceCall,
   numeric,
-  parenthesized,
   string,
   type Visit,
 } from "./expressions.js";
+import { FILTER_LOCALS, FilterPass, siteDeclarations } from "./filter.js";
 import { Lowering } from "./lowering.js";
 import { NameGenerator } from "./names.js";
 import { printSpliced, type PrintedFile, type Replacement } from "./print.js";
@@ -157,6 +158,8 @@ class File implements EmitFile {
    * before the module's body runs.
    */
   #namespace: string | undefined;
+  /** The file-level slot of every inlined call site that caches its filter's matcher. */
+  readonly #sites: string[] = [];
 
   constructor(parts: FileParts) {
     this.#parts = parts;
@@ -170,13 +173,15 @@ class File implements EmitFile {
     const namespace = this.#namespace ?? names.unique("ecstatic_internal");
     const applied = new Set<Rule>();
     const guard = { namespace, debug, key: shapeKey(inlining.shape) };
-    const block = new Loop({ table, inlining, names, applied, guard }).build(call, uses);
+    const loop = new Loop({ table, inlining, names, applied, guard });
+    const block = loop.build(call, uses);
     options.beforeCommit?.(inlining);
 
     const target = isExpressionStatement(call.parent) ? call.parent : call;
     this.#replacements.push({ target, node: block });
     this.#names = names;
     this.#namespace = namespace;
+    if (loop.site !== undefined) this.#sites.push(loop.site);
     for (const rule of applied) this.#applied.add(rule);
   }
 
@@ -195,7 +200,8 @@ class File implements EmitFile {
    * The preamble's statements.
    *
    * @param namespace - The name the file's loops reach the internal entry through.
-   * @returns The namespace import of the internal entry.
+   * @returns The namespace import of the internal entry, then the declaration of the call-site
+   *   slots, if any loop caches a matcher.
    */
   #preambleStatements(namespace: string): Statement[] {
     const clause = createImportClause(
@@ -203,7 +209,11 @@ class File implements EmitFile {
       undefined,
       createNamespaceImport(createIdentifier(namespace)),
     );
-    return [createImportDeclaration(undefined, clause, string(INTERNAL_MODULE))];
+    const statements: Statement[] = [
+      createImportDeclaration(undefined, clause, string(INTERNAL_MODULE)),
+    ];
+    if (this.#sites.length > 0) statements.push(siteDeclarations(this.#sites));
+    return statements;
   }
 }
 
@@ -234,6 +244,45 @@ interface RowRewrites {
   readonly spawnTargets: ReadonlyMap<Node, string>;
 }
 
+/** What the row part of a loop is built from. */
+interface RowPass {
+  readonly call: CallExpression;
+  readonly callback: InlineCallback;
+  readonly uses: readonly ViewUse[];
+  /** The name of the loop's storage local. */
+  readonly storage: string;
+  readonly filter: FilterPass | undefined;
+}
+
+/**
+ * The row loop, from the last row to the first.
+ *
+ * @param n - The name of the row count local.
+ * @param i - The name of the row index.
+ * @param body - The statements run for a visited row.
+ * @param rowTest - The test a row must pass to be visited, or `undefined` to visit every row.
+ * @returns `for (let i = n - 1; i >= 0; i--) { body }`, the body under `if (rowTest)` when given.
+ */
+function rowsFromLast(
+  n: string,
+  i: string,
+  body: Statement[],
+  rowTest: Expression | undefined,
+): Statement {
+  return createForStatement(
+    createVariableDeclarationList(
+      [declaration(i, binary(createIdentifier(n), SyntaxKind.MinusToken, numeric("1")))],
+      NodeFlags.Let,
+    ),
+    binary(createIdentifier(i), SyntaxKind.GreaterThanEqualsToken, numeric("0")),
+    createPostfixUnaryExpression(createIdentifier(i), SyntaxKind.MinusMinusToken),
+    createBlock(
+      rowTest === undefined ? body : [createIfStatement(rowTest, createBlock(body, true))],
+      true,
+    ),
+  );
+}
+
 /** Builds the block that replaces one `each` call. */
 class Loop {
   readonly #table: NodeTable;
@@ -241,6 +290,7 @@ class Loop {
   readonly #names: NameGenerator;
   readonly #applied: Set<Rule>;
   readonly #guard: GuardParts;
+  #site: string | undefined;
 
   constructor({ table, inlining, names, applied, guard }: LoopParts) {
     this.#table = table;
@@ -251,15 +301,25 @@ class Loop {
   }
 
   /**
-   * The block replacing `call`, which mirrors `eachStorageMatched` (`src/ecstatic/entity/each.ts`)
-   * for a storage with no active matcher: the storage is evaluated once, the row count is read
-   * once, and rows run from the last to the first.
+   * The file-level slot the loop caches its filter's matcher in, once {@link Loop.build} has built a
+   * loop whose filter folds to a matcher.
+   */
+  get site(): string | undefined {
+    return this.#site;
+  }
+
+  /**
+   * The block replacing `call`, which mirrors `eachStorage` and `eachStorageMatched`
+   * (`src/ecstatic/entity/each.ts`): the storage is evaluated once, then a literal filter's
+   * elements in source order, before the guards; a filter that folds to a matcher reads it before
+   * the row count is read once; and rows run from the last to the first, each visited when the
+   * matcher flags it when the loop reaches it. A filter that folds to a skip leaves no loop.
    *
    * @param call - The inlined call.
    * @param uses - The view uses of its callback.
    * @returns The block.
-   * @throws Error when the call has no storage or no inline callback, or a use, return, or spawn
-   *   target is not in the node table or has no lowering.
+   * @throws Error when the call has no storage or no inline callback, or a use, return, spawn
+   *   target, or filter element is not in the node table or has no lowering.
    */
   build(call: CallExpression, uses: readonly ViewUse[]): Block {
     const [storageArgument] = call.arguments;
@@ -268,6 +328,30 @@ class Loop {
       throw new Error("emit: the call has no storage or no inline callback");
     }
     const storage = this.#names.unique(LOOP_LOCALS.storage);
+    const filter: FilterPass | undefined = this.#filterPass();
+    const prologue = [
+      constStatement([declaration(storage, storageArgument)]),
+      ...(filter?.temps() ?? []),
+      createExpressionStatement(this.#shapeGuard(createIdentifier(storage), this.#guard.key)),
+      ...(filter?.guard(storage) ?? []),
+    ];
+    if (filter?.skips === true) return createBlock(prologue, true);
+    const rows = this.#rowPass({ call, callback, uses, storage, filter });
+    return createBlock([...prologue, ...rows], true);
+  }
+
+  /**
+   * The statements after a loop's guards: a filter's matcher, then the row count, read once, and
+   * the row loop when it is positive.
+   *
+   * @param pass - The call, its callback and view uses, the storage local, and the filter pass.
+   * @returns The statements.
+   * @throws Error when a use, return, or spawn target is not in the node table or has no lowering.
+   */
+  #rowPass(pass: RowPass): Statement[] {
+    const { call, callback, uses, storage, filter } = pass;
+    const matcher = filter?.matcher(storage) ?? [];
+    this.#site = filter?.site;
     const n = this.#names.unique(LOOP_LOCALS.count);
     const i = this.#names.unique(LOOP_LOCALS.row);
     const { shape, mode } = this.#inlining;
@@ -295,31 +379,42 @@ class Loop {
       transplant,
       spawnTargets: this.#spawnTargets(),
     });
-    const rowLoop = createForStatement(
-      createVariableDeclarationList(
-        [declaration(i, binary(createIdentifier(n), SyntaxKind.MinusToken, numeric("1")))],
-        NodeFlags.Let,
-      ),
-      binary(createIdentifier(i), SyntaxKind.GreaterThanEqualsToken, numeric("0")),
-      createPostfixUnaryExpression(createIdentifier(i), SyntaxKind.MinusMinusToken),
-      createBlock(body, true),
-    );
+    const filterHoists = filter?.hoists() ?? [];
+    const rowLoop = rowsFromLast(n, i, body, filter?.rowTest(i));
     transplant.noteOuterReferences(call, callback, [
       ...Object.values(LOOP_LOCALS),
+      ...(filter === undefined ? [] : Object.values(FILTER_LOCALS)),
       ...lowering.baseNames,
     ]);
-    return createBlock(
-      [
-        constStatement([declaration(storage, storageArgument)]),
-        createExpressionStatement(this.#shapeGuard(createIdentifier(storage), this.#guard.key)),
-        constStatement([declaration(n, member(createIdentifier(storage), "n"))]),
-        createIfStatement(
-          binary(createIdentifier(n), SyntaxKind.GreaterThanToken, numeric("0")),
-          createBlock([...lowering.hoists(), transplant.labeled(rowLoop)], true),
-        ),
-      ],
-      true,
-    );
+    return [
+      ...matcher,
+      constStatement([declaration(n, member(createIdentifier(storage), "n"))]),
+      createIfStatement(
+        binary(createIdentifier(n), SyntaxKind.GreaterThanToken, numeric("0")),
+        createBlock([...lowering.hoists(), ...filterHoists, transplant.labeled(rowLoop)], true),
+      ),
+    ];
+  }
+
+  /**
+   * The parts the loop's literal filter adds, when it has one.
+   *
+   * @returns The filter pass, or `undefined` for a call without a filter argument.
+   * @throws Error when an element of the filter is not in the node table or is no expression.
+   */
+  #filterPass(): FilterPass | undefined {
+    const { filter, mode } = this.#inlining;
+    if (filter === undefined) return undefined;
+    const { namespace, debug } = this.#guard;
+    return new FilterPass({
+      table: this.#table,
+      filter,
+      mode,
+      names: this.#names,
+      applied: this.#applied,
+      namespace,
+      debug,
+    });
   }
 
   /**
@@ -334,15 +429,7 @@ class Loop {
    */
   #shapeGuard(storage: Expression, key: string): Expression {
     const { namespace, debug } = this.#guard;
-    const assertion = createCallExpression(
-      member(createIdentifier(namespace), "assertShape"),
-      undefined,
-      undefined,
-      [storage, string(key)],
-      NodeFlags.None,
-    );
-    const gate = parenthesized(getSynthesizedDeepClone(debug));
-    return binary(gate, SyntaxKind.AmpersandAmpersandToken, assertion);
+    return debugGated(debug, namespaceCall(namespace, "assertShape", [storage, string(key)]));
   }
 
   /**

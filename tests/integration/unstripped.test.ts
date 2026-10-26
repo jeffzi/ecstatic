@@ -14,7 +14,7 @@ import {
   SPAWN_TIMEOUT_MS,
 } from "../unit/optimizer/project.js";
 import { REPO_ROOT } from "../unit/plugin/tsconfig-fixtures.js";
-import { NO_GUARDS, runtimeDebug, unstrippedProblems } from "./unstripped.js";
+import { NO_FILTER_GUARDS, NO_GUARDS, runtimeDebug, unstrippedProblems } from "./unstripped.js";
 
 /** The project the optimized unit projects hand `ecstatic/vite`. */
 const TESTS_TSCONFIG = join(REPO_ROOT, "tests", "tsconfig.json");
@@ -46,7 +46,10 @@ const MAIN_MODULE = "app/main.ts";
 /** A module that binds `DEBUG` itself, beside the guards the emitter writes. */
 const FLAGS_MODULE = "app/flags.ts";
 
-/** A module whose inlined loops guard the iterated storage and, in `trail`, a spawn into another storage. */
+/**
+ * A module whose inlined loops guard the iterated storage, in `trail` a spawn into another storage,
+ * and in `seek` the elements of a literal filter.
+ */
 const INLINED_SOURCE = `import { archetype, component, each, spawn, type Storage } from "../src/ecstatic/index.js";
 
 const Position = component("Position", { x: 0, y: 0 });
@@ -63,6 +66,12 @@ export function advance(movers: Storage<typeof Mover>): void {
 export function trail(movers: Storage<typeof Mover>, marks: Storage<typeof Trail>): void {
   each(movers, (e) => {
     spawn(marks);
+    e.Position.x += 1;
+  });
+}
+
+export function seek(movers: Storage<typeof Mover>): void {
+  each(movers, { all: [Position], none: [Mark] }, (e) => {
     e.Position.x += 1;
   });
 }
@@ -83,16 +92,30 @@ const BARE_GUARD = `ecstatic_internal.assertShape(storage, "${SHAPE_KEY}");`;
 /** A shape guard gated by {@link CHECKER_GATE}, as the emitter writes one. */
 const GATED_GUARD = `(${CHECKER_GATE}) && ${BARE_GUARD}`;
 
+const FILTER_GUARD = "ecstatic_internal.assertFilterMember(storage, element, true)";
+
+/** Two filter-element guards in a parenthesized comma list, as the emitter writes several. */
+const FILTER_LIST = `(${FILTER_GUARD}, ecstatic_internal.assertFilterMember(storage, element, false))`;
+
+/** A comma list of filter-element guards gated by {@link CHECKER_GATE}, as the emitter writes one. */
+const GATED_FILTER_GUARD = `(${CHECKER_GATE}) && ${FILTER_LIST};`;
+
 /** The test module the rejecting cases write their outputs as. */
 const REJECTED_MODULE = "tests/unit/a.test.ts";
+
+/** The test module beside a rejecting case's outputs that holds gated guards of every kind. */
+const GATED_MODULE = "tests/unit/gated.test.ts";
 
 /** The problem named for a guard on line 4 of {@link REJECTED_MODULE} whose gate reads an `NDEBUG` the file binds. */
 const SHADOWED = `${REJECTED_MODULE}:4: the shape guard is gated by ${CHECKER_GATE} (reading the file's own NDEBUG), not by the runtime's DEBUG initializer`;
 
-/** The problem named for a guard on line 4 of {@link REJECTED_MODULE} gated by `gate` alone. */
-function gatedOtherwise(gate: string): string {
-  return `${REJECTED_MODULE}:4: the shape guard is gated by ${gate}, not by the runtime's DEBUG initializer`;
+/** The problem named for a `guard` on line 4 of {@link REJECTED_MODULE} gated by `gate` alone. */
+function gatedOtherwise(gate: string, guard = "shape guard"): string {
+  return `${REJECTED_MODULE}:4: the ${guard} is gated by ${gate}, not by the runtime's DEBUG initializer`;
 }
+
+/** The problem named for a filter-element guard on line 4 of {@link REJECTED_MODULE} with no gate. */
+const FILTER_WITHOUT_GATE = `${REJECTED_MODULE}:4: the filter-element guard runs without a DEBUG gate`;
 
 let session: Session;
 let rewriter: Rewriter;
@@ -144,6 +167,14 @@ async function parsed(outputs: Readonly<Record<string, string>>): Promise<Map<st
 /** The problems with `outputs`, checked against the DEBUG initializer of {@link CHECKER_RUNTIME}. */
 async function checkerProblems(outputs: Readonly<Record<string, string>>): Promise<string[]> {
   return unstrippedProblems(await parsed(outputs), checkerRuntime);
+}
+
+/** The problems with `outputs` beside {@link GATED_MODULE}, so that no kind of guard is missing. */
+async function gatingProblems(outputs: Readonly<Record<string, string>>): Promise<string[]> {
+  return await checkerProblems({
+    [GATED_MODULE]: guardedModule("", `${GATED_GUARD} ${GATED_FILTER_GUARD}`),
+    ...outputs,
+  });
 }
 
 /** The text `by` rewrites `file` to in `view`, failing when it leaves the module unchanged. */
@@ -236,6 +267,10 @@ describe("unstrippedProblems", () => {
       expect(emitted.main).toMatch(/assertShape\(target(?:_\d+)?, /u);
     });
 
+    it("emits filter-element guards for the scan to check", () => {
+      expect(emitted.main).toMatch(/\(ecstatic_internal\.assertFilterMember\([^)]*\), /u);
+    });
+
     it.each([
       {
         name: "a gate in more parentheses",
@@ -252,8 +287,13 @@ describe("unstrippedProblems", () => {
         declarations: "const enabled = true;",
         guard: `(enabled && (${CHECKER_GATE})) && ${BARE_GUARD}`,
       },
+      {
+        name: "a gated comma list of filter-element guards",
+        declarations: "",
+        guard: GATED_FILTER_GUARD,
+      },
     ])("reports nothing for $name", async ({ declarations, guard }) => {
-      const problems = await checkerProblems({
+      const problems = await gatingProblems({
         [REJECTED_MODULE]: guardedModule(declarations, guard),
       });
 
@@ -296,11 +336,21 @@ describe("unstrippedProblems", () => {
       { binding: "for-in const", guard: `for (const NDEBUG in {}) ${GATED_GUARD}` },
       { binding: "arrow parameter", guard: `void ((NDEBUG: boolean) => { ${GATED_GUARD} });` },
     ])("names the guard whose gate reads a $binding", async ({ declarations = "", guard }) => {
-      const problems = await checkerProblems({
+      const problems = await gatingProblems({
         [REJECTED_MODULE]: guardedModule(declarations, guard),
       });
 
       expect(problems).toStrictEqual([SHADOWED]);
+    });
+
+    it("names each filter-element guard of a comma list whose gate reads it", async () => {
+      const shadowed = `${REJECTED_MODULE}:4: the filter-element guard is gated by ${CHECKER_GATE} (reading the file's own NDEBUG), not by the runtime's DEBUG initializer`;
+
+      const problems = await gatingProblems({
+        [REJECTED_MODULE]: guardedModule("const NDEBUG = false;", GATED_FILTER_GUARD),
+      });
+
+      expect(problems).toStrictEqual([shadowed, shadowed]);
     });
   });
 
@@ -372,8 +422,28 @@ describe("unstrippedProblems", () => {
         },
         expected: [`${REJECTED_MODULE}:2: the shape guard runs without a DEBUG gate`],
       },
+      {
+        name: "a filter-element guard with no gate",
+        outputs: { [REJECTED_MODULE]: guardedModule("", `${FILTER_GUARD};`) },
+        expected: [FILTER_WITHOUT_GATE],
+      },
+      {
+        name: "each filter-element guard of a comma list with no gate",
+        outputs: { [REJECTED_MODULE]: guardedModule("", `${FILTER_LIST};`) },
+        expected: [FILTER_WITHOUT_GATE, FILTER_WITHOUT_GATE],
+      },
+      {
+        name: "each filter-element guard of a comma list gated by another identifier",
+        outputs: {
+          [REJECTED_MODULE]: guardedModule("const enabled = true;", `enabled && ${FILTER_LIST};`),
+        },
+        expected: [
+          gatedOtherwise("enabled", "filter-element guard"),
+          gatedOtherwise("enabled", "filter-element guard"),
+        ],
+      },
     ])("names $name", async ({ outputs, expected }) => {
-      const problems = await checkerProblems(outputs);
+      const problems = await gatingProblems(outputs);
 
       expect(problems).toStrictEqual(expected);
     });
@@ -386,6 +456,7 @@ describe("unstrippedProblems", () => {
         ),
       );
       const files = await parsed({
+        [GATED_MODULE]: guardedModule("", `enabled(NDEBUG, true) && ${FILTER_LIST};`),
         [REJECTED_MODULE]: guardedModule("", `enabled(NDEBUG) && ${BARE_GUARD}`),
       });
 
@@ -430,10 +501,19 @@ describe("unstrippedProblems", () => {
         },
       },
     ])("reports it has nothing to check for $name", async ({ outputs }) => {
-      const problems = await checkerProblems(outputs);
+      const problems = await checkerProblems({
+        [GATED_MODULE]: guardedModule("", GATED_FILTER_GUARD),
+        ...outputs,
+      });
 
       expect(problems).toStrictEqual([NO_GUARDS]);
     });
+  });
+
+  it("reports it has nothing to check when no test module holds a filter-element guard", async () => {
+    const problems = await checkerProblems({ [REJECTED_MODULE]: guardedModule("", GATED_GUARD) });
+
+    expect(problems).toStrictEqual([NO_FILTER_GUARDS]);
   });
 });
 

@@ -1,0 +1,97 @@
+import * as ecstatic_internal from "ecstatic/internal";
+var site, site_1;
+// rewrite-applies: mode-realloc-safe
+// rewrite-applies: filter-masked
+// rewrite-applies: filter-element-guard
+import {
+  archetype,
+  component,
+  createWorld,
+  disable,
+  each,
+  enable,
+  register,
+  spawn,
+  spawnMany,
+} from "ecstatic";
+
+const Spot = component("FlockSpot", { x: 0 });
+const Shield = component("FlockShield");
+const Flock = archetype([Spot], [Shield]);
+
+/**
+ * Visits, from the last row to the first, exactly the rows a literal filter's matcher flags when the loop reaches
+ * them, in bodies that compile realloc-safe: one whose helper enables and disables rows not yet visited, and one
+ * that spawns into the iterated storage past its capacity, which replaces the matcher's flags, before disabling a
+ * row not yet visited. The spawned rows are never visited.
+ *
+ * @returns The rows each call visited, in visit order, how many rows the storage holds, and how many matchers.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), Flock);
+  const first = spawn(storage, { FlockSpot: { x: 1 }, FlockShield: true });
+  const second = spawn(storage, { FlockSpot: { x: 2 } });
+  const third = spawn(storage, { FlockSpot: { x: 3 }, FlockShield: true });
+  spawn(storage, { FlockSpot: { x: 4 } });
+  spawn(storage, { FlockSpot: { x: 5 }, FlockShield: true });
+  const seen: unknown[] = [];
+  const toggle = (): void => {
+    disable(storage, third, Shield);
+    enable(storage, second, Shield);
+  };
+
+  seen.push("toggled");
+  {
+      const storage_1 = storage;
+      const element = Shield;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:FlockSpot{1:x=n}|c11:FlockShield{}");
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertFilterMember(storage_1, element, true);
+      site ??= { s: void 0, m: void 0 };
+      let matcher = site.m;
+      if (site.s !== storage_1) {
+          matcher = ecstatic_internal.matcherFor(storage_1, 1, 0, 0);
+          site.s = storage_1;
+          site.m = matcher;
+      }
+      const n_1 = storage_1.n;
+      if (n_1 > 0) {
+          const FlockSpotRecord = storage_1.FlockSpot;
+          for (let i = n_1 - 1; i >= 0; i--) {
+              if (matcher.matched[i] !== 0) {
+                  seen.push(FlockSpotRecord.x[i]);
+                  if (FlockSpotRecord.x[i] === 5)
+                      toggle();
+              }
+          }
+      }
+  }
+  seen.push("grown");
+  {
+      const storage_2 = storage;
+      const element_1 = Shield;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_2, "c9:FlockSpot{1:x=n}|c11:FlockShield{}");
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertFilterMember(storage_2, element_1, true);
+      site_1 ??= { s: void 0, m: void 0 };
+      let matcher_1 = site_1.m;
+      if (site_1.s !== storage_2) {
+          matcher_1 = ecstatic_internal.matcherFor(storage_2, 1, 0, 0);
+          site_1.s = storage_2;
+          site_1.m = matcher_1;
+      }
+      const n_2 = storage_2.n;
+      if (n_2 > 0) {
+          const FlockSpotRecord_1 = storage_2.FlockSpot;
+          for (let i_1 = n_2 - 1; i_1 >= 0; i_1--) {
+              if (matcher_1.matched[i_1] !== 0) {
+                  seen.push(FlockSpotRecord_1.x[i_1]);
+                  if (FlockSpotRecord_1.x[i_1] === 5) {
+                      spawnMany(storage, 100, { FlockShield: true });
+                      disable(storage, first, Shield);
+                  }
+              }
+          }
+      }
+  }
+
+  return { seen, rows: storage.n, matchers: storage.matchers.length };
+}

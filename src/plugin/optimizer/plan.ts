@@ -7,6 +7,7 @@ import {
   type ArchShape,
   type Callback,
   type EscapeKind,
+  type FilterElement,
   iterates,
   type NodeID,
   type Op,
@@ -17,6 +18,7 @@ import {
   type SpawnTarget,
   type ViewEscape,
 } from "./facts.js";
+import { type FoldedFilter, foldFilter } from "./fold.js";
 
 /** A call site that keeps its runtime call, with the reason it does. */
 export interface Bail {
@@ -50,6 +52,17 @@ export function thrownMessage(error: unknown): string {
  */
 export type Mode = "hoisted" | "realloc-safe";
 
+/** A literal filter of an inlined `each` call, folded against the call's one shape. */
+export interface PlannedFilter {
+  /**
+   * The filter's elements, the `all` axis, then `any`, then `none`, each in element order: parallel
+   * to `fold.present`. The emitter evaluates them in source order, which an object filter's key
+   * order can make differ from this one.
+   */
+  readonly elements: readonly FilterElement[];
+  readonly fold: FoldedFilter;
+}
+
 /** An `each` call site whose runtime call becomes an inlined loop over its one storage's columns. */
 export interface EachInlining {
   /** The storage's archetype shape, which the loop is compiled against. */
@@ -68,6 +81,8 @@ export interface EachInlining {
    * `realloc-safe` mode, whose loop reads every array afresh after a spawn.
    */
   readonly spawnTargets: readonly SpawnTarget[];
+  /** The call's literal filter; absent on a call without a filter argument. */
+  readonly filter?: PlannedFilter;
   readonly pos: Position;
   readonly call: NodeID;
   readonly mode: Mode;
@@ -145,7 +160,7 @@ function siteReason(site: Site): Reason | Callback {
 /**
  * @param site - Eligible `each` site.
  * @param callback - The site's callback.
- * @returns The inlining over the site's one shape.
+ * @returns The inlining over the site's one shape, its literal filter folded against that shape.
  * @throws {Error} When the site does not hold exactly one shape: analysis records a reason on every
  *   `each` site whose storage does not resolve, so an eligible site without one is an analysis bug.
  */
@@ -155,7 +170,7 @@ function eachInlining(site: Site, callback: Callback): EachInlining {
     throw new Error(`eligible each site has ${site.shapes.length} shapes, want 1`);
   }
   const hoisted = callback.hazards.length === 0;
-  return {
+  const inlining: EachInlining = {
     call: site.call,
     pos: site.pos,
     shape,
@@ -164,6 +179,21 @@ function eachInlining(site: Site, callback: Callback): EachInlining {
     varToLet: callback.varDecls,
     spawnTargets: hoisted ? callback.spawnTargets : [],
   };
+  const filter = site.filter;
+  if (filter?.kind !== "literal") return inlining;
+  const elements = [...filter.all, ...filter.any, ...filter.none];
+  return { ...inlining, filter: { elements, fold: foldFilter(filter, shape) } };
+}
+
+/**
+ * Whether a site's filter keeps its call a runtime call: a filter argument that is not written as a
+ * literal at every level, which the plan cannot fold.
+ *
+ * @param site - Site to check.
+ * @returns `true` for a filtered site whose filter is not literal.
+ */
+function unfoldedFilter(site: Site): boolean {
+  return site.filtered && site.filter?.kind !== "literal";
 }
 
 class Planner {
@@ -219,7 +249,9 @@ class Planner {
     const escape = this.#escapeVerdict(site, reason);
     if (escape !== undefined) return escape;
     // Inlining an each that holds an inlined each would need loop composition.
-    if (site.filtered || this.#holdsInlined(site.nested)) return { reason: "OP_NOT_REWRITTEN" };
+    if (unfoldedFilter(site) || this.#holdsInlined(site.nested)) {
+      return { reason: "OP_NOT_REWRITTEN" };
+    }
     // Checked last so it is reported only on a call that would otherwise be inlined.
     if (reason.ndebugBound) return { reason: "NDEBUG_BOUND" };
     return reason;

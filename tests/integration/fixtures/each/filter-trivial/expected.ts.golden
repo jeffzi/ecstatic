@@ -1,0 +1,93 @@
+import * as ecstatic_internal from "ecstatic/internal";
+// rewrite-applies: filter-trivial
+// rewrite-applies: filter-element-guard
+import { archetype, component, createWorld, each, register, spawn } from "ecstatic";
+
+const Spot = component("PlainSpot", { x: 0 });
+const Shield = component("PlainShield");
+const Frozen = component("PlainFrozen");
+const Field = archetype([Spot], [Shield]);
+
+/**
+ * Visits every row, from the last to the first, for a literal filter every row satisfies: a required `all` member,
+ * an empty `any`, empty `all` and `none`, an absent `none` member, and an `any` holding a required member. No
+ * matcher is registered.
+ *
+ * @returns The rows each call visited, in visit order, and how many matchers the storage holds.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), Field);
+  spawn(storage, { PlainSpot: { x: 1 }, PlainShield: true });
+  spawn(storage, { PlainSpot: { x: 2 } });
+  spawn(storage, { PlainSpot: { x: 3 }, PlainShield: true });
+  const seen: unknown[] = [];
+
+  seen.push("required all");
+  {
+      const storage_1 = storage;
+      const element = Spot;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:PlainSpot{1:x=n}|c11:PlainShield{}");
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertFilterMember(storage_1, element, true);
+      const n = storage_1.n;
+      if (n > 0) {
+          const PlainSpotRecord = storage_1.PlainSpot;
+          for (let i = n - 1; i >= 0; i--) {
+              seen.push(PlainSpotRecord.x[i]);
+          }
+      }
+  }
+  seen.push("empty any");
+  {
+      const storage_2 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_2, "c9:PlainSpot{1:x=n}|c11:PlainShield{}");
+      const n_1 = storage_2.n;
+      if (n_1 > 0) {
+          const PlainSpotRecord_1 = storage_2.PlainSpot;
+          for (let i_1 = n_1 - 1; i_1 >= 0; i_1--) {
+              seen.push(PlainSpotRecord_1.x[i_1]);
+          }
+      }
+  }
+  seen.push("empty all and none");
+  {
+      const storage_3 = storage;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_3, "c9:PlainSpot{1:x=n}|c11:PlainShield{}");
+      const n_2 = storage_3.n;
+      if (n_2 > 0) {
+          const PlainSpotRecord_2 = storage_3.PlainSpot;
+          for (let i_2 = n_2 - 1; i_2 >= 0; i_2--) {
+              seen.push(PlainSpotRecord_2.x[i_2]);
+          }
+      }
+  }
+  seen.push("absent none");
+  {
+      const storage_4 = storage;
+      const element_1 = Frozen;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_4, "c9:PlainSpot{1:x=n}|c11:PlainShield{}");
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertFilterMember(storage_4, element_1, false);
+      const n_3 = storage_4.n;
+      if (n_3 > 0) {
+          const PlainSpotRecord_3 = storage_4.PlainSpot;
+          for (let i_3 = n_3 - 1; i_3 >= 0; i_3--) {
+              seen.push(PlainSpotRecord_3.x[i_3]);
+          }
+      }
+  }
+  seen.push("required any");
+  {
+      const storage_5 = storage;
+      const element_2 = Shield, element_3 = Spot;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_5, "c9:PlainSpot{1:x=n}|c11:PlainShield{}");
+      (typeof NDEBUG === "undefined" || !NDEBUG) && (ecstatic_internal.assertFilterMember(storage_5, element_2, true), ecstatic_internal.assertFilterMember(storage_5, element_3, true));
+      const n_4 = storage_5.n;
+      if (n_4 > 0) {
+          const PlainSpotRecord_4 = storage_5.PlainSpot;
+          for (let i_4 = n_4 - 1; i_4 >= 0; i_4--) {
+              seen.push(PlainSpotRecord_4.x[i_4]);
+          }
+      }
+  }
+
+  return { seen, matchers: storage.matchers.length };
+}

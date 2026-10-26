@@ -7,8 +7,11 @@ import {
   type BinaryOperator,
   type BindingName,
   type Expression,
+  getSynthesizedDeepClone,
   type Node,
   NodeFlags,
+  type ObjectLiteralElementLike,
+  type PropertyName,
   type Statement,
   type StringLiteral,
   SyntaxKind,
@@ -17,6 +20,7 @@ import {
 } from "typescript/ast";
 import {
   createBinaryExpression,
+  createCallExpression,
   createConditionalExpression,
   createElementAccessExpression,
   createIdentifier,
@@ -24,6 +28,7 @@ import {
   createNumericLiteral,
   createParenthesizedExpression,
   createPropertyAccessExpression,
+  createPropertyAssignment,
   createStringLiteral,
   createToken,
   createVariableDeclaration,
@@ -137,6 +142,54 @@ export function member(object: Expression, name: string): Expression {
     );
   }
   return createElementAccessExpression(object, undefined, string(name), NodeFlags.None);
+}
+
+/**
+ * `key: value` in an object literal or assignment pattern.
+ *
+ * @param key - The property name.
+ * @param value - The value, or the assignment target.
+ * @returns The property assignment.
+ */
+export function propertyAssignment(key: PropertyName, value: Expression): ObjectLiteralElementLike {
+  // @ts-expect-error -- the generated factory types the type annotation as required, though a property assignment never has one
+  return createPropertyAssignment(undefined, key, undefined, undefined, value);
+}
+
+/**
+ * A call of a member of the internal entry's namespace import.
+ *
+ * @param namespace - The name of the namespace import.
+ * @param name - The member called.
+ * @param args - The arguments.
+ * @returns `namespace.name(...args)`.
+ */
+export function namespaceCall(
+  namespace: string,
+  name: string,
+  args: readonly Expression[],
+): Expression {
+  return createCallExpression(
+    member(createIdentifier(namespace), name),
+    undefined,
+    undefined,
+    args,
+    NodeFlags.None,
+  );
+}
+
+/**
+ * A check that runs only where the runtime's `DEBUG` holds. The gate is a parenthesized copy of
+ * the runtime's `DEBUG` initializer, which reads no binding of the file, so the check runs even
+ * before the module's body has.
+ *
+ * @param debug - The runtime's `DEBUG` initializer.
+ * @param check - The check.
+ * @returns `(<DEBUG initializer>) && check`.
+ */
+export function debugGated(debug: Expression, check: Expression): Expression {
+  const gate = parenthesized(getSynthesizedDeepClone(debug));
+  return binary(gate, SyntaxKind.AmpersandAmpersandToken, check);
 }
 
 /**

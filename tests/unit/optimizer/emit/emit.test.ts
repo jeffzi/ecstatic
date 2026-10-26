@@ -84,6 +84,28 @@ export function scenario(): unknown {
 }
 `;
 
+/**
+ * The entry module of a cycle whose `total` sums, over a Guarded storage, the rows an inlined loop's
+ * literal filter folds to a matcher for.
+ */
+const CYCLE_MASKED_ENTRY_SOURCE = `import { each } from "../src/ecstatic/index.js";
+import { Shield, guarded } from "../app/schema.js";
+import { early } from "./partner.js";
+
+export function total(): number {
+    const { storage } = guarded();
+    let sum = 0;
+    each(storage, { all: [Shield] }, (e) => {
+        sum += e.Position.x;
+    });
+    return sum;
+}
+
+export function scenario(): unknown {
+    return early;
+}
+`;
+
 /** The module the entry imports, which calls the entry's `total` as it loads. */
 const CYCLE_PARTNER_SOURCE = `import { total } from "./entry.js";
 
@@ -467,22 +489,42 @@ describe("EmitFile", () => {
     });
 
     describe("when a circular import calls the loop before its module has run", () => {
-      it(
-        "runs the loop as the runtime call does, with checks on and stripped",
-        async () => {
-          const planned = await project.planned(CYCLE_ENTRY_SOURCE);
+      it.each([
+        {
+          name: "an unfiltered loop",
+          dir: "cycle",
+          entry: CYCLE_ENTRY_SOURCE,
+          fold: undefined,
+          expected: 5,
+        },
+        {
+          name: "a loop whose literal filter folds to a matcher",
+          dir: "cycle-masked",
+          entry: CYCLE_MASKED_ENTRY_SOURCE,
+          fold: "masked",
+          expected: 1,
+        },
+      ])(
+        "runs $name as the runtime call does, with checks on and stripped",
+        async ({ dir, entry, fold, expected }) => {
+          const planned = await project.planned(entry);
           const { text } = await project.emit(planned);
           const modules = {
-            runtime: writeCycle(project.root, "cycle-runtime", CYCLE_ENTRY_SOURCE),
-            rewritten: writeCycle(project.root, "cycle-rewritten", text),
+            runtime: writeCycle(project.root, `${dir}-runtime`, entry),
+            rewritten: writeCycle(project.root, `${dir}-rewritten`, text),
           };
 
           const checked = await project.run(modules);
           const stripped = await project.run(modules, true);
 
-          expect({ checked, stripped }).toStrictEqual({
-            checked: { runtime: 5, rewritten: 5 },
-            stripped: { runtime: 5, rewritten: 5 },
+          expect({
+            fold: rewriteAt(planned, 0).filter?.fold.kind,
+            checked,
+            stripped,
+          }).toStrictEqual({
+            fold,
+            checked: { runtime: expected, rewritten: expected },
+            stripped: { runtime: expected, rewritten: expected },
           });
         },
         RUN_TIMEOUT_MS,
@@ -693,6 +735,90 @@ export function scenario(): unknown {
         expect(guards(text)).toStrictEqual(planned.rewrites.map(({ shape }) => shapeKey(shape)));
         expect(new Set(guards(text)).size).toBe(2);
       });
+    });
+
+    describe("when guarding a literal filter's elements", () => {
+      it.each([
+        { name: "a filter without elements", filter: "{ any: [] }", guarded: false },
+        { name: "a filter with an element", filter: "[Position]", guarded: true },
+      ])("records the element guard rule only for $name", async ({ filter, guarded }) => {
+        const source = `${CASE_PRELUDE}export const seen: unknown[] = [];
+const { storage } = guarded();
+each(storage, ${filter}, (e) => {
+    seen.push(e.id);
+});
+`;
+
+        const { applied } = await project.rewrite(source);
+
+        expect(applied).toContain("filter-trivial");
+        expect(applied.includes("filter-element-guard")).toBe(guarded);
+      });
+
+      /** A module whose filtered loop casts a component's type, reporting the throw, rows, and matchers. */
+      const filterGuardSource = (
+        lie: string,
+        filter: string,
+        actual: string,
+        expectPresent: boolean,
+      ): string => `import { assertFilterMember } from "../src/ecstatic/internal.js";
+${CASE_PRELUDE}
+export function scenario(): unknown {
+    const { storage } = guarded();
+    const lie = ${lie};
+    const visited: number[] = [];
+    let outcome = "returned";
+    try {
+        each(storage, ${filter}, (e) => {
+            visited.push(e.Position.x);
+        });
+    } catch (error) {
+        outcome = error instanceof Error ? error.message : "thrown";
+    }
+    try {
+        assertFilterMember(storage, ${actual}, ${String(expectPresent)});
+    } catch (error) {
+        if (error instanceof Error && error.message === outcome) outcome = "filter guard";
+    }
+    return { outcome, visited, matchers: storage.matchers.length };
+}
+`;
+
+      it.each([
+        {
+          name: "an element present where the fold took it absent",
+          lie: "Shield as unknown as typeof Velocity",
+          filter: "{ none: [lie] }",
+          actual: "Shield",
+          expectPresent: false,
+          stripped: { outcome: "returned", visited: [2, 1], matchers: 0 },
+        },
+        {
+          name: "an element absent where the fold took it present",
+          lie: "Velocity as unknown as typeof Shield",
+          filter: "{ all: [lie] }",
+          actual: "Velocity",
+          expectPresent: true,
+          stripped: { outcome: "returned", visited: [1], matchers: 1 },
+        },
+      ])(
+        "throws the filter guard's error before any row or matcher with DEBUG on, and visits the fold's rows under NDEBUG, for $name",
+        async ({ lie, filter, actual, expectPresent, stripped }) => {
+          const planned = await project.planned(
+            filterGuardSource(lie, filter, actual, expectPresent),
+          );
+          const module = await project.emitModule(planned, "filter-guarded");
+
+          const checkedRun = await project.run({ rewritten: module });
+          const strippedRun = await project.run({ rewritten: module }, true);
+
+          expect({ checked: checkedRun, stripped: strippedRun }).toStrictEqual({
+            checked: { rewritten: { outcome: "filter guard", visited: [], matchers: 0 } },
+            stripped: { rewritten: stripped },
+          });
+        },
+        RUN_TIMEOUT_MS,
+      );
     });
 
     describe("when adding the file preamble", () => {

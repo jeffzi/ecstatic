@@ -1,4 +1,4 @@
-/** Finds the shape guards in rewritten modules that can run while the runtime's `DEBUG` is false. */
+/** Finds the debug guards in rewritten modules that can run while the runtime's `DEBUG` is false. */
 import {
   type BinaryExpression,
   type BindingName,
@@ -47,15 +47,34 @@ import {
   isVariableStatement,
 } from "typescript/ast/is";
 
-/** The module the emitter imports the shape guard's namespace from. */
+/** The module the emitter imports the guards' namespace from. */
 const INTERNAL_ENTRY = "ecstatic/internal";
-
-/** The export of {@link INTERNAL_ENTRY} that a shape guard calls. */
-const SHAPE_GUARD = "assertShape";
 
 /** The problem reported when no module holds a shape guard, so that the check cannot pass vacuously. */
 export const NO_GUARDS =
   "no test module's output holds a shape guard, so the check has nothing to check";
+
+/** The problem reported when no module holds a filter-element guard, so that the check cannot pass vacuously. */
+export const NO_FILTER_GUARDS =
+  "no test module's output holds a filter-element guard, so the check has nothing to check";
+
+/** A guard the emitter writes under the debug gate. */
+interface GuardKind {
+  /** The export of {@link INTERNAL_ENTRY} the guard calls. */
+  readonly name: string;
+  /** What problems call the guard. */
+  readonly label: string;
+  /** The problem reported when no module holds the guard. */
+  readonly missing: string;
+}
+
+/** Every guard the scan checks, keyed by the export of {@link INTERNAL_ENTRY} it calls. */
+const GUARD_KINDS: ReadonlyMap<string, GuardKind> = new Map(
+  [
+    { name: "assertShape", label: "shape guard", missing: NO_GUARDS },
+    { name: "assertFilterMember", label: "filter-element guard", missing: NO_FILTER_GUARDS },
+  ].map((kind) => [kind.name, kind]),
+);
 
 /** An expression an `&&` expression requires to be true before its right operand runs. */
 interface Gate {
@@ -65,16 +84,17 @@ interface Gate {
   readonly bound: readonly string[];
 }
 
-/** One shape guard call and the gates around it, outermost first. */
+/** One guard call, what it guards, and the gates around it, outermost first. */
 interface Guard {
   readonly call: Node;
+  readonly kind: GuardKind;
   readonly gates: readonly Gate[];
 }
 
-/** The local names through which a file calls the shape guard of {@link INTERNAL_ENTRY}. */
+/** The local names through which a file calls the guards of {@link INTERNAL_ENTRY}: namespaces, and functions with the guard each calls. */
 interface GuardImports {
   readonly namespaces: ReadonlySet<string>;
-  readonly functions: ReadonlySet<string>;
+  readonly functions: ReadonlyMap<string, GuardKind>;
 }
 
 /** What {@link collectGuards} reads and gathers while it walks one file. */
@@ -235,10 +255,10 @@ function fileScope(file: SourceFile): Scope {
   return { outer: undefined, names };
 }
 
-/** Every local name through which `file` can call the shape guard of {@link INTERNAL_ENTRY}. */
+/** Every local name through which `file` can call a guard of {@link INTERNAL_ENTRY}. */
 function internalImports(file: SourceFile): GuardImports {
   const namespaces = new Set<string>();
-  const functions = new Set<string>();
+  const functions = new Map<string, GuardKind>();
   for (const statement of file.statements) {
     const bindings = internalBindings(statement);
     if (bindings === undefined) continue;
@@ -251,11 +271,11 @@ function internalImports(file: SourceFile): GuardImports {
   return { namespaces, functions };
 }
 
-/** Adds to `names` every local name `imports` gives the shape guard as a value. */
-function guardFunctionNames(imports: NamedImports, names: Set<string>): void {
+/** Adds to `names` every local name `imports` gives a guard as a value, with the guard it calls. */
+function guardFunctionNames(imports: NamedImports, names: Map<string, GuardKind>): void {
   for (const specifier of imports.elements) {
-    const imported = specifier.propertyName ?? specifier.name;
-    if (!specifier.isTypeOnly && imported.text === SHAPE_GUARD) names.add(specifier.name.text);
+    const kind = GUARD_KINDS.get((specifier.propertyName ?? specifier.name).text);
+    if (!specifier.isTypeOnly && kind !== undefined) names.set(specifier.name.text, kind);
   }
 }
 
@@ -303,17 +323,17 @@ function gateOf(expression: Expression, scope: Scope | undefined): Gate {
   return { expression, bound: [...names].filter((name) => binds(scope, name)) };
 }
 
-/** Whether `node` calls the shape guard through one of `imports`. */
-function callsGuard(node: Node, imports: GuardImports): boolean {
-  if (!isCallExpression(node)) return false;
+/** The guard `node` calls through one of `imports`, or `undefined` when it calls none. */
+function calledGuard(node: Node, imports: GuardImports): GuardKind | undefined {
+  if (!isCallExpression(node)) return undefined;
   const callee = node.expression;
-  if (!isPropertyAccessExpression(callee)) return imports.functions.has(identifierName(callee));
-  return (
-    callee.name.text === SHAPE_GUARD && imports.namespaces.has(identifierName(callee.expression))
-  );
+  if (!isPropertyAccessExpression(callee)) return imports.functions.get(identifierName(callee));
+  return imports.namespaces.has(identifierName(callee.expression))
+    ? GUARD_KINDS.get(callee.name.text)
+    : undefined;
 }
 
-/** Appends to `walk.found` every shape guard in `node`, which runs in `scope` once every gate of `gates` is true. */
+/** Appends to `walk.found` every guard in `node`, which runs in `scope` once every gate of `gates` is true. */
 function collectGuards(
   node: Node,
   walk: GuardWalk,
@@ -326,7 +346,8 @@ function collectGuards(
     collectGuards(node.right, walk, scope, [...gates, ...leftGates]);
     return;
   }
-  if (callsGuard(node, walk.imports)) walk.found.push({ call: node, gates });
+  const kind = calledGuard(node, walk.imports);
+  if (kind !== undefined) walk.found.push({ call: node, kind, gates });
   const inner = enter(scope, node);
   node.forEachChild((child) => {
     collectGuards(child, walk, inner, gates);
@@ -336,24 +357,24 @@ function collectGuards(
 /**
  * How `guard`, in `file`, can run while `runtime` is false.
  *
- * @param guard - The shape guard and its gates.
+ * @param guard - The guard and its gates.
  * @param file - The parsed module holding the guard.
  * @param runtime - The initializer of `DEBUG` in `src/ecstatic/debug.ts`.
  * @returns The problem, or `undefined` when a gate is `runtime` reading no binding of the file. A
  *   gate that is `runtime` but reads a binding of the file is named with the names it reads there.
  */
 function guardProblem(guard: Guard, file: SourceFile, runtime: Expression): string | undefined {
-  const { gates } = guard;
+  const { gates, kind } = guard;
   if (gates.some((gate) => gate.bound.length === 0 && sameTree(gate.expression, runtime))) {
     return undefined;
   }
-  if (gates.length === 0) return "the shape guard runs without a DEBUG gate";
+  if (gates.length === 0) return `the ${kind.label} runs without a DEBUG gate`;
   const texts = gates.map(({ expression, bound }) => {
     const text = expression.getText(file);
     const shadowed = bound.length > 0 && sameTree(expression, runtime);
     return shadowed ? `${text} (reading the file's own ${bound.join(", ")})` : text;
   });
-  return `the shape guard is gated by ${texts.join(", ")}, not by the runtime's DEBUG initializer`;
+  return `the ${kind.label} is gated by ${texts.join(", ")}, not by the runtime's DEBUG initializer`;
 }
 
 /** Every child node of `node`, in order. */
@@ -395,12 +416,12 @@ function sameTree(a: Node, b: Node): boolean {
   );
 }
 
-/** The number of shape guards in `file`, the output named `name`, and every problem with them. */
+/** The guards `file`, the output named `name`, holds, and every problem with them. */
 function fileProblems(
   name: string,
   file: SourceFile,
   runtime: Expression,
-): { guards: number; problems: string[] } {
+): { guards: readonly Guard[]; problems: string[] } {
   const found: Guard[] = [];
   collectGuards(file, { imports: internalImports(file), found }, fileScope(file), []);
   const problems: string[] = [];
@@ -410,33 +431,35 @@ function fileProblems(
     const { line } = file.getLineAndCharacterOfPosition(guard.call.getStart(file));
     problems.push(`${name}:${line + 1}: ${problem}`);
   }
-  return { guards: found.length, problems };
+  return { guards: found, problems };
 }
 
 /**
- * Every problem with the shape guards of `outputs`: each guard no gate of which is `runtime`, read
- * where no binding of its file shadows a name `runtime` reads.
+ * Every problem with the guards of `outputs`: each guard no gate of which is `runtime`, read where
+ * no binding of its file shadows a name `runtime` reads.
  *
  * @param outputs - Rewritten modules keyed by slash-separated path from the repository root; those
  *   under `src/` are left out.
  * @param runtime - The initializer of `DEBUG` in `src/ecstatic/debug.ts`.
  * @returns The problems in file name order, then {@link NO_GUARDS} when no module left in holds a
- *   shape guard.
+ *   shape guard, and {@link NO_FILTER_GUARDS} when none holds a filter-element guard.
  */
 export function unstrippedProblems(
   outputs: ReadonlyMap<string, SourceFile>,
   runtime: Expression,
 ): string[] {
   const problems: string[] = [];
-  let guards = 0;
+  const held = new Set<GuardKind>();
   for (const name of [...outputs.keys()].toSorted()) {
     const file = outputs.get(name);
     if (file === undefined || name.startsWith("src/")) continue;
     const found = fileProblems(name, file, runtime);
-    guards += found.guards;
+    for (const guard of found.guards) held.add(guard.kind);
     problems.push(...found.problems);
   }
-  if (guards === 0) problems.push(NO_GUARDS);
+  for (const kind of GUARD_KINDS.values()) {
+    if (!held.has(kind)) problems.push(kind.missing);
+  }
   return problems;
 }
 

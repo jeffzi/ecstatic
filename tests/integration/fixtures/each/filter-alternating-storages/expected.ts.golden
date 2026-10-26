@@ -1,0 +1,63 @@
+import * as ecstatic_internal from "ecstatic/internal";
+var site;
+// rewrite-applies: filter-masked
+// rewrite-applies: filter-element-guard
+import { archetype, component, createWorld, each, register, spawn, type Storage } from "ecstatic";
+
+const LeftSpot = component("TwinSpot", { x: 0 });
+const RightSpot = component("TwinSpot", { x: 0 });
+const Shield = component("TwinShield");
+const Left = archetype([LeftSpot], [Shield]);
+const Right = archetype([RightSpot], [Shield]);
+
+/** Visits the rows of `storage` its literal filter's matcher flags, at one call site every storage passes through. */
+function sweep(storage: Storage<typeof Left>): number[] {
+  const seen: number[] = [];
+  {
+      const storage_1 = storage;
+      const element = Shield;
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c8:TwinSpot{1:x=n}|c10:TwinShield{}");
+      (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertFilterMember(storage_1, element, true);
+      site ??= { s: void 0, m: void 0 };
+      let matcher = site.m;
+      if (site.s !== storage_1) {
+          matcher = ecstatic_internal.matcherFor(storage_1, 1, 0, 0);
+          site.s = storage_1;
+          site.m = matcher;
+      }
+      const n = storage_1.n;
+      if (n > 0) {
+          const TwinSpotRecord = storage_1.TwinSpot;
+          for (let i = n - 1; i >= 0; i--) {
+              if (matcher.matched[i] !== 0) {
+                  seen.push(TwinSpotRecord.x[i]);
+              }
+          }
+      }
+  }
+  return seen;
+}
+
+/**
+ * Passes storages of two archetypes of the same shape alternately to one call site whose literal filter folds to a
+ * matcher: each storage gets its own matcher and its own rows on every call, rows spawned between calls included.
+ *
+ * @returns The rows each call visited, and how many matchers each storage holds.
+ */
+export function scenario(): unknown {
+  const left = register(createWorld(), Left);
+  const right = register(createWorld(), Right);
+  spawn(left, { TwinSpot: { x: 1 }, TwinShield: true });
+  spawn(left, { TwinSpot: { x: 2 } });
+  spawn(right, { TwinSpot: { x: 10 } });
+  spawn(right, { TwinSpot: { x: 20 }, TwinShield: true });
+  spawn(right, { TwinSpot: { x: 30 }, TwinShield: true });
+  const twin = right as unknown as Storage<typeof Left>;
+
+  const visits = [sweep(left), sweep(twin), sweep(left), sweep(twin)];
+  spawn(left, { TwinSpot: { x: 3 }, TwinShield: true });
+  spawn(right, { TwinSpot: { x: 40 }, TwinShield: true });
+  visits.push(sweep(twin), sweep(left));
+
+  return { visits, matchers: [left.matchers.length, right.matchers.length] };
+}

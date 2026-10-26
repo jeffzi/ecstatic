@@ -1,0 +1,130 @@
+import * as ecstatic_internal from "ecstatic/internal";
+var site, site_1;
+// rewrite-applies: filter-masked
+// rewrite-applies: filter-skip
+// rewrite-applies: filter-element-guard
+import { archetype, component, createWorld, each, register, spawn, type Storage } from "ecstatic";
+
+const Spot = component("OrderSpot", { x: 0 });
+const Shield = component("OrderShield");
+const Boost = component("OrderBoost");
+const Frozen = component("OrderFrozen");
+const Ship = archetype([Spot], [Shield, Boost]);
+
+/**
+ * Runs a Masked and a Skip pass whose filter reads a binding in its temporal dead zone, before and after the binding
+ * is initialized.
+ *
+ * @param storage - The storage both passes iterate.
+ * @param trace - Receives every evaluation, row, and error.
+ * @param pick - Records `label`, then returns `value`.
+ */
+function deadZone(
+  storage: Storage<typeof Ship>,
+  trace: unknown[],
+  pick: <T>(label: string, value: T) => T,
+): void {
+  const masked = (): void => {
+    {
+        const storage_1 = pick("dead-zone storage", storage);
+        const element = pick("before", Shield), element_1 = late, element_2 = pick("after", Boost);
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_1, "c9:OrderSpot{1:x=n}|c11:OrderShield{}c10:OrderBoost{}");
+        (typeof NDEBUG === "undefined" || !NDEBUG) && (ecstatic_internal.assertFilterMember(storage_1, element, true), ecstatic_internal.assertFilterMember(storage_1, element_1, true), ecstatic_internal.assertFilterMember(storage_1, element_2, true));
+        site ??= { s: void 0, m: void 0 };
+        let matcher = site.m;
+        if (site.s !== storage_1) {
+            matcher = ecstatic_internal.matcherFor(storage_1, 3, 0, 0);
+            site.s = storage_1;
+            site.m = matcher;
+        }
+        const n = storage_1.n;
+        if (n > 0) {
+            const OrderSpotRecord = storage_1.OrderSpot;
+            for (let i = n - 1; i >= 0; i--) {
+                if (matcher.matched[i] !== 0) {
+                    trace.push("dead-zone row", OrderSpotRecord.x[i]);
+                }
+            }
+        }
+    }
+  };
+  const skipped = (): void => {
+    {
+        const storage_2 = pick("dead-zone skipped storage", storage);
+        const element_3 = pick("skip before", Frozen), element_4 = late;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_2, "c9:OrderSpot{1:x=n}|c11:OrderShield{}c10:OrderBoost{}");
+        (typeof NDEBUG === "undefined" || !NDEBUG) && (ecstatic_internal.assertFilterMember(storage_2, element_3, false), ecstatic_internal.assertFilterMember(storage_2, element_4, true));
+    }
+  };
+  for (const run of [masked, skipped]) {
+    try {
+      run();
+    } catch (error) {
+      trace.push(error instanceof Error ? error.constructor.name : typeof error);
+    }
+  }
+  const late = Shield;
+  masked();
+  skipped();
+}
+
+/**
+ * Evaluates the storage argument, then each literal filter element in source order, once per call and before any
+ * row: a call, a getter, and a binding in its temporal dead zone among the elements run or throw as the runtime's
+ * call does, on a pass the filter folds to a matcher and on one it folds to a skip.
+ *
+ * @returns Every evaluation, row, and error, in the order they happened.
+ */
+export function scenario(): unknown {
+  const storage = register(createWorld(), Ship);
+  spawn(storage, { OrderSpot: { x: 1 }, OrderShield: true });
+  spawn(storage, { OrderSpot: { x: 2 }, OrderShield: true, OrderBoost: true });
+  spawn(storage, { OrderSpot: { x: 3 } });
+  const trace: unknown[] = [];
+  const pick = <T>(label: string, value: T): T => {
+    trace.push(label);
+    return value;
+  };
+  const parts = {
+    get shield(): typeof Shield {
+      trace.push("get shield");
+      return Shield;
+    },
+  };
+
+  for (const round of [1, 2]) {
+    trace.push("round", round);
+    {
+        const storage_3 = pick("storage", storage);
+        const element_5 = pick("none", Boost), element_6 = parts.shield, element_7 = pick("all", Spot);
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_3, "c9:OrderSpot{1:x=n}|c11:OrderShield{}c10:OrderBoost{}");
+        (typeof NDEBUG === "undefined" || !NDEBUG) && (ecstatic_internal.assertFilterMember(storage_3, element_5, true), ecstatic_internal.assertFilterMember(storage_3, element_6, true), ecstatic_internal.assertFilterMember(storage_3, element_7, true));
+        site_1 ??= { s: void 0, m: void 0 };
+        let matcher_1 = site_1.m;
+        if (site_1.s !== storage_3) {
+            matcher_1 = ecstatic_internal.matcherFor(storage_3, 1, 0, 2);
+            site_1.s = storage_3;
+            site_1.m = matcher_1;
+        }
+        const n_1 = storage_3.n;
+        if (n_1 > 0) {
+            const OrderSpotRecord_1 = storage_3.OrderSpot;
+            for (let i_1 = n_1 - 1; i_1 >= 0; i_1--) {
+                if (matcher_1.matched[i_1] !== 0) {
+                    trace.push("row", OrderSpotRecord_1.x[i_1]);
+                }
+            }
+        }
+    }
+    {
+        const storage_4 = pick("skipped storage", storage);
+        const element_8 = pick("any", Frozen), element_9 = parts.shield;
+        (typeof NDEBUG === "undefined" || !NDEBUG) && ecstatic_internal.assertShape(storage_4, "c9:OrderSpot{1:x=n}|c11:OrderShield{}c10:OrderBoost{}");
+        (typeof NDEBUG === "undefined" || !NDEBUG) && (ecstatic_internal.assertFilterMember(storage_4, element_8, false), ecstatic_internal.assertFilterMember(storage_4, element_9, true));
+    }
+  }
+
+  deadZone(storage, trace, pick);
+
+  return trace;
+}
