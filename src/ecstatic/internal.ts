@@ -8,6 +8,6 @@
  */
 
 export { disableOne, enableOne } from "./entity/optional.js";
-export { resolveFilter } from "./filter.js";
+export { resolveFilterMasks } from "./filter.js";
 export { matcherFor } from "./matcher.js";
-export { assertShape } from "./shape-guard.js";
+export { assertFilterMember, assertShape } from "./shape-guard.js";

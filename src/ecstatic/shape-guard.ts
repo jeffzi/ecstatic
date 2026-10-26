@@ -61,6 +61,17 @@ function archetypeShapeKey(arch: ArchetypeDescriptor): string {
 }
 
 /**
+ * Reads the archetype a storage-like object carries.
+ *
+ * @param storage - Untrusted object the call site reads as a storage.
+ * @returns Its `archetype` metadata, or `undefined` when it carries none.
+ */
+function archetypeOf(storage: object): ArchetypeDescriptor | undefined {
+  const meta: Partial<Pick<Storage, "archetype">> = storage;
+  return meta.archetype;
+}
+
+/**
  * Error for a value handed to the guard that carries no archetype.
  *
  * @param key - Shape key the call site expected.
@@ -89,8 +100,7 @@ export function assertShape(storage: unknown, key: string): void {
   if (typeof storage !== "object" || storage === null) throw noArchetypeError(key);
   let actual = shapeKeys.get(storage);
   if (actual === undefined) {
-    const meta: Partial<Pick<Storage, "archetype">> = storage;
-    const arch = meta.archetype;
+    const arch = archetypeOf(storage);
     if (arch === undefined) throw noArchetypeError(key);
     actual = archetypeShapeKey(arch);
     shapeKeys.set(storage, actual);
@@ -98,4 +108,50 @@ export function assertShape(storage: unknown, key: string): void {
   if (actual !== key) {
     throw new Error(`ecstatic: shape guard expected ${key}, got ${actual}`);
   }
+}
+
+/**
+ * Check that a storage's archetype holds, or lacks, a component an optimized call site's filter
+ * was resolved against at build time.
+ *
+ * Always checks: it has no `NDEBUG` gate, and must not gain one; the caller decides whether to
+ * invoke it.
+ *
+ * Membership is by descriptor identity: a different descriptor that shares the component's name
+ * is not held. The input is untrusted, as for {@link assertShape}.
+ *
+ * @param storage - Value the call site reads as a storage; only its `archetype` metadata is
+ *   consulted.
+ * @param component - Component the build resolved the filter against.
+ * @param expectPresent - Whether the build expected `component` in the storage's archetype.
+ * @throws Error naming `component` and the expected presence when the archetype disagrees.
+ * @throws Error naming `component` when `storage` carries no archetype.
+ */
+export function assertFilterMember(
+  storage: unknown,
+  component: ComponentDescriptor,
+  expectPresent: boolean,
+): void {
+  const arch = typeof storage === "object" && storage !== null ? archetypeOf(storage) : undefined;
+  if (arch === undefined) {
+    throw new Error(
+      `ecstatic: filter guard expected ${expectation(component, expectPresent)}, got a value with no archetype`,
+    );
+  }
+  if (arch.componentLookup.has(component) !== expectPresent) {
+    throw new Error(
+      `ecstatic: filter guard expected ${expectation(component, expectPresent)} in the storage's archetype`,
+    );
+  }
+}
+
+/**
+ * Words the filter guard's expectation for its errors.
+ *
+ * @param component - Component the build resolved the filter against.
+ * @param expectPresent - Whether the build expected it in the storage's archetype.
+ * @returns The component's name, then `present` or `absent`.
+ */
+function expectation(component: ComponentDescriptor, expectPresent: boolean): string {
+  return `${component.__ecstatic_name} ${expectPresent ? "present" : "absent"}`;
 }

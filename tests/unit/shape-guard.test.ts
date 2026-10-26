@@ -3,8 +3,9 @@ import { assert, describe, expect, it } from "vitest";
 import { type ArchetypeDescriptor, archetype } from "../../src/ecstatic/archetype.js";
 import { type ComponentDescriptor, component, ref, u8 } from "../../src/ecstatic/component.js";
 import { relation } from "../../src/ecstatic/relation.js";
-import { assertShape } from "../../src/ecstatic/shape-guard.js";
+import { assertFilterMember, assertShape } from "../../src/ecstatic/shape-guard.js";
 import { createWorld, register, type Storage } from "../../src/ecstatic/world.js";
+import { asMutableDescriptor } from "./fixtures.js";
 
 const Position = component("Position", { x: 0, y: 0 });
 const Shield = component("Shield", { hp: 0 });
@@ -211,5 +212,107 @@ describe("assertShape", () => {
         "ecstatic: shape guard expected c1:A{}|, got a value with no archetype",
       );
     });
+  });
+});
+
+describe("assertFilterMember", () => {
+  describe("when the archetype agrees with the build", () => {
+    it.each([
+      { name: "a held component expected present", expectPresent: true, descriptor: Shield },
+      { name: "a missing component expected absent", expectPresent: false, descriptor: Boost },
+    ])("returns for $name", ({ expectPresent, descriptor }) => {
+      const storage = storageOf(archetype([Position, Shield]));
+
+      expect(() => {
+        assertFilterMember(storage, descriptor, expectPresent);
+      }).not.toThrow();
+    });
+  });
+
+  describe("when the archetype disagrees with the build", () => {
+    it.each([
+      {
+        name: "a missing component expected present",
+        expectPresent: true,
+        descriptor: Boost,
+        componentName: "Boost",
+        expected: "present",
+        other: "absent",
+      },
+      {
+        name: "a held component expected absent",
+        expectPresent: false,
+        descriptor: Shield,
+        componentName: "Shield",
+        expected: "absent",
+        other: "present",
+      },
+    ])(
+      "throws naming the component and the expectation for $name",
+      ({ expectPresent, descriptor, componentName, expected, other }) => {
+        const storage = storageOf(archetype([Position, Shield]));
+
+        const error = errorFrom(() => {
+          assertFilterMember(storage, descriptor, expectPresent);
+        });
+
+        expect(error.message).toContain(componentName);
+        expect(error.message).toContain(expected);
+        expect(error.message).not.toContain(other);
+      },
+    );
+  });
+
+  describe("when the archetype holds the component as an optional", () => {
+    it("returns for the component expected present", () => {
+      const storage = storageOf(archetype([Position], [Shield]));
+
+      expect(() => {
+        assertFilterMember(storage, Shield, true);
+      }).not.toThrow();
+    });
+
+    it("throws for the component expected absent", () => {
+      const storage = storageOf(archetype([Position], [Shield]));
+
+      const error = errorFrom(() => {
+        assertFilterMember(storage, Shield, false);
+      });
+
+      expect(error.message).toContain("Shield absent");
+    });
+  });
+
+  describe("when the archetype holds a different descriptor of the same name", () => {
+    it("throws for the descriptor expected present", () => {
+      const storage = storageOf(archetype([Shield]));
+      const OtherShield = component("ShieldTwin", { hp: 0 });
+      asMutableDescriptor(OtherShield).__ecstatic_name = "Shield";
+
+      const error = errorFrom(() => {
+        assertFilterMember(storage, OtherShield, true);
+      });
+
+      expect(error.message).toContain("Shield");
+    });
+  });
+
+  describe("when the value has no archetype", () => {
+    it.each([
+      { name: "null", value: null, expectPresent: true },
+      { name: "undefined", value: undefined, expectPresent: false },
+      { name: "a number", value: 42, expectPresent: true },
+      { name: "an object without archetype metadata", value: {}, expectPresent: false },
+    ])(
+      "throws naming the component and the missing archetype for $name",
+      ({ value, expectPresent }) => {
+        const error = errorFrom(() => {
+          assertFilterMember(value, Shield, expectPresent);
+        });
+
+        expect(error.message).toContain("Shield");
+        expect(error.message).toContain("no archetype");
+      },
+    );
   });
 });
