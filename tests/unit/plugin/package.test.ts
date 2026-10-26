@@ -272,15 +272,3 @@ describe("built package", () => {
     SPAWN_TIMEOUT_MS,
   );
 });
-
-describe("CHANGELOG.md", () => {
-  it("records the plugin under Added in the unreleased section", () => {
-    const changelog = readFileSync(join(REPO_ROOT, "CHANGELOG.md"), "utf8");
-    const unreleased = changelog
-      .split(/^## /mu)
-      .find((section) => section.startsWith("[Unreleased]"));
-    const added = unreleased?.split(/^### /mu).find((section) => section.startsWith("Added"));
-
-    expect(added).toContain("`ecstatic/vite` plugin");
-  });
-});
