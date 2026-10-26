@@ -55,7 +55,7 @@ const COMPILER_RECEIVERS: ReadonlySet<string> = new Set([
 ]);
 
 const COMPILER_MODULE = "compiler.ts";
-const PURE_MODULES: ReadonlySet<string> = new Set(["facts.ts", "plan.ts"]);
+const PURE_MODULES: ReadonlySet<string> = new Set(["facts.ts", "fold.ts", "plan.ts"]);
 const SYNTAX_MODULE = "syntax.ts";
 const COMPILER_ENTRIES: ReadonlySet<string> = new Set(["typescript/async", "typescript/sync"]);
 
@@ -63,7 +63,7 @@ const EMIT_DIR = "emit/";
 const ANALYSIS_DIR = "analysis/";
 
 const TSGO = "only compiler.ts reaches tsgo";
-const PURE = "facts.ts and plan.ts import nothing from typescript";
+const PURE = "facts.ts, fold.ts, and plan.ts import nothing from typescript";
 const EMIT = "emit imports nothing from analysis";
 const SYNTAX = "syntax.ts imports nothing from emit";
 

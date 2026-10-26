@@ -14,7 +14,7 @@ import { removeProjects, SPAWN_TIMEOUT_MS, writeProject } from "./project.js";
 const OPTIMIZER_DIR = fileURLToPath(new URL("../../../src/plugin/optimizer/", import.meta.url));
 
 const TSGO = "only compiler.ts reaches tsgo";
-const PURE = "facts.ts and plan.ts import nothing from typescript";
+const PURE = "facts.ts, fold.ts, and plan.ts import nothing from typescript";
 const EMIT = "emit imports nothing from analysis";
 const SYNTAX = "syntax.ts imports nothing from emit";
 
@@ -48,6 +48,7 @@ const COMPILER: Module = {
 const CLEAN: readonly Module[] = [
   COMPILER,
   { path: "facts.ts", text: "export interface Fact { readonly id: number }\n" },
+  { path: "fold.ts", text: 'import type { Fact } from "./facts.js";\n' },
   { path: "plan.ts", text: 'import type { Fact } from "./facts.js";\n' },
   { path: "syntax.ts", text: "export const isLabel = (text: string): boolean => text !== '';\n" },
 ];
@@ -248,6 +249,11 @@ describe("optimizer boundaries", () => {
         expected: [`facts.ts:1 imports typescript/ast: ${PURE}`],
       },
       {
+        name: "fold.ts type-imports typescript/ast",
+        module: { path: "fold.ts", text: 'import type { Node } from "typescript/ast";' },
+        expected: [`fold.ts:1 imports typescript/ast: ${PURE}`],
+      },
+      {
         name: "plan.ts imports typescript",
         module: { path: "plan.ts", text: 'import { version } from "typescript";' },
         expected: [`plan.ts:1 imports typescript: ${PURE}`],
@@ -345,7 +351,7 @@ describe("optimizer boundaries", () => {
         ),
       },
       {
-        name: "a module other than facts.ts and plan.ts imports typescript/ast",
+        name: "a module other than facts.ts, fold.ts, and plan.ts imports typescript/ast",
         module: { path: "nodes.ts", text: 'import type { Node } from "typescript/ast";' },
       },
       {
@@ -372,11 +378,14 @@ describe("optimizer boundaries", () => {
   });
 
   describe("when a module the rules name is missing", () => {
-    it.each(["compiler.ts", "facts.ts", "plan.ts", "syntax.ts"])("reports %s", (path) => {
-      const violations = boundaries.checkModules(without(path), OPTIMIZER_RULES);
+    it.each(["compiler.ts", "facts.ts", "fold.ts", "plan.ts", "syntax.ts"])(
+      "reports %s",
+      (path) => {
+        const violations = boundaries.checkModules(without(path), OPTIMIZER_RULES);
 
-      expect(violations).toStrictEqual([`${path} is missing: the boundary rules name it`]);
-    });
+        expect(violations).toStrictEqual([`${path} is missing: the boundary rules name it`]);
+      },
+    );
   });
 });
 

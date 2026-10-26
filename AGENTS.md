@@ -20,8 +20,8 @@ design — never add references to Lua, TSTL, or "the port" there.
 - `src/plugin/optimizer/` — the optimizer pipeline: analysis (`analysis/`) reports each call site as
   facts, `plan.ts` decides what to do with each site, and `emit/` splices in the rewritten loops.
   Only `src/plugin/optimizer/compiler.ts` makes calls that reach the TypeScript compiler process,
-  `facts.ts` and `plan.ts` import nothing from `typescript`, `emit/` imports nothing from
-  `analysis/`, and `syntax.ts`, which both share, imports nothing from `emit/`;
+  `facts.ts`, `fold.ts`, and `plan.ts` import nothing from `typescript`, `emit/` imports nothing
+  from `analysis/`, and `syntax.ts`, which both share, imports nothing from `emit/`;
   `tests/unit/optimizer/boundary.test.ts` enforces all four rules.
 
 ## Commands
