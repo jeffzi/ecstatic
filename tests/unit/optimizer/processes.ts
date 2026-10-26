@@ -105,13 +105,38 @@ function isStopped(pid: number): boolean {
  *
  * @param pid - The process to look up.
  * @returns The state code, or `undefined` once the process is gone.
+ * @throws When `ps` fails for any other reason than finding no such process.
  */
 export function processState(pid: number): string | undefined {
   try {
-    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim();
-  } catch {
-    return undefined;
+    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch (error) {
+    if (isNoSuchProcess(error)) return undefined;
+    throw error;
   }
+}
+
+/**
+ * Whether a `ps` failure means only that it found no such process: it exits 1 having printed
+ * nothing, where any other failure prints why.
+ *
+ * @param error - What `execFileSync` threw.
+ * @returns Whether `ps` exited 1 with empty output on both streams.
+ */
+function isNoSuchProcess(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    error.status === 1 &&
+    "stdout" in error &&
+    error.stdout === "" &&
+    "stderr" in error &&
+    error.stderr === ""
+  );
 }
 
 /** Waits until `pid` is no longer running. */

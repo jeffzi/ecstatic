@@ -26,6 +26,7 @@ import {
 } from "../../../src/plugin/optimizer/syntax.js";
 import {
   appTsconfig,
+  caseFile,
   caseFiles,
   closeProject,
   openProject,
@@ -238,7 +239,7 @@ afterAll(() => closeProject(session));
 /** The first statement of the case file holding `source`. */
 async function firstStatement(source: string): Promise<Statement> {
   const file = await view.sourceFile(
-    projectPath(root, `${CASE_STEM}${SOURCES.indexOf(source)}.ts`),
+    projectPath(root, caseFile(CASE_STEM, SOURCES.indexOf(source))),
   );
   const [statement] = file.statements;
   if (statement === undefined) throw new Error(`${source} holds no statement`);

@@ -107,9 +107,14 @@ export function relativePath(dir: string, file: string): string {
   return relative(dir, file).split(sep).join("/");
 }
 
+/** The slash-separated path of the case file at `index` under `stem`. */
+export function caseFile(stem: string, index: number): string {
+  return `${stem}${index}.ts`;
+}
+
 /**
- * Case files for `sources`: the file at `${stem}${index}.ts` holds `header` followed by the source
- * at that index.
+ * Case files for `sources`: the file at {@link caseFile} for each index holds `header` followed by
+ * the source at that index.
  *
  * @param stem - The slash-separated path prefix of every case file, before its index.
  * @param sources - The case sources, one file each.
@@ -121,7 +126,7 @@ export function caseFiles(
   sources: readonly string[],
   header = "",
 ): Record<string, string> {
-  return Object.fromEntries(sources.map((source, i) => [`${stem}${i}.ts`, header + source]));
+  return Object.fromEntries(sources.map((source, i) => [caseFile(stem, i), header + source]));
 }
 
 /** A written project with the session opened on its `tsconfig.json`. */

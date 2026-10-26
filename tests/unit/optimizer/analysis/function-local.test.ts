@@ -16,6 +16,7 @@ import type { ProjectView, Session } from "../../../../src/plugin/optimizer/sess
 import { locate } from "../locate.js";
 import {
   appTsconfig,
+  caseFile,
   caseFiles,
   closeProject,
   openProject,
@@ -383,7 +384,7 @@ interface Located {
 
 /** The inline callback the first `each` call of the case file holding `body` passes. */
 async function callbackIn(body: string): Promise<Located> {
-  const fileName = projectPath(root, `${CASE_STEM}${BODIES.indexOf(body)}.ts`);
+  const fileName = projectPath(root, caseFile(CASE_STEM, BODIES.indexOf(body)));
   const source = await view.sourceFile(fileName);
   const call = getTouchingPropertyName(source, source.text.indexOf(CALL)).parent;
   const callback = isCallExpression(call) ? call.arguments.at(-1) : undefined;

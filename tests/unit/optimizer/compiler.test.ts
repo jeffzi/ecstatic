@@ -286,8 +286,9 @@ describe("type queries", () => {
     { name: "count", expected: false },
   ])("reports whether property $name is an accessor: $expected", async ({ name, expected }) => {
     const type = await constType("box");
+    const property = await propertyOfType(view.checker, type, name);
 
-    const actual = isAccessorSymbol(await propertyOfType(view.checker, type, name));
+    const actual = isAccessorSymbol(property);
 
     expect(actual).toBe(expected);
   });
