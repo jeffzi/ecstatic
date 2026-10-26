@@ -23,6 +23,7 @@ import { resolveSymbol } from "../../../../src/plugin/optimizer/compiler.js";
 import type { ProjectView, Session } from "../../../../src/plugin/optimizer/session.js";
 import { isThisParameter } from "../../../../src/plugin/optimizer/syntax.js";
 import {
+  caseFile,
   caseFiles,
   closeProject,
   openProject,
@@ -660,7 +661,13 @@ interface Located {
  */
 async function callbackIn(source: string): Promise<Located> {
   const file = await view.sourceFile(
-    projectPath(root, `${CASE_STEM}${CASES.findIndex((c) => c.source === source)}.ts`),
+    projectPath(
+      root,
+      caseFile(
+        CASE_STEM,
+        CASES.findIndex((c) => c.source === source),
+      ),
+    ),
   );
   const call = getTouchingPropertyName(file, file.text.indexOf("each(", PRELUDE.length)).parent;
   if (!isCallExpression(call)) throw new Error(`${source} holds no each call`);
@@ -672,7 +679,7 @@ async function callbackIn(source: string): Promise<Located> {
   }
   const first = callback.parameters.find((param) => !isThisParameter(param));
   const [{ shapes }, symbol] = await Promise.all([
-    resolveShapes(view.checker, storages),
+    resolveShapes(view.checker, storages, roots),
     first !== undefined && isIdentifier(first.name)
       ? resolveSymbol(view.checker, first.name)
       : undefined,

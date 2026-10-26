@@ -27,6 +27,8 @@ import type { Session } from "../../../../src/plugin/optimizer/session.js";
 import { locate } from "../locate.js";
 import {
   appTsconfig,
+  caseFile,
+  caseFiles,
   closeProject,
   openProject,
   projectPath,
@@ -34,6 +36,9 @@ import {
 } from "../project.js";
 
 const CASE_COUNT = 20;
+
+/** The path prefix of every case file, before its index. */
+const CASE_STEM = "app/case";
 
 /** The text the preamble of {@link preamble} prints as, its lines joined by `\n`. */
 const PREAMBLE_TEXT = "const DEBUG = 1;\nconst shapeKey = 2;";
@@ -59,8 +64,9 @@ let session: Session;
 let nextCase = 0;
 
 beforeAll(async () => {
-  const placeholders = Object.fromEntries(
-    Array.from({ length: CASE_COUNT }, (_, i) => [`app/case${i}.ts`, "export {};\n"]),
+  const placeholders = caseFiles(
+    CASE_STEM,
+    Array.from({ length: CASE_COUNT }, () => "export {};\n"),
   );
   ({ root, session } = await openProject({ "tsconfig.json": appTsconfig(), ...placeholders }));
 }, SPAWN_TIMEOUT_MS);
@@ -69,7 +75,7 @@ afterAll(() => closeProject(session));
 
 /** Serves `text` as a case file of its own and returns the file's path and parsed source. */
 async function load(text: string): Promise<{ file: string; source: SourceFile }> {
-  const file = projectPath(root, `app/case${nextCase++}.ts`);
+  const file = projectPath(root, caseFile(CASE_STEM, nextCase++));
   const view = await session.update({ [file]: text });
   return { file, source: await view.sourceFile(file) };
 }

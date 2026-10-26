@@ -19,6 +19,7 @@ import {
   SPAWN_TIMEOUT_MS,
   writeProject,
 } from "../project.js";
+import { flattenSites } from "../sites.js";
 
 const ECSTATIC_MANIFEST = `{"name": "ecstatic"}`;
 const OTHER_MANIFEST = `{"name": "other"}`;
@@ -211,11 +212,6 @@ function summarize(sites: readonly Site[]): SiteSummary[] {
   return sites.map(({ op, nested }) => ({ op, nested: summarize(nested) }));
 }
 
-/** Lists `sites` depth-first, each before its nested sites. */
-function flatten(sites: readonly Site[]): Site[] {
-  return sites.flatMap((site) => [site, ...flatten(site.nested)]);
-}
-
 describe("analyze", () => {
   it("records the statement context of a call in each expression position", async () => {
     const sites = await installedSites(`import { each } from "ecstatic";
@@ -332,7 +328,7 @@ query(s, [], (e) => has(e, s));
         [INSTALLED_MAIN]: source,
       });
 
-      const calls = flatten(sites).map(({ call }) => {
+      const calls = flattenSites(sites).map(({ call }) => {
         const node = table.node(call);
         return { call: node !== undefined && isCallExpression(node), start: node?.getStart() };
       });
@@ -432,7 +428,7 @@ each(s, (e) => {
     const [site] = sites;
     expect({
       op: site?.op,
-      filtered: site?.filtered,
+      filtered: site?.filter !== undefined,
       arrayLiteral: site?.arrayLiteral,
     }).toStrictEqual({ op: "each", ...expected });
   });

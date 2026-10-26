@@ -55,6 +55,7 @@ export type Mode = "hoisted" | "realloc-safe";
 
 /** A literal filter of an inlined `each` call, folded against the call's one shape. */
 export interface FoldedPlannedFilter {
+  readonly kind: "folded";
   /**
    * The filter's elements, the `all` axis, then `any`, then `none`, each in element order: parallel
    * to `fold.present`. The emitter evaluates them in source order, which an object filter's key
@@ -72,6 +73,7 @@ export type RuntimeFilterForm = Exclude<FilterForm, "unsupported">;
  * caching the resolution in its call site's slot.
  */
 export interface RuntimePlannedFilter {
+  readonly kind: "runtime";
   /** The filter expression, evaluated once per call. */
   readonly node: NodeID;
   readonly form: RuntimeFilterForm;
@@ -202,25 +204,24 @@ function eachInlining(site: Site, callback: Callback): EachInlining {
   if (filter === undefined) return inlining;
   if (filter.kind === "literal") {
     const elements = literalElements(filter);
-    return { ...inlining, filter: { elements, fold: foldFilter(filter, shape) } };
+    return { ...inlining, filter: { kind: "folded", elements, fold: foldFilter(filter, shape) } };
   }
   if (filter.form === "unsupported")
     throw new Error("eligible each site has an unsupported filter");
-  return { ...inlining, filter: { node: filter.node, form: filter.form } };
+  return { ...inlining, filter: { kind: "runtime", node: filter.node, form: filter.form } };
 }
 
 /**
- * Whether a site's filter keeps its call a runtime call: a filter argument analysis did not report,
- * or one whose type does not pin it to a component array or a filter object, which the runtime
- * tells apart from a callback by `typeof` and an inlined loop could not.
+ * Whether a site's filter keeps its call a runtime call: one whose type does not pin it to a
+ * component array or a filter object, which the runtime tells apart from a callback by `typeof` and
+ * an inlined loop could not.
  *
  * @param site - Site to check.
  * @returns `true` for a filtered site whose filter is neither literal nor of a runtime form.
  */
 function filterKeepsCall(site: Site): boolean {
-  if (!site.filtered) return false;
   const { filter } = site;
-  return filter === undefined || (filter.kind === "non-literal" && filter.form === "unsupported");
+  return filter?.kind === "non-literal" && filter.form === "unsupported";
 }
 
 class Planner {

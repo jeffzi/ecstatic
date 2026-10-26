@@ -20,7 +20,7 @@ const Dark = component("PrismDark");
 const Prism = archetype([Spot], [Red, Blue]);
 
 /**
- * Records the rows one call site visits for a filter object.
+ * Records the rows one call site visits.
  *
  * @param storage - The storage of the scenario, iterated through one call site.
  * @param filter - The filter object for this call; the scenario edits it between calls, so the cached resolution must notice.

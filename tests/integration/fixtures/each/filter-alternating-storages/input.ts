@@ -31,7 +31,7 @@ export function scenario(): unknown {
   spawn(right, { TwinSpot: { x: 10 } });
   spawn(right, { TwinSpot: { x: 20 }, TwinShield: true });
   spawn(right, { TwinSpot: { x: 30 }, TwinShield: true });
-  const twin = right as unknown as Storage<typeof Left>;
+  const twin: Storage<typeof Left> = right;
 
   const visits = [sweep(left), sweep(twin), sweep(left), sweep(twin)];
   spawn(left, { TwinSpot: { x: 3 }, TwinShield: true });

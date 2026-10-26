@@ -735,11 +735,11 @@ export async function isArrayLike(checker: Checker, type: Type): Promise<boolean
 
 /**
  * Whether a value of `type` can be an array, as one typed `object`, `{}` or `Object` can: the
- * global `Array` type is assignable to it. Without a global `Array` to test, any value may be one.
+ * global `Array` type is assignable to it.
  *
  * @param checker - Checker that produced `type`.
  * @param type - Type to test.
- * @returns Whether an array is assignable to `type`.
+ * @returns Whether an array is assignable to `type`; `true` when the program has no global `Array`.
  * @throws When the compiler process has exited.
  */
 export async function admitsArray(checker: Checker, type: Type): Promise<boolean> {

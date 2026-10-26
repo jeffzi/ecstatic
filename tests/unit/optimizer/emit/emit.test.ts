@@ -180,8 +180,7 @@ async function runCycle(
     runtime: writeCycle(project.root, `${dir}-runtime`, entry),
     rewritten: writeCycle(project.root, `${dir}-rewritten`, text),
   };
-  const [checked, stripped] = await Promise.all([project.run(modules), project.run(modules, true)]);
-  return { planned, text, checked, stripped };
+  return { planned, text, ...(await project.runSettings(modules)) };
 }
 
 /** Two `each` calls over Mover storages and one over a Statue storage, in a strict-mode file. */
@@ -517,34 +516,34 @@ describe("EmitFile", () => {
           name: "an unfiltered loop",
           dir: "cycle",
           entry: CYCLE_ENTRY_SOURCE,
-          fold: undefined,
+          filter: undefined,
           expected: 5,
         },
         {
           name: "a loop whose literal filter folds to a matcher",
           dir: "cycle-masked",
           entry: CYCLE_MASKED_ENTRY_SOURCE,
-          fold: "masked",
+          filter: "masked",
           expected: 1,
         },
         {
           name: "a loop whose filter is resolved at runtime",
           dir: "cycle-runtime-filter",
           entry: CYCLE_RUNTIME_FILTER_ENTRY_SOURCE,
-          fold: "runtime",
+          filter: "runtime",
           expected: 1,
         },
       ])(
         "runs $name as the runtime call does, with checks on and stripped",
-        async ({ dir, entry, fold, expected }) => {
+        async ({ dir, entry, filter, expected }) => {
           const { planned, checked, stripped } = await runCycle(dir, entry);
 
           expect({
-            fold: filterOutcome(rewriteAt(planned, 0)),
+            filter: filterOutcome(rewriteAt(planned, 0)),
             checked,
             stripped,
           }).toStrictEqual({
-            fold,
+            filter,
             checked: { runtime: expected, rewritten: expected },
             stripped: { runtime: expected, rewritten: expected },
           });
@@ -815,10 +814,7 @@ export function scenario(): unknown {
           );
           const module = await project.emitModule(planned, "filter-guarded");
 
-          const [checked, stripped] = await Promise.all([
-            project.run({ rewritten: module }),
-            project.run({ rewritten: module }, true),
-          ]);
+          const { checked, stripped } = await project.runSettings({ rewritten: module });
 
           expect({ checked, stripped }).toStrictEqual({
             checked: { rewritten: { outcome: "filter guard", visited: [], matchers: 0 } },

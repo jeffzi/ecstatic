@@ -9,11 +9,19 @@ import { PackageRoots } from "../../../../src/plugin/optimizer/analysis/roots.js
 import type { Rule } from "../../../../src/plugin/optimizer/emit/catalog.js";
 import { createEmitFile, type EmitFile } from "../../../../src/plugin/optimizer/emit/emit.js";
 import type { NodeID, Site, ViewUse } from "../../../../src/plugin/optimizer/facts.js";
+import type { FoldedFilter } from "../../../../src/plugin/optimizer/fold.js";
 import type { NodeTable } from "../../../../src/plugin/optimizer/nodes.js";
 import { type EachInlining, type Mode, plan } from "../../../../src/plugin/optimizer/plan.js";
 import type { Session } from "../../../../src/plugin/optimizer/session.js";
 import { packageBin } from "../../../package-bin.js";
-import { openProject, projectPath, RUNTIME_TSCONFIG, runtimeProject } from "../project.js";
+import {
+  caseFile,
+  caseFiles,
+  openProject,
+  projectPath,
+  RUNTIME_TSCONFIG,
+  runtimeProject,
+} from "../project.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -146,10 +154,8 @@ export const RUN_TIMEOUT_MS = 30_000;
 /** How many case files a project holds; each case takes the next one. */
 const CASE_SLOTS = 128;
 
-/** The slash-separated path of the `i`th case file. */
-function caseFile(i: number): string {
-  return `app/case${i}.ts`;
-}
+/** The path prefix of every case file, before its index. */
+const CASE_STEM = "app/case";
 
 /** The slash-separated path of the case file at `rel`, without its `app/` directory and `.ts`. */
 function caseStem(rel: string): string {
@@ -171,15 +177,17 @@ export function rewriteAt(planned: PlannedCase, index: number): EachInlining {
 }
 
 /**
- * Classifies how an inlining's filter is applied: folded at build time, resolved at runtime, or absent.
+ * Classifies how an inlining's filter is applied.
  *
  * @param inlining - The inlining whose planned filter is classified.
  * @returns The fold's kind, `"runtime"`, or `undefined` when unfiltered.
  */
-export function filterOutcome(inlining: EachInlining): string | undefined {
+export function filterOutcome(
+  inlining: EachInlining,
+): FoldedFilter["kind"] | "runtime" | undefined {
   const { filter } = inlining;
   if (filter === undefined) return undefined;
-  return "fold" in filter ? filter.fold.kind : "runtime";
+  return filter.kind === "folded" ? filter.fold.kind : "runtime";
 }
 
 /** The module the entry imports, which calls the entry's `total` as it loads. */
@@ -189,11 +197,10 @@ export const early = total();
 `;
 
 /**
- * Writes `entry` and the partner it imports as the two modules of the cycle in the project
- * directory `dir`, a sibling of `app/`.
+ * Writes an entry module and the partner it imports as the two modules of an import cycle.
  *
  * @param root - The project root.
- * @param dir - The directory's name.
+ * @param dir - The cycle directory's name, a sibling of `app/` in the project.
  * @param entry - The entry module's text.
  * @returns The entry module's path relative to `app/`.
  */
@@ -257,8 +264,9 @@ export class EmitProject {
 
   /** Writes the project and opens its session. */
   static async open(): Promise<EmitProject> {
-    const placeholders = Object.fromEntries(
-      Array.from({ length: CASE_SLOTS }, (_, i) => [caseFile(i), "export {};\n"]),
+    const placeholders = caseFiles(
+      CASE_STEM,
+      Array.from({ length: CASE_SLOTS }, () => "export {};\n"),
     );
     const { root, session } = await openProject(
       runtimeProject({
@@ -279,7 +287,7 @@ export class EmitProject {
    * @throws Error when the plan rewrites no site.
    */
   async planned(text: string): Promise<PlannedCase> {
-    const rel = caseFile(this.#next++);
+    const rel = caseFile(CASE_STEM, this.#next++);
     const path = projectPath(this.root, rel);
     writeFileSync(path, text);
     const view = await this.session.update({ [path]: text });
@@ -357,7 +365,18 @@ export class EmitProject {
     source: string,
     modes: readonly Mode[] = MODES,
   ): Promise<{ checked: unknown; stripped: unknown }> {
-    const modules = await this.#emitModes(source, modes);
+    return await this.runSettings(await this.#emitModes(source, modes));
+  }
+
+  /**
+   * Runs `modules` with checks on and with them stripped, in two processes at once.
+   *
+   * @param modules - Module paths relative to `app/`, keyed by the name their result takes.
+   * @returns What {@link run} returns without `NDEBUG` as `checked`, and with it as `stripped`.
+   */
+  async runSettings(
+    modules: Readonly<Record<string, string>>,
+  ): Promise<{ checked: unknown; stripped: unknown }> {
     const [checked, stripped] = await Promise.all([this.run(modules), this.run(modules, true)]);
     return { checked, stripped };
   }

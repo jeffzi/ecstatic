@@ -77,7 +77,6 @@ function statement(op: Op, cb: Callback | undefined, ...reasons: Reason[]): Site
     call: 0,
     op,
     context: "expression-statement",
-    filtered: false,
     arrayLiteral: false,
   };
 }
@@ -123,10 +122,8 @@ function element(node: NodeID, name: string): FilterElement {
 /** The node of a filter written as a binding. */
 const FILTER_NODE: NodeID = 50;
 
-/** The `Shield` element of a literal filter. */
 const SHIELD_ELEMENT = element(51, "Shield");
 
-/** The `Boost` element of a literal filter. */
 const BOOST_ELEMENT = element(52, "Boost");
 
 /** A literal `{ all: [Shield], none: [Boost] }` filter, which folds to a Masked outcome on the ship shape. */
@@ -147,7 +144,7 @@ const UNSUPPORTED_FILTER = nonLiteral("unsupported");
 
 /** `site` with `filter` as its filter argument. */
 function filteredBy(site: Site, filter: Filter): Site {
-  return { ...site, filtered: true, filter };
+  return { ...site, filter };
 }
 
 /** An each call over the mover shape with ID `call` at `offset`, holding `nested`. */
@@ -479,34 +476,38 @@ describe("plan", () => {
   describe("when a single-storage each has a literal filter", () => {
     const inlined = (mode: Mode): EachInlining =>
       shipInlinedAt(mode, {
+        kind: "folded",
         elements: [SHIELD_ELEMENT, BOOST_ELEMENT],
         fold: foldFilter(SHIELDED_FILTER, SHIP_SHAPE),
       });
 
+    const shieldedEach = (cb: Callback, ...nested: Site[]): Site =>
+      shieldedEachAt(3, 40, cb, ...nested);
+
     it.each<{ name: string; site: Site; want: PlanResult }>([
       {
         name: "a hazard-free body is inlined hoisted, carrying the elements and their fold",
-        site: shieldedEachAt(3, 40, viewCallback()),
+        site: shieldedEach(viewCallback()),
         want: { bails: [], rewrites: [inlined("hoisted")] },
       },
       {
         name: "a body with a hazard point is inlined realloc-safe",
-        site: shieldedEachAt(3, 40, viewCallback({ hazards: [7] })),
+        site: shieldedEach(viewCallback({ hazards: [7] })),
         want: { bails: [], rewrites: [inlined("realloc-safe")] },
       },
       {
         name: "a recorded reason bails with it",
-        site: { ...shieldedEachAt(3, 40, viewCallback()), reasons: ["SHAPE_UNRESOLVED"] },
+        site: { ...shieldedEach(viewCallback()), reasons: ["SHAPE_UNRESOLVED"] },
         want: { bails: [bailAt(3, 40, "SHAPE_UNRESOLVED")], rewrites: [] },
       },
       {
         name: "a callback taking two parameters bails",
-        site: shieldedEachAt(3, 40, keptCallback()),
+        site: shieldedEach(keptCallback()),
         want: { bails: [bailAt(3, 40, "CALLBACK_PARAMS")], rewrites: [] },
       },
       {
         name: "an escaping view reference bails naming it",
-        site: shieldedEachAt(3, 40, escaping(escapeAt("view", 3, 7))),
+        site: shieldedEach(escaping(escapeAt("view", 3, 7))),
         want: {
           bails: [viewEscapes(3, 40, "line 3, column 7: the view as a value")],
           rewrites: [],
@@ -514,24 +515,27 @@ describe("plan", () => {
       },
       {
         name: "NDEBUG declared in scope bails",
-        site: shieldedEachAt(3, 40, viewCallback({ ndebugBound: true })),
+        site: shieldedEach(viewCallback({ ndebugBound: true })),
         want: { bails: [bailAt(3, 40, "NDEBUG_BOUND")], rewrites: [] },
       },
       {
         name: "holding an inlined each keeps its runtime call silently",
-        site: shieldedEachAt(3, 40, escaping(), eachAt(4, 60, viewCallback())),
+        site: shieldedEach(escaping(), eachAt(4, 60, viewCallback())),
         want: { bails: [bailAt(3, 40, "OP_NOT_REWRITTEN")], rewrites: [inlinedAt(4, 60)] },
       },
-    ])("plans it as an unfiltered call: $name", ({ site, want }) => {
-      const result = plan([site]);
+    ])(
+      "plans it as it would an unfiltered call, carrying the filter into the loop: $name",
+      ({ site, want }) => {
+        const result = plan([site]);
 
-      expect(result).toStrictEqual(want);
-    });
+        expect(result).toStrictEqual(want);
+      },
+    );
   });
 
   describe("when a single-storage each has a non-literal filter", () => {
     const inlined = (mode: Mode, form: RuntimeFilterForm): EachInlining =>
-      shipInlinedAt(mode, { node: FILTER_NODE, form });
+      shipInlinedAt(mode, { kind: "runtime", node: FILTER_NODE, form });
     const runtimeEachAt = (form: FilterForm, cb: Callback, ...nested: Site[]): Site =>
       filteredBy(shipEachAt(3, 40, cb, ...nested), nonLiteral(form));
 
@@ -695,11 +699,6 @@ describe("plan", () => {
     const notRewritten = bailAt(2, 20, "OP_NOT_REWRITTEN");
 
     it.each([
-      {
-        name: "filtered each whose filter analysis did not report",
-        site: { ...eachAt(2, 20, viewCallback()), filtered: true },
-        want: notRewritten,
-      },
       {
         name: "each with an unsupported non-literal filter and an escaping view reference",
         site: filteredBy(eachAt(2, 20, cb), UNSUPPORTED_FILTER),

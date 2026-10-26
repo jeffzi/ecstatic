@@ -19,7 +19,7 @@ const Leaf = component("HingeLeaf");
 const Hinge = archetype([Spot], [Pin, Leaf]);
 
 /**
- * Records the rows one call site visits for a filter that is a component array or a filter object.
+ * Records the rows one call site visits.
  *
  * @param storage - The storage of the scenario, iterated through one call site.
  * @param filter - A component array or a filter object, told apart on every call.

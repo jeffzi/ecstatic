@@ -305,12 +305,14 @@ export function undefinedValue(): Expression {
 }
 
 /**
- * A `true` or `false` literal.
+ * A `true`, `false`, or `null` literal.
  *
  * @param kind - The keyword.
  * @returns The keyword expression.
  */
-export function keyword(kind: SyntaxKind.TrueKeyword | SyntaxKind.FalseKeyword): Expression {
+export function keyword(
+  kind: SyntaxKind.TrueKeyword | SyntaxKind.FalseKeyword | SyntaxKind.NullKeyword,
+): Expression {
   return createKeywordExpression(kind);
 }
 

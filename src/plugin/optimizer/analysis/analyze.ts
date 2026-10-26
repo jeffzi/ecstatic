@@ -162,7 +162,8 @@ const FILTERED_EACH_ARG_COUNT = 3;
  * @param draft - The draft of the site.
  * @returns The site, with no filter, callback, or nested sites yet, and the registrations of its
  *   filter and callback.
- * @throws When a consulted declaration's source file is no longer available.
+ * @throws When a consulted declaration's source file is no longer available, or the compiler process
+ *   has exited.
  */
 async function prepareSite(
   scope: CallbackScope,
@@ -188,7 +189,6 @@ async function prepareSite(
     call: draft.id,
     op,
     context: statementContext(call),
-    filtered: each.filter !== undefined,
     arrayLiteral: each.arrayLiteral,
   };
   const registerCallback =
@@ -222,7 +222,8 @@ const NO_EACH: EachReading = {
  * @param filterArg - The call's filter argument; undefined when it passes none.
  * @returns The storages' shapes or the reason they did not resolve, and the filter's reading,
  *   with the files both consulted.
- * @throws When a consulted declaration's source file is no longer available.
+ * @throws When a consulted declaration's source file is no longer available, or the compiler process
+ *   has exited.
  */
 async function readEach(
   scope: CallbackScope,
@@ -230,8 +231,10 @@ async function readEach(
   filterArg: Expression | undefined,
 ): Promise<EachReading> {
   const [resolution, filter] = await Promise.all([
-    resolveShapes(scope.checker, storages),
-    filterArg === undefined ? undefined : readFilter(scope.checker, scope.table, filterArg),
+    resolveShapes(scope.checker, storages, scope.roots),
+    filterArg === undefined
+      ? undefined
+      : readFilter(scope.checker, scope.table, filterArg, scope.roots),
   ]);
   const declarationFiles = new Set([
     ...resolution.declarationFiles,
@@ -255,8 +258,7 @@ async function readEach(
 function finish(prepared: PreparedSite): Site {
   const filter = prepared.registerFilter?.();
   const callback = prepared.registerCallback?.();
-  const site: Site = { ...prepared.site, callback, nested: prepared.nested.map(finish) };
-  return filter === undefined ? site : { ...site, filter };
+  return { ...prepared.site, filter, callback, nested: prepared.nested.map(finish) };
 }
 
 /**

@@ -115,6 +115,7 @@ export async function isNullishType(type: Type): Promise<boolean> {
  * @param type - The receiver's type.
  * @param name - The property name.
  * @returns Whether the access can run user code.
+ * @throws When the compiler process has exited.
  */
 export async function typeReadRuns(checker: Checker, type: Type, name: string): Promise<boolean> {
   const settled = await readRunsInConstituents(

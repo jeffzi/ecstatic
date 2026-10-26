@@ -75,18 +75,18 @@ function orBits(bits: readonly (number | undefined)[]): number {
  * Folds a literal filter against a shape, mirroring `resolveFilterMasks` axis by axis:
  *
  * - `all`: a required component is satisfied, an optional one contributes its bit, an absent one
- *   makes the outcome Skip.
+ *   can never be satisfied.
  * - `any`: optional members contribute bits, a required member clears the axis to 0, and a
- *   non-empty axis whose members are all absent is Skip.
- * - `none`: optional members contribute bits, a required member is Skip, absent members are
- *   ignored.
- *
- * Three zero masks are Trivial; anything else is Masked.
+ *   non-empty axis whose members are all absent can never be satisfied.
+ * - `none`: optional members contribute bits, a required member can never be excluded, absent
+ *   members are ignored.
  *
  * @param filter - The literal filter, its elements naming components.
  * @param shape - The shape of the storage the filter is resolved against; `optional[k]` has bit
  *   `1 << k`, as the runtime assigns it.
- * @returns The outcome, with the presence the fold took for every element whatever the outcome.
+ * @returns `skip` when an `all` member is absent, a non-empty `any` has no present member, or a
+ *   `none` member is required; `trivial` when all three masks are zero; otherwise `masked`. Each
+ *   carries the presence the fold took for every element.
  */
 export function foldFilter(filter: LiteralFilter, shape: ArchShape): FoldedFilter {
   const bitsOf = (elements: readonly FilterElement[]): (number | undefined)[] =>
@@ -94,7 +94,8 @@ export function foldFilter(filter: LiteralFilter, shape: ArchShape): FoldedFilte
   const all = bitsOf(filter.all);
   const any = bitsOf(filter.any);
   const none = bitsOf(filter.none);
-  const present = [...all, ...any, ...none].map((bit) => bit !== undefined);
+  const bits = { all, any, none };
+  const present = FILTER_AXES.flatMap((axis) => bits[axis]).map((bit) => bit !== undefined);
 
   const anySatisfied = any.includes(0);
   const anyPossible = any.length === 0 || any.some((bit) => bit !== undefined);

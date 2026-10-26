@@ -30,8 +30,10 @@ import {
   type FilterForm,
 } from "../facts.js";
 import type { NodeTable } from "../nodes.js";
-import { isAnyOrUnknown, isNullishOrVoid, typeId } from "./checker-fields.js";
-import { componentName, consultedType, consultTypeDeclarations, resolvedAll } from "./shape.js";
+import { isAnyOrUnknown, typeId } from "./checker-fields.js";
+import { componentName, consultedType, consultTypeDeclarations } from "./consulted.js";
+import type { PackageRoots } from "./roots.js";
+import { resolvedAll } from "./shape.js";
 import { isPrimitiveType } from "./type-reads.js";
 
 /** An `each` call's filter argument, read, its nodes not yet registered. */
@@ -67,24 +69,28 @@ type MemberForm = "array" | "object" | "unsupported";
  * @param checker - Checker of the program holding `filter`.
  * @param table - The file's node table, which the filter's nodes join on registration.
  * @param filter - The call's filter argument.
+ * @param roots - The package roots, whose runtime files the reading consults but does not follow.
  * @returns The reading, with the declaration files it consulted.
- * @throws When a consulted declaration's source file is no longer available.
+ * @throws When a consulted declaration's source file is no longer available, or the compiler process
+ *   has exited.
  */
 export async function readFilter(
   checker: Checker,
   table: NodeTable,
   filter: Expression,
+  roots: PackageRoots,
 ): Promise<FilterReading> {
   const files = new Set<string>();
   const elements = literalElements(filter);
-  const named = elements === undefined ? undefined : await namedElements(checker, elements, files);
+  const named =
+    elements === undefined ? undefined : await namedElements(checker, elements, files, roots);
   let register: () => Filter;
   if (named !== undefined) {
     register = () => registerLiteral(table, named);
   } else {
     const form =
       syntacticForm(filter) ??
-      (await filterForm(checker, await consultedType(checker, filter, files), files));
+      (await filterForm(checker, await consultedType(checker, filter, files, roots), files));
     register = () => ({ kind: "non-literal", node: table.register(filter), form });
   }
   return { declarationFiles: [...files].toSorted(), register };
@@ -163,18 +169,21 @@ function axisElements(
  * @param checker - Checker of the program holding the elements.
  * @param elements - The literal filter's elements.
  * @param files - The consulted declaration files, which every element's join.
+ * @param roots - The package roots, which locate the ecstatic runtime.
  * @returns The elements in the same order, each with its name, or undefined when any element's
  *   type does not pin one.
- * @throws When a consulted declaration's source file is no longer available.
+ * @throws When a consulted declaration's source file is no longer available, or the compiler process
+ *   has exited.
  */
 async function namedElements(
   checker: Checker,
   elements: readonly LiteralElement[],
   files: Set<string>,
+  roots: PackageRoots,
 ): Promise<NamedElement[] | undefined> {
   const named = await Promise.all(
     elements.map(async (element) => {
-      const type = await consultedType(checker, element.node, files);
+      const type = await consultedType(checker, element.node, files, roots);
       const name = await componentName(checker, type, files);
       return name === undefined ? undefined : { ...element, name };
     }),
@@ -204,7 +213,8 @@ function registerLiteral(table: NodeTable, elements: readonly NamedElement[]): F
  * @param type - The filter's static type.
  * @param files - The consulted declaration files, which those of the type's members join.
  * @returns The form.
- * @throws When a consulted declaration's source file is no longer available.
+ * @throws When a consulted declaration's source file is no longer available, or the compiler process
+ *   has exited.
  */
 async function filterForm(checker: Checker, type: Type, files: Set<string>): Promise<FilterForm> {
   const forms = new Set(await memberForms(checker, type, files));
@@ -222,7 +232,8 @@ async function filterForm(checker: Checker, type: Type, files: Set<string>): Pro
  * @returns One form per member, and both `"array"` and `"object"` for a member that is not
  *   array-like but that an array is assignable to, such as `object`: `each` tells the two apart
  *   at runtime.
- * @throws When a consulted declaration's source file is no longer available.
+ * @throws When a consulted declaration's source file is no longer available, or the compiler process
+ *   has exited.
  */
 async function memberForms(
   checker: Checker,
@@ -237,7 +248,7 @@ async function memberForms(
     );
     return forms.flat();
   }
-  if (isNullishOrVoid(type) || (await isPrimitiveType(type))) return ["unsupported"];
+  if (await isPrimitiveType(type)) return ["unsupported"];
   const apparent = await apparentType(checker, type);
   if (typeId(apparent) !== typeId(type)) return await memberForms(checker, apparent, files);
   const [, callable, arrayLike] = await Promise.all([

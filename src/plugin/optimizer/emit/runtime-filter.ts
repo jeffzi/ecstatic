@@ -22,7 +22,6 @@ import {
   createForStatement,
   createIdentifier,
   createIfStatement,
-  createKeywordExpression,
   createPostfixUnaryExpression,
   createPrefixUnaryExpression,
   createSpreadElement,
@@ -212,7 +211,7 @@ export class RuntimeFilterPass implements RowFilter {
         string("object"),
       ),
       SyntaxKind.BarBarToken,
-      same(id(this.#filter), createKeywordExpression(SyntaxKind.NullKeyword)),
+      same(id(this.#filter), keyword(SyntaxKind.NullKeyword)),
     );
     const thrown = namespaceCall(this.#parts.namespace, "throwInvalidEachArguments", []);
     return [
@@ -303,36 +302,52 @@ export class RuntimeFilterPass implements RowFilter {
   }
 
   /**
-   * The branch between the two loops: the unfiltered one when the matcher's three masks are 0, as
-   * `eachStorageMatched` treats the trivial matcher, the filtered one otherwise.
+   * The branch between the unfiltered and the filtered row loop, which hoists the filtered loop's
+   * statements into the branch.
+   *
+   * @param row - The name of the row index.
+   * @param rowLoop - Builds a row loop from the test a row must pass, or from `undefined` to visit
+   *   every row.
+   * @returns The branch, taking the unfiltered loop when the matcher's three masks are 0, as
+   *   `eachStorageMatched` treats the trivial matcher, and the filtered loop otherwise.
+   * @throws Error when {@link RuntimeFilterPass.matcher} has not run.
+   */
+  loops(row: string, rowLoop: (rowTest: Expression | undefined) => Statement): Statement[] {
+    const unfiltered = rowLoop(undefined);
+    const filtered = [...this.hoists(), rowLoop(this.rowTest(row))];
+    return [this.#branch(unfiltered, filtered)];
+  }
+
+  /**
+   * The counted statements, run when the filter resolved to a matcher, as the runtime returns before
+   * reading the row count when the resolution is `false`.
+   *
+   * @param counted - The row count read and the loops.
+   * @returns `if (matcher !== false) { counted }`.
+   * @throws Error when {@link RuntimeFilterPass.matcher} has not run.
+   */
+  gated(counted: Statement[]): Statement[] {
+    const resolved = binary(
+      id(this.#requireMatcher()),
+      SyntaxKind.ExclamationEqualsEqualsToken,
+      keyword(SyntaxKind.FalseKeyword),
+    );
+    return [createIfStatement(resolved, createBlock(counted, true))];
+  }
+
+  /**
+   * The branch between the two loops.
    *
    * @param unfiltered - The loop visiting every row.
    * @param filtered - The statements of the loop visiting the rows the matcher flags.
    * @returns `if (<masks are 0>) { unfiltered } else { filtered }`.
    * @throws Error when {@link RuntimeFilterPass.matcher} has not run.
    */
-  branch(unfiltered: Statement, filtered: Statement[]): Statement {
+  #branch(unfiltered: Statement, filtered: Statement[]): Statement {
     const matcher = this.#requireMatcher();
     const zero = (mask: string): Expression => same(member(id(matcher), mask), numeric("0"));
     const trivial = every(zero("allMask"), zero("anyMask"), zero("noneMask"));
     return createIfStatement(trivial, createBlock([unfiltered], true), createBlock(filtered, true));
-  }
-
-  /**
-   * The statements run when the filter resolved to a matcher, as the runtime returns before reading
-   * the row count when the resolution is `false`.
-   *
-   * @param statements - The row count read and the loops.
-   * @returns `if (matcher !== false) { statements }`.
-   * @throws Error when {@link RuntimeFilterPass.matcher} has not run.
-   */
-  whenResolved(statements: Statement[]): Statement {
-    const resolved = binary(
-      id(this.#requireMatcher()),
-      SyntaxKind.ExclamationEqualsEqualsToken,
-      keyword(SyntaxKind.FalseKeyword),
-    );
-    return createIfStatement(resolved, createBlock(statements, true));
   }
 
   /**
@@ -387,7 +402,7 @@ export class RuntimeFilterPass implements RowFilter {
     const present = binary(
       id(axis.local),
       SyntaxKind.ExclamationEqualsToken,
-      createKeywordExpression(SyntaxKind.NullKeyword),
+      keyword(SyntaxKind.NullKeyword),
     );
     const test = axis.resolved === undefined ? id(hit) : every(id(hit), present);
     const length = (array: string): Expression => member(id(array), "length");
@@ -406,15 +421,16 @@ export class RuntimeFilterPass implements RowFilter {
   }
 
   /**
-   * The statements of a miss: each axis defaulted to an empty array when absent, its resolution
-   * through `resolveFilterMasks`, and the snapshot's refresh. The snapshot is written only once the
-   * resolution returned, so a throw leaves it as it was.
+   * Resolves the axes on a snapshot miss and refreshes the snapshot. The snapshot is written only
+   * once the resolution returned, so a throw leaves it as it was.
    *
    * @param storage - The name of the loop's storage local.
    * @param axes - The axes the filter's form reads.
    * @param own - The axes the snapshot keeps apart from the filter's identity.
    * @param slot - A member of the call site's slot.
-   * @returns The statements.
+   * @returns The statements defaulting each absent axis to an empty array, resolving the axes
+   *   through `resolveFilterMasks`, and refreshing the snapshot.
+   * @throws Error when {@link RuntimeFilterPass.matcher} has not run.
    */
   #miss(
     storage: string,

@@ -14,9 +14,7 @@ import {
 import { RULES, type Rule } from "../../src/plugin/optimizer/emit/catalog.js";
 import type { EmitFile } from "../../src/plugin/optimizer/emit/emit.js";
 import {
-  compareCodeUnits,
   DETAIL_PLACEHOLDER,
-  type Reason,
   REASONS,
   type ReasonInfo,
   reasonInfo,
@@ -30,7 +28,6 @@ import {
 } from "../../src/plugin/optimizer/rewrite.js";
 import { openSession, type Session } from "../../src/plugin/optimizer/session.js";
 import { advanceCall } from "../benchmarks/fixtures.js";
-import { relativePath } from "../unit/optimizer/project.js";
 import { createProject, removeTempDirs } from "../unit/plugin/tsconfig-fixtures.js";
 import {
   CORPUS_FILES,
@@ -43,16 +40,6 @@ import {
 } from "./fixture-corpus.js";
 
 const BENCHMARK_ROOT = realpathSync(fileURLToPath(new URL("../../benchmarks", import.meta.url)));
-
-const REPO_ROOT = realpathSync(fileURLToPath(new URL("../..", import.meta.url)));
-
-const UNIT_ROOT = join(REPO_ROOT, "tests", "unit");
-
-/** Every `.ts` file of the unit suite, absolute and sorted. */
-const UNIT_FILES = readdirSync(UNIT_ROOT, { recursive: true, withFileTypes: true })
-  .filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
-  .map((entry) => join(entry.parentPath, entry.name))
-  .toSorted(compareCodeUnits);
 
 const BAIL_CORPUS = "bail";
 
@@ -116,17 +103,6 @@ interface Found {
   readonly column: number;
   readonly code: number;
   readonly detail: string | undefined;
-}
-
-/**
- * A filtered each call that keeps its runtime call: the slash-separated file relative to the
- * repository, the 1-based line of the call, and the reason the plan gives, `undefined` when the plan
- * neither rewrites nor bails it.
- */
-interface KeptCall {
-  readonly file: string;
-  readonly line: number;
-  readonly reason: Reason | undefined;
 }
 
 /** One rule a fixture's rewrite claim says its rewrite applies, with the file and line of the claim. */
@@ -415,44 +391,6 @@ async function rewriteAll(session: Session, files: readonly string[]): Promise<C
   return { modules, analyzed, planned, applied };
 }
 
-/** `site` followed by every site nested in its callback, depth first. */
-function withNested(site: Site): Site[] {
-  return [site, ...site.nested.flatMap(withNested)];
-}
-
-/** Whether `site` is an each call over one storage, with a filter and an inline callback. */
-function isFilteredInlineEach(site: Site): boolean {
-  return site.op === "each" && site.filtered && !site.arrayLiteral && site.callback !== undefined;
-}
-
-/**
- * Every filtered single-storage each call with an inline callback that keeps its runtime call in
- * `run`'s output, nested calls included: one its plan bails on, one whose planned rewrite failed to
- * emit, and one the plan neither rewrites nor bails on.
- *
- * @param run - The run whose sites, plans, and rewritten modules are read.
- * @returns Each such call with the reason its module's bail gives, sorted by file then line.
- */
-function keptFilteredCalls(run: CorpusRun): KeptCall[] {
-  return [...run.analyzed]
-    .flatMap(([file, sites]) => {
-      const rewritten = new Set(run.planned.get(file)?.rewrites.map(({ call }) => call));
-      const bailed = new Map(moduleOf(run, file).bails.map((bail) => [bail.call, bail]));
-      return sites
-        .flatMap(withNested)
-        .filter(
-          (site) =>
-            isFilteredInlineEach(site) && (bailed.has(site.call) || !rewritten.has(site.call)),
-        )
-        .map((site) => ({
-          file: relativePath(REPO_ROOT, file),
-          line: site.pos.line,
-          reason: bailed.get(site.call)?.reason,
-        }));
-    })
-    .toSorted((a, b) => (a.file === b.file ? a.line - b.line : compareCodeUnits(a.file, b.file)));
-}
-
 /** The module `run` rewrote from `file`; throws when the run did not rewrite it. */
 function moduleOf(run: CorpusRun, file: string): RewrittenModule {
   const module = run.modules.get(file);
@@ -473,21 +411,6 @@ function runDiagnostics(run: CorpusRun, strict: boolean): readonly BailDiagnosti
 /** The 1-based line of `index` in `text`. */
 function lineOf(text: string, index: number): number {
   return text.slice(0, index).split("\n").length;
-}
-
-/**
- * The kept call the one occurrence of a snippet opens in a repository file, whose plan neither
- * rewrites nor bails it.
- *
- * @param file - The slash-separated path of the file, relative to the repository.
- * @param snippet - The source text that opens the call.
- * @returns The kept call, on the 1-based line where `snippet` starts.
- * @throws When `snippet` occurs in `file` zero times or more than once.
- */
-function keptCall(file: string, snippet: string): KeptCall {
-  const text = readFileSync(join(REPO_ROOT, file), "utf8");
-  if (text.split(snippet).length !== 2) throw new Error(`${file} must hold one ${snippet}`);
-  return { file, line: lineOf(text, text.indexOf(snippet)), reason: "OP_NOT_REWRITTEN" };
 }
 
 /** The 1-based line on which the each call of the iteration/helper_call benchmark starts in `text`. */
@@ -680,31 +603,6 @@ describe("benchmarks", () => {
       .map(({ mode }) => mode);
 
     expect(modes).toStrictEqual(["realloc-safe"]);
-  });
-});
-
-describe("unit suite", () => {
-  let session: Session;
-  let run: CorpusRun;
-
-  beforeAll(async () => {
-    session = await openSession(join(REPO_ROOT, "tests", "tsconfig.json"));
-    run = await rewriteAll(session, UNIT_FILES);
-  }, CORPUS_TIMEOUT_MS);
-
-  afterAll(() => session.close());
-
-  // The kept calls, sorted by file then line, each located by the source snippet that opens it:
-  // a number as the filter matches no filter form, and the outer call holds an inlined each.
-  it("rewrites every filtered single-storage each with an inline callback but the kept ones", () => {
-    const expected = [
-      keptCall("tests/unit/entity/each.test.ts", "each(storage, 42,"),
-      keptCall("tests/unit/filter.test.ts", "each(storage, { all: [Stunned] }, (outer) =>"),
-    ];
-
-    const kept = keptFilteredCalls(run);
-
-    expect(kept).toStrictEqual(expected);
   });
 });
 

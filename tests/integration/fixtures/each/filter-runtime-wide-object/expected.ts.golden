@@ -9,11 +9,10 @@ const Bolt = component("LatchBolt");
 const Latch = archetype([Spot], [Bolt]);
 
 /**
- * Records the rows one call site visits for a filter typed `object`, which a component array satisfies
- * as well as a filter object.
+ * Records the rows one call site visits.
  *
  * @param storage - The storage of the scenario, iterated through one call site.
- * @param filter - A component array or a filter object.
+ * @param filter - Typed `object`, which a component array satisfies as well as a filter object.
  * @returns The `x` of each visited row, in visit order.
  */
 function visit(storage: Storage<typeof Latch>, filter: object): number[] {

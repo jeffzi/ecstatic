@@ -62,7 +62,7 @@ function nothingToCheck(label: string): string {
 }
 
 /** The problem reported when no module holds a shape guard, so that the check cannot pass vacuously. */
-export const NO_GUARDS = nothingToCheck(SHAPE_LABEL);
+export const NO_SHAPE_GUARDS = nothingToCheck(SHAPE_LABEL);
 
 /** The problem reported when no module holds a filter-element guard, so that the check cannot pass vacuously. */
 export const NO_FILTER_GUARDS = nothingToCheck(FILTER_LABEL);
@@ -278,7 +278,12 @@ function internalImports(file: SourceFile): GuardImports {
   return { namespaces, functions };
 }
 
-/** Adds to `names` every local name `imports` gives a guard as a value, with the guard it calls. */
+/**
+ * Collects the local names a named import gives a guard as a value.
+ *
+ * @param imports - The named imports of an import of {@link INTERNAL_ENTRY}.
+ * @param names - Receives each local name with the guard it calls.
+ */
 function guardFunctionNames(imports: NamedImports, names: Map<string, GuardKind>): void {
   for (const specifier of imports.elements) {
     const kind = GUARD_KINDS.get((specifier.propertyName ?? specifier.name).text);
@@ -330,7 +335,13 @@ function gateOf(expression: Expression, scope: Scope | undefined): Gate {
   return { expression, bound: [...names].filter((name) => binds(scope, name)) };
 }
 
-/** The guard `node` calls through one of `imports`, or `undefined` when it calls none. */
+/**
+ * Finds the guard a node calls through the file's guard imports.
+ *
+ * @param node - The node to inspect.
+ * @param imports - The local names through which the file calls guards.
+ * @returns The guard called, or `undefined` when `node` calls none.
+ */
 function calledGuard(node: Node, imports: GuardImports): GuardKind | undefined {
   if (!isCallExpression(node)) return undefined;
   const callee = node.expression;
@@ -340,7 +351,14 @@ function calledGuard(node: Node, imports: GuardImports): GuardKind | undefined {
     : undefined;
 }
 
-/** Appends to `walk.found` every guard in `node`, which runs in `scope` once every gate of `gates` is true. */
+/**
+ * Collects every guard in a node and its descendants.
+ *
+ * @param node - The node to walk.
+ * @param walk - The imports to read; its `found` receives the guards.
+ * @param scope - The scope `node` runs in.
+ * @param gates - The gates that must all be true for `node` to run.
+ */
 function collectGuards(
   node: Node,
   walk: GuardWalk,
@@ -423,7 +441,15 @@ function sameTree(a: Node, b: Node): boolean {
   );
 }
 
-/** The guards `file`, the output named `name`, holds, and every problem with them. */
+/**
+ * Finds the guards a rewritten module holds and every problem with them.
+ *
+ * @param name - The output's name, used in problem locations.
+ * @param file - The parsed module.
+ * @param runtime - The initializer of `DEBUG` in `src/ecstatic/debug.ts`.
+ * @returns The `guards` the module holds and the `problems` with them, each prefixed by the
+ *   output's name and line.
+ */
 function fileProblems(
   name: string,
   file: SourceFile,
@@ -448,8 +474,8 @@ function fileProblems(
  * @param outputs - Rewritten modules keyed by slash-separated path from the repository root; those
  *   under `src/` are left out.
  * @param runtime - The initializer of `DEBUG` in `src/ecstatic/debug.ts`.
- * @returns The problems in file name order, then {@link NO_GUARDS} when no module left in holds a
- *   shape guard, and {@link NO_FILTER_GUARDS} when none holds a filter-element guard.
+ * @returns The problems in file name order, then {@link NO_SHAPE_GUARDS} when no module left in
+ *   holds a shape guard, and {@link NO_FILTER_GUARDS} when none holds a filter-element guard.
  */
 export function unstrippedProblems(
   outputs: ReadonlyMap<string, SourceFile>,

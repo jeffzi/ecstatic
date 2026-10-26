@@ -284,44 +284,6 @@ function rowsFromLast(
   );
 }
 
-/**
- * The row loops of a filtered or unfiltered call: one, or the branch between two at runtime.
- *
- * @param filter - The call's filter, or `undefined` for an unfiltered call.
- * @param row - The name of the row index.
- * @param rowLoop - Builds a row loop from the test a row must pass, or from `undefined` to visit
- *   every row.
- * @returns The filter's hoisted statements and its loop, or the branch between the unfiltered and
- *   filtered loops for a filter resolved at runtime.
- * @throws Error when the filter is resolved at runtime and its matcher has not been built.
- */
-function filterLoops(
-  filter: RowFilter | undefined,
-  row: string,
-  rowLoop: (rowTest: Expression | undefined) => Statement,
-): Statement[] {
-  if (filter instanceof RuntimeFilterPass) {
-    const unfiltered = rowLoop(undefined);
-    const filtered = [...filter.hoists(), rowLoop(filter.rowTest(row))];
-    return [filter.branch(unfiltered, filtered)];
-  }
-  const filterHoists = filter?.hoists() ?? [];
-  return [...filterHoists, rowLoop(filter?.rowTest(row))];
-}
-
-/**
- * The counted statements, gated on the resolution for a filter resolved at runtime.
- *
- * @param filter - The call's filter, or `undefined` for an unfiltered call.
- * @param counted - The row count read and the loops.
- * @returns `counted`, under `if (matcher !== false)` for a filter resolved at runtime.
- * @throws Error when the filter is resolved at runtime and its matcher has not been built.
- */
-function resolvedOrAlways(filter: RowFilter | undefined, counted: Statement[]): Statement[] {
-  if (filter instanceof RuntimeFilterPass) return [filter.whenResolved(counted)];
-  return counted;
-}
-
 /** Builds the block that replaces one `each` call. */
 class Loop {
   readonly #table: NodeTable;
@@ -349,21 +311,22 @@ class Loop {
   }
 
   /**
-   * The block replacing `call`, which mirrors `eachStorage` and `eachStorageMatched`
-   * (`src/ecstatic/entity/each.ts`): the storage is evaluated once, then a literal filter's
-   * elements in source order, before the guards; a filter that folds to a matcher reads it before
-   * the row count is read once; and rows run from the last to the first, each visited when the
-   * matcher flags it when the loop reaches it. A filter that folds to a skip leaves no loop. A
-   * filter resolved at runtime is evaluated once into a temp and checked as the runtime checks its
-   * arguments, then resolved through the slot on every call; the block then runs the unfiltered or
-   * the filtered row loop, as the resolution says.
+   * Builds the block replacing `call`, mirroring `eachStorage` and `eachStorageMatched`
+   * (`src/ecstatic/entity/each.ts`).
+   *
+   * The storage is evaluated once, then a literal filter's elements in source order, before the
+   * guards. A filter resolved at runtime is evaluated once into a temp and checked as the runtime
+   * checks its arguments, then resolved through the slot on every call.
    *
    * @param call - The inlined call.
    * @param uses - The view uses of its callback.
-   * @returns The block.
+   * @returns The block. A filter that folds to a matcher reads it before the row count is read once,
+   *   and rows run from the last to the first, each visited when the matcher flags it when the loop
+   *   reaches it. A filter that folds to a skip leaves no loop. A filter resolved at runtime runs
+   *   the unfiltered or the filtered row loop, as the resolution says.
    * @throws Error when the call has no storage or no inline callback, or a use, return, spawn
    *   target, filter element, or filter resolved at runtime is not in the node table or has no
-   *   lowering.
+   *   lowering, or a filter resolved at runtime has its matcher read before it is resolved.
    */
   build(call: CallExpression, uses: readonly ViewUse[]): Block {
     const [storageArgument] = call.arguments;
@@ -385,14 +348,15 @@ class Loop {
   }
 
   /**
-   * The statements after a loop's guards: a filter's matcher, then the row count, read once, and
-   * the row loop when it is positive. A filter resolved at runtime runs them only when it resolves
-   * to a matcher, and holds two row loops, each with its own copy of the body: one visiting every
-   * row, taken for a matcher whose masks are 0, and one visiting the rows the matcher flags.
+   * Builds the matcher resolution, the row count, and the row loops that follow a loop's guards.
    *
    * @param pass - The call, its callback and view uses, the storage local, and the filter pass.
-   * @returns The statements.
-   * @throws Error when a use, return, or spawn target is not in the node table or has no lowering.
+   * @returns A filter's matcher statements, then the row count, read once, and the row loop when it
+   *   is positive. A filter resolved at runtime runs the count and the loops only when it resolves
+   *   to a matcher, and holds two row loops, each with its own copy of the body: one visiting every
+   *   row, taken for a matcher whose masks are 0, and one visiting the rows the matcher flags.
+   * @throws Error when a use, return, or spawn target is not in the node table or has no lowering,
+   *   or a filter resolved at runtime has its matcher read before it is resolved.
    */
   #rowPass(pass: RowPass): Statement[] {
     const { call, callback, uses, storage, filter } = pass;
@@ -423,7 +387,7 @@ class Loop {
     const rewrites = { lowering, transplant, spawnTargets: this.#spawnTargets() };
     const rowLoop = (rowTest: Expression | undefined): Statement =>
       transplant.labeled(rowsFromLast(n, i, this.#rowBody(callback, rewrites), rowTest));
-    const loops = filterLoops(filter, i, rowLoop);
+    const loops = filter?.loops(i, rowLoop) ?? [rowLoop(undefined)];
     transplant.noteOuterReferences(call, callback, [
       ...Object.values(LOOP_LOCALS),
       ...(filter?.locals ?? []),
@@ -436,7 +400,7 @@ class Loop {
         createBlock([...lowering.hoists(), ...loops], true),
       ),
     ];
-    return [...matcher, ...resolvedOrAlways(filter, counted)];
+    return [...matcher, ...(filter?.gated(counted) ?? counted)];
   }
 
   /**
@@ -458,7 +422,7 @@ class Loop {
       applied: this.#applied,
       namespace,
     };
-    if ("form" in filter) return new RuntimeFilterPass({ ...parts, filter });
+    if (filter.kind === "runtime") return new RuntimeFilterPass({ ...parts, filter });
     return new FilterPass({ ...parts, filter, debug });
   }
 

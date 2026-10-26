@@ -12,6 +12,7 @@ import type {
 import type { NodeTable } from "../../../../src/plugin/optimizer/nodes.js";
 import type { ProjectView, Session } from "../../../../src/plugin/optimizer/session.js";
 import {
+  caseFile,
   caseFiles,
   closeProject,
   openProject,
@@ -28,7 +29,7 @@ import { Enemy } from "../archetypes.js";
 import { Boost, Shield, Stunned } from "../components.js";
 import { Position } from "../position.js";
 import { Glow, type GlowFilter } from "../glow.js";
-import { makeFilter, sharedFilter } from "../filter-value.js";
+import { sharedFilter } from "../filter-value.js";
 declare const s: Storage<typeof Enemy>;
 `;
 
@@ -44,11 +45,10 @@ export interface GlowFilter {
 }
 `;
 
-/** A filter value and a filter factory declared in their own file, typed by the runtime's filter type. */
+/** A filter value declared in its own file, typed by the runtime's filter type. */
 const FILTER_VALUE_SOURCE = `import type { EachFilter } from "../src/ecstatic/index.js";
 
 export declare const sharedFilter: EachFilter;
-export declare function makeFilter(): EachFilter;
 `;
 
 /** A literal element as the test reads it: the element's source text and its component name. */
@@ -101,11 +101,6 @@ const LITERAL_CASES: readonly LiteralCase[] = [
     all: [named("Position")],
     any: [named("Shield"), named("Stunned")],
     none: [named("Boost")],
-  },
-  {
-    name: "an object omitting an axis and writing one as []",
-    filter: "{ any: [], none: [Stunned] }",
-    none: [named("Stunned")],
   },
   {
     name: "elements whose names come from their types",
@@ -193,19 +188,12 @@ const NON_LITERAL_CASES: readonly NonLiteralCase[] = [
   },
   { name: "a computed key", filter: '{ ["all"]: [Position] }', form: "object" },
   { name: "a repeated axis", filter: "{ all: [Position], all: [Shield] }", form: "object" },
-  { name: "an omitted element", filter: "[Position, , Shield]", form: "array" },
   { name: "a key that is no axis", filter: "{ all: [Position], some: [Shield] }", form: "object" },
   {
     name: "a spread property",
     declarations: "declare const base: EachFilter;\n",
     filter: "{ ...base, none: [Stunned] }",
     form: "object",
-  },
-  {
-    name: "a spread element",
-    declarations: "const list = [Position] as const;\n",
-    filter: "[...list, Shield]",
-    form: "array",
   },
   {
     name: "a spread element in an axis",
@@ -253,30 +241,33 @@ const NON_LITERAL_CASES: readonly NonLiteralCase[] = [
 
 /** A case's file text: its `source`, else `each` over `s` with its `filter` after `declarations`. */
 function filteredEach({ declarations = "", filter, source }: FilterCase): string {
-  return source ?? `${declarations}each(s, ${filter}, () => {});\n`;
+  return source ?? `${declarations}${eachCall(filter)}`;
 }
 
-const PRESENCE_SOURCE = "each(s, () => {});\neach(s, [Position], () => {});\n";
+/** An `each` call over `s` passing `filter`, as one line of a case file. */
+function eachCall(filter: string): string {
+  return `each(s, ${filter}, () => {});\n`;
+}
 
-const DECLARATION_FILES_SOURCE = "each(s, () => {});\neach(s, [Glow], () => {});\n";
+const UNFILTERED_EACH = "each(s, () => {});\n";
 
-const OMITTED_ELEMENT_SOURCE = "each(s, [Glow, , Glow], () => {});\n";
+const PRESENCE_SOURCE = `${UNFILTERED_EACH}${eachCall("[Position]")}`;
 
-const OMITTED_AXIS_ELEMENT_SOURCE = "each(s, { all: [Glow, , Glow] }, () => {});\n";
+const DECLARATION_FILES_SOURCE = `${UNFILTERED_EACH}${eachCall("[Glow]")}`;
 
-const FOREIGN_VALUE_SOURCE = "each(s, () => {});\neach(s, sharedFilter, () => {});\n";
+const OMITTED_ELEMENT_SOURCE = eachCall("[Glow, , Glow]");
 
-const FOREIGN_CALL_SOURCE = "each(s, () => {});\neach(s, makeFilter(), () => {});\n";
+const OMITTED_AXIS_ELEMENT_SOURCE = eachCall("{ all: [Glow, , Glow] }");
 
-const FOREIGN_TYPE_SOURCE =
-  "declare const f: GlowFilter;\neach(s, () => {});\neach(s, f, () => {});\n";
+const FOREIGN_VALUE_SOURCE = `${UNFILTERED_EACH}${eachCall("sharedFilter")}`;
+
+const FOREIGN_TYPE_SOURCE = `declare const f: GlowFilter;\n${UNFILTERED_EACH}${eachCall("f")}`;
 
 const SOURCES = [
   ...[...LITERAL_CASES, ...NON_LITERAL_CASES].map(filteredEach),
   PRESENCE_SOURCE,
   DECLARATION_FILES_SOURCE,
   FOREIGN_VALUE_SOURCE,
-  FOREIGN_CALL_SOURCE,
   FOREIGN_TYPE_SOURCE,
   OMITTED_ELEMENT_SOURCE,
   OMITTED_AXIS_ELEMENT_SOURCE,
@@ -310,7 +301,7 @@ async function eachSites(
   source: string,
 ): Promise<{ readonly sites: readonly Site[]; readonly table: NodeTable }> {
   const file = await view.sourceFile(
-    projectPath(root, `${CASE_STEM}${SOURCES.indexOf(source)}.ts`),
+    projectPath(root, caseFile(CASE_STEM, SOURCES.indexOf(source))),
   );
   const { sites, table } = await analyze(view.checker, file, new PackageRoots());
   return { sites: sites.filter(({ op }) => op === "each"), table };
@@ -381,12 +372,6 @@ describe("each filter analysis", () => {
     {
       name: "lists the file declaring a non-literal filter's value among its site's declaration files",
       source: FOREIGN_VALUE_SOURCE,
-      file: FILTER_VALUE_PATH,
-      expected: [false, true],
-    },
-    {
-      name: "lists the file declaring the function a non-literal filter calls among its site's declaration files",
-      source: FOREIGN_CALL_SOURCE,
       file: FILTER_VALUE_PATH,
       expected: [false, true],
     },

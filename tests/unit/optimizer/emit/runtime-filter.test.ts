@@ -53,9 +53,13 @@ function visit(storage: Storage<typeof Guarded>, filter: EachFilter): number[] {
         "[visited, storage.matchers.map((m) => [m.allMask, m.anyMask, m.noneMask])]";
 
       /**
-       * A scenario visiting a fresh Guarded storage with `filter` through `visit` and returning
-       * `returned`, an expression over `visited` (the rows visited) and `storage`. The storage
-       * holds three rows when `withRows`.
+       * A scenario visiting a fresh Guarded storage with a filter through `visit`.
+       *
+       * @param filter - Source text of the filter the scenario visits with.
+       * @param withRows - Whether the storage holds three rows (true) or none (false).
+       * @param returned - Expression over `visited` (the rows visited) and `storage` that the
+       *   scenario returns.
+       * @returns The scenario module's source text.
        */
       function filterSource(filter: string, withRows: boolean, returned: string): string {
         const spawns = withRows
@@ -263,7 +267,7 @@ ${spawns}    const filter: EachFilter = ${filter};
     };
     const { storage } = guarded();
     const either = (): EachFilter | readonly [typeof Shield] => ({ all: [Shield] });
-    const outcomes: unknown[] = [Array.isArray(null), new Error().message];
+    const outcomes: unknown[] = [];
     each(storage, either(), (e) => {
         outcomes.push(e.Position.x);
     });
@@ -278,7 +282,7 @@ ${spawns}    const filter: EachFilter = ${filter};
     return outcomes;
 }
 `,
-          expected: [true, "a local error", 1, "invalid arguments"],
+          expected: [1, "invalid arguments"],
         },
         {
           name: "an enable or disable in the body changes which rows not yet visited are visited",

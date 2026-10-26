@@ -2,6 +2,7 @@ import { type Expression, getTouchingPropertyName } from "typescript/ast";
 import { isCallExpression } from "typescript/ast/is";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { PackageRoots } from "../../../../src/plugin/optimizer/analysis/roots.js";
 import { resolveShapes } from "../../../../src/plugin/optimizer/analysis/shape.js";
 import type {
   ArchShape,
@@ -11,6 +12,7 @@ import type {
 } from "../../../../src/plugin/optimizer/facts.js";
 import type { ProjectView, Session } from "../../../../src/plugin/optimizer/session.js";
 import {
+  caseFile,
   caseFiles,
   closeProject,
   openProject,
@@ -21,10 +23,37 @@ import {
   SPAWN_TIMEOUT_MS,
 } from "../project.js";
 
-const STORAGES_SOURCE = `import { createWorld, register } from "../src/ecstatic/index.js";
+const STORAGES_SOURCE = `import { createWorld, register, type Storage } from "../src/ecstatic/index.js";
 import { Enemy } from "./archetypes.js";
 
 export const enemies = register(createWorld(), Enemy);
+
+export function enemiesOf(): Storage<typeof Enemy> {
+  return enemies;
+}
+`;
+
+/** Storages typed by annotations naming an archetype declared in another file. */
+const FLEET_SOURCE = `import { createWorld, register, type Storage } from "../src/ecstatic/index.js";
+import { Enemy } from "./archetypes.js";
+
+export const fleet: Storage<typeof Enemy>[] = [register(createWorld(), Enemy)];
+export const flagship: Storage<typeof Enemy> = register(createWorld(), Enemy);
+`;
+
+/** A factory whose return type is inferred from its body. */
+const FACTORY_SOURCE = `import { createWorld, register } from "../src/ecstatic/index.js";
+import { Enemy } from "./archetypes.js";
+
+export function makeEnemies() {
+  return register(createWorld(), Enemy);
+}
+`;
+
+/** A storage whose type is inferred from a call to the factory another file declares. */
+const INFERRED_SOURCE = `import { makeEnemies } from "./factory.js";
+
+export const madeEnemies = makeEnemies();
 `;
 
 /** Opens every case file: the runtime API and the shared archetypes and components. */
@@ -150,6 +179,83 @@ each(ships, () => {});
     consulted: ["app/storages.ts"],
     source: `import { enemies } from "../storages.js";
 each(enemies, () => {});
+`,
+  },
+  {
+    name: "a call to a function declared in another module",
+    want: [ENEMY],
+    consulted: ["app/storages.ts"],
+    source: `import { enemiesOf } from "../storages.js";
+each(enemiesOf(), () => {});
+`,
+  },
+  {
+    name: "a storage whose inferred type comes from a third module",
+    want: [ENEMY],
+    consulted: ["app/inferred.ts", "app/factory.ts"],
+    source: `import { madeEnemies } from "../inferred.js";
+each(madeEnemies, () => {});
+`,
+  },
+  {
+    name: "a for-of variable over storages imported from another module",
+    want: [ENEMY],
+    consulted: ["app/fleet.ts", "app/archetypes.ts"],
+    source: `import { fleet } from "../fleet.js";
+for (const s of fleet) each(s, () => {});
+`,
+  },
+  {
+    name: "an unannotated callback parameter typed by its call",
+    want: [ENEMY],
+    consulted: ["app/fleet.ts"],
+    source: `import { fleet } from "../fleet.js";
+fleet.forEach((s) => {
+	each(s, () => {});
+});
+`,
+  },
+  {
+    name: "a class field initialized from another module",
+    want: [ENEMY],
+    consulted: ["app/fleet.ts"],
+    source: `import { flagship } from "../fleet.js";
+export class Game {
+	readonly ships = flagship;
+	run(): void {
+		each(this.ships, () => {});
+	}
+}
+`,
+  },
+  {
+    name: "a getter returning a storage from another module",
+    want: [ENEMY],
+    consulted: ["app/fleet.ts"],
+    source: `import { flagship } from "../fleet.js";
+export class Game {
+	get ships() {
+		return flagship;
+	}
+	run(): void {
+		each(this.ships, () => {});
+	}
+}
+`,
+  },
+  {
+    name: "a method returning a storage from another module",
+    want: [ENEMY],
+    consulted: ["app/fleet.ts"],
+    source: `import { flagship } from "../fleet.js";
+export class Game {
+	ships() {
+		return flagship;
+	}
+	run(): void {
+		each(this.ships(), () => {});
+	}
+}
 `,
   },
   {
@@ -407,6 +513,8 @@ const SOURCES = [...RESOLVED_CASES, ...UNRESOLVED_CASES, ...DECLARATION_FILE_CAS
 
 const CASE_STEM = "app/case/case";
 
+const ROOTS = new PackageRoots();
+
 let root = "";
 let session: Session;
 let view: ProjectView;
@@ -416,6 +524,9 @@ beforeAll(async () => {
     runtimeProject({
       ...SHARED_ARCHETYPE_FILES,
       "app/storages.ts": STORAGES_SOURCE,
+      "app/fleet.ts": FLEET_SOURCE,
+      "app/factory.ts": FACTORY_SOURCE,
+      "app/inferred.ts": INFERRED_SOURCE,
       ...caseFiles(CASE_STEM, SOURCES, CASE_PRELUDE),
     }),
   ));
@@ -439,14 +550,14 @@ async function eachStorages(projectView: ProjectView, path: string): Promise<Exp
 
 /** The storages argument of the `each` call in the case file holding `source`. */
 function storagesIn(source: string): Promise<Expression> {
-  return eachStorages(view, projectFile(`${CASE_STEM}${SOURCES.indexOf(source)}.ts`));
+  return eachStorages(view, projectFile(caseFile(CASE_STEM, SOURCES.indexOf(source))));
 }
 
 describe("resolveShapes", () => {
   it.each(RESOLVED_CASES)("resolves $name", async ({ source, want, consulted = [] }) => {
     const storages = await storagesIn(source);
 
-    const resolved = await resolveShapes(view.checker, storages);
+    const resolved = await resolveShapes(view.checker, storages, ROOTS);
 
     expect({ shapes: resolved.shapes, reason: resolved.reason }).toStrictEqual({
       shapes: want,
@@ -460,7 +571,7 @@ describe("resolveShapes", () => {
   it.each(UNRESOLVED_CASES)("records $reason for $name", async ({ source, reason }) => {
     const storages = await storagesIn(source);
 
-    const resolved = await resolveShapes(view.checker, storages);
+    const resolved = await resolveShapes(view.checker, storages, ROOTS);
 
     expect({ shapes: resolved.shapes, reason: resolved.reason }).toStrictEqual({
       shapes: [],
@@ -473,7 +584,7 @@ describe("resolveShapes", () => {
     async ({ source }) => {
       const storages = await storagesIn(source);
 
-      const resolved = await resolveShapes(view.checker, storages);
+      const resolved = await resolveShapes(view.checker, storages, ROOTS);
 
       expect(new Set(resolved.declarationFiles)).toStrictEqual(
         new Set(SHIP_DECLARATION_FILES.map(projectFile)),
@@ -610,7 +721,7 @@ describe.each([{ strictNullChecks: true }, { strictNullChecks: false }])(
     ])("resolves ref fields declared through $origin as plain columns", async ({ file }) => {
       const storages = await eachStorages(refView, projectPath(refRoot, file));
 
-      const resolved = await resolveShapes(refView.checker, storages);
+      const resolved = await resolveShapes(refView.checker, storages, ROOTS);
 
       expect({ shapes: resolved.shapes, reason: resolved.reason }).toStrictEqual({
         shapes: [REF_FIELDS_SHAPE],

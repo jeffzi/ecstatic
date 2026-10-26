@@ -266,7 +266,8 @@ export class CallbackProject {
       throw new Error(`${file.fileName} holds no loop call with an inline callback`);
     }
     const view = this.#opened();
-    const { shapes } = op === "each" ? await resolveShapes(view.checker, storages) : { shapes: [] };
+    const { shapes } =
+      op === "each" ? await resolveShapes(view.checker, storages, this.#roots) : { shapes: [] };
     const table = new NodeTable();
     const site: Site = {
       callback: undefined,
@@ -279,7 +280,6 @@ export class CallbackProject {
       call: table.register(call),
       op,
       context: "expression-statement",
-      filtered: false,
       arrayLiteral: false,
     };
     const scope = { checker: view.checker, roots: this.#roots, table, file };

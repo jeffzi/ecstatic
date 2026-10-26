@@ -164,10 +164,8 @@ export interface Site {
   readonly call: NodeID;
   readonly op: Op;
   readonly context: StmtContext;
-  /** Set for an `each` call that passes a filter argument. */
-  readonly filtered: boolean;
-  /** The filter argument of a call {@link Site.filtered} marks; absent on every other site. */
-  readonly filter?: Filter;
+  /** The filter argument of an `each` call that passes one; undefined on every other site. */
+  readonly filter?: Filter | undefined;
   /** Set for an `each` call whose storages argument is an array literal, whatever its length. */
   readonly arrayLiteral: boolean;
 }
@@ -185,7 +183,6 @@ export interface FilterElement {
  */
 export const FILTER_AXES = ["all", "any", "none"] as const;
 
-/** One axis of a filter. */
 export type FilterAxis = (typeof FILTER_AXES)[number];
 
 /**

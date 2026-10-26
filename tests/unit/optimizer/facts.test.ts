@@ -36,7 +36,6 @@ function emptySite(): Site {
     call: 0,
     op: "each",
     context: "expression-statement",
-    filtered: false,
     arrayLiteral: false,
   };
 }

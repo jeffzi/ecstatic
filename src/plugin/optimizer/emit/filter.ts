@@ -74,12 +74,12 @@ export interface RowFilter {
   /** The `DEBUG` check of the filter's elements against the storage; none for a pass without one. */
   guard(storage: string): Statement[];
   /**
-   * The statements that resolve the filter against the storage into the pass's matcher, which the
-   * pass caches in its call site's slot. Call it before {@link RowFilter.hoists} and
-   * {@link RowFilter.rowTest}, which read the matcher it takes.
+   * Resolves the filter against the storage into the pass's matcher, which the pass caches in its
+   * call site's slot. Call it before {@link RowFilter.hoists} and {@link RowFilter.rowTest}, which
+   * read the matcher it takes.
    *
    * @param storage - The name of the loop's storage local.
-   * @returns The statements.
+   * @returns The statements resolving the filter into the matcher.
    */
   matcher(storage: string): Statement[];
   /**
@@ -97,17 +97,26 @@ export interface RowFilter {
    * @returns The test, or `undefined` when the loop visits every row.
    */
   rowTest(row: string): Expression | undefined;
-}
-
-/**
- * A member of a call-site slot.
- *
- * @param site - The name of the slot's file-level variable.
- * @param key - The slot key.
- * @returns `site.key`.
- */
-function slotRead(site: string, key: string): Expression {
-  return member(createIdentifier(site), key);
+  /**
+   * The row loops of the call. Call it after {@link RowFilter.matcher}.
+   *
+   * @param row - The name of the row index.
+   * @param rowLoop - Builds a row loop from the test a row must pass, or from `undefined` to visit
+   *   every row.
+   * @returns The pass's hoisted statements and its loop, or the branch between the unfiltered and
+   *   filtered loops for a filter resolved at runtime.
+   * @throws Error when a filter resolved at runtime has its matcher read before it is resolved.
+   */
+  loops(row: string, rowLoop: (rowTest: Expression | undefined) => Statement): Statement[];
+  /**
+   * The row count read and the loops, gated on the filter's resolution. Call it after
+   * {@link RowFilter.matcher}.
+   *
+   * @param counted - The row count read and the loops.
+   * @returns `counted`, under `if (matcher !== false)` for a filter resolved at runtime.
+   * @throws Error when a filter resolved at runtime has its matcher read before it is resolved.
+   */
+  gated(counted: Statement[]): Statement[];
 }
 
 /**
@@ -133,7 +142,7 @@ interface TakenSlot {
   readonly site: string;
   /** The name of the local holding the matcher. */
   readonly matcher: string;
-  /** A member of the slot. */
+  /** Reads the slot member named by `key`, as `site.key`. */
   readonly slot: (key: string) => Expression;
 }
 
@@ -172,7 +181,7 @@ export class MatcherSlot {
     const matcher = names.unique(MATCHER_LOCALS.matcher);
     this.#site = site;
     this.#matcher = matcher;
-    return { site, matcher, slot: (key) => slotRead(site, key) };
+    return { site, matcher, slot: (key) => member(createIdentifier(site), key) };
   }
 
   /**
@@ -187,7 +196,7 @@ export class MatcherSlot {
     if (matcher === undefined || mode !== "hoisted") return [];
     const matched = names.unique(MATCHER_LOCALS.matched);
     this.#matched = matched;
-    return [hoistFlags(matcher, matched)];
+    return [constStatement([declaration(matched, matcherFlags(matcher))])];
   }
 }
 
@@ -343,6 +352,28 @@ export class FilterPass implements RowFilter {
   }
 
   /**
+   * The row loop under the matcher's row test, after the hoisted statement it reads.
+   *
+   * @param row - The name of the row index.
+   * @param rowLoop - Builds a row loop from the test a row must pass, or from `undefined` to visit
+   *   every row.
+   * @returns The hoisted statement, if any, and the row loop.
+   */
+  loops(row: string, rowLoop: (rowTest: Expression | undefined) => Statement): Statement[] {
+    return [...this.hoists(), rowLoop(this.rowTest(row))];
+  }
+
+  /**
+   * The counted statements, which a literal filter runs unconditionally.
+   *
+   * @param counted - The row count read and the loops.
+   * @returns `counted`.
+   */
+  gated(counted: Statement[]): Statement[] {
+    return counted;
+  }
+
+  /**
    * `matcherFor(storage, all, any, none)` through the namespace import.
    *
    * @param storage - The name of the loop's storage local.
@@ -373,17 +404,6 @@ export function rowFlagTest(matcher: string, matched: string | undefined, row: s
   const flags = matched === undefined ? matcherFlags(matcher) : createIdentifier(matched);
   const flag = elementAt(flags, createIdentifier(row));
   return binary(flag, SyntaxKind.ExclamationEqualsEqualsToken, numeric("0"));
-}
-
-/**
- * The statement reading a matcher's row flags into a local, once per call.
- *
- * @param matcher - The name of the matcher local.
- * @param matched - The name of the local the flags are read into.
- * @returns `const matched = matcher.matched;`.
- */
-function hoistFlags(matcher: string, matched: string): Statement {
-  return constStatement([declaration(matched, matcherFlags(matcher))]);
 }
 
 /**

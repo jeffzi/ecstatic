@@ -1,9 +1,19 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { Expression, SourceFile } from "typescript/ast";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createRewriter, type Rewriter } from "../../src/plugin/optimizer/rewrite.js";
+import { analyze } from "../../src/plugin/optimizer/analysis/analyze.js";
+import { sourceFileName } from "../../src/plugin/optimizer/compiler.js";
+import { compareCodeUnits, type Reason, type Site } from "../../src/plugin/optimizer/facts.js";
+import { plan, type PlanResult } from "../../src/plugin/optimizer/plan.js";
+import {
+  createRewriter,
+  type Rewriter,
+  type RewriteSeams,
+  type RewrittenModule,
+} from "../../src/plugin/optimizer/rewrite.js";
 import { openSession, type ProjectView, type Session } from "../../src/plugin/optimizer/session.js";
 import {
   closeProject,
@@ -13,8 +23,14 @@ import {
   runtimeProject,
   SPAWN_TIMEOUT_MS,
 } from "../unit/optimizer/project.js";
+import { flattenSites } from "../unit/optimizer/sites.js";
 import { REPO_ROOT } from "../unit/plugin/tsconfig-fixtures.js";
-import { NO_FILTER_GUARDS, NO_GUARDS, runtimeDebug, unstrippedProblems } from "./unstripped.js";
+import {
+  NO_FILTER_GUARDS,
+  NO_SHAPE_GUARDS,
+  runtimeDebug,
+  unstrippedProblems,
+} from "./unstripped.js";
 
 /** The project the optimized unit projects hand `ecstatic/vite`. */
 const TESTS_TSCONFIG = join(REPO_ROOT, "tests", "tsconfig.json");
@@ -28,6 +44,9 @@ const REWRITE_TIMEOUT_MS = 60_000;
  * `scripts/` and `tests/unit/optimizer/` included.
  */
 const INTEGRATION_TESTS = "tests/integration/";
+
+/** The directory of the unit suite, whose filtered each calls the kept-calls census reads. */
+const UNIT_TESTS = "tests/unit/";
 
 /** Modules outside the runtime unit tests that the optimized unit projects still transform. */
 const TRANSFORMED_HELPERS = [
@@ -102,7 +121,7 @@ const GATED_FILTER_GUARD = `(${CHECKER_GATE}) && ${FILTER_LIST};`;
 /** The test module the rejecting cases write their outputs as. */
 const REJECTED_MODULE = "tests/unit/a.test.ts";
 
-/** The test module beside a rejecting case's outputs that holds gated guards of every kind. */
+/** The test module beside a rejecting case's outputs that holds a gated filter-element guard. */
 const GATED_MODULE = "tests/unit/gated.test.ts";
 
 /** The problem named for a guard on line 4 of {@link REJECTED_MODULE} whose gate reads an `NDEBUG` the file binds. */
@@ -113,6 +132,34 @@ function gatedOtherwise(gate: string): string {
   return `${REJECTED_MODULE}:4: the shape guard is gated by ${gate}, not by the runtime's DEBUG initializer`;
 }
 
+/**
+ * A filtered each call that keeps its runtime call: the slash-separated file relative to the
+ * repository, the 1-based line of the call, and the reason the plan gives, `undefined` when the plan
+ * neither rewrites nor bails it.
+ */
+interface KeptCall {
+  readonly file: string;
+  readonly line: number;
+  readonly reason: Reason | undefined;
+}
+
+/** The sites of one analyzed file and the plan made for them. */
+interface Analyzed {
+  readonly sites: readonly Site[];
+  readonly plan: PlanResult;
+}
+
+/** What the rewriter's analysis gave, keyed by file, recorded as each file is rewritten. */
+const analyzed = new Map<string, Analyzed>();
+
+const seams: RewriteSeams = {
+  analyze: async (checker, source, roots) => {
+    const analysis = await analyze(checker, source, roots);
+    analyzed.set(sourceFileName(source), { sites: analysis.sites, plan: plan(analysis.sites) });
+    return analysis;
+  },
+};
+
 let session: Session;
 let rewriter: Rewriter;
 let runtime: Expression;
@@ -120,7 +167,7 @@ let checkerRuntime: Expression;
 
 beforeAll(async () => {
   session = await openSession(TESTS_TSCONFIG);
-  rewriter = createRewriter(session);
+  rewriter = createRewriter(session, seams);
   runtime = runtimeDebug(await session.parse(join(REPO_ROOT, "src", "ecstatic", "debug.ts")));
   checkerRuntime = runtimeDebug(
     await session.parseText(
@@ -165,10 +212,10 @@ async function checkerProblems(outputs: Readonly<Record<string, string>>): Promi
   return unstrippedProblems(await parsed(outputs), checkerRuntime);
 }
 
-/** The problems with `outputs` beside {@link GATED_MODULE}, so that no kind of guard is missing. */
+/** The problems with `outputs` beside {@link GATED_MODULE}, so no filter-element guard is missing. */
 async function gatingProblems(outputs: Readonly<Record<string, string>>): Promise<string[]> {
   return await checkerProblems({
-    [GATED_MODULE]: guardedModule("", `${GATED_GUARD} ${GATED_FILTER_GUARD}`),
+    [GATED_MODULE]: guardedModule("", GATED_FILTER_GUARD),
     ...outputs,
   });
 }
@@ -180,9 +227,64 @@ async function rewrittenText(by: Rewriter, view: ProjectView, file: string): Pro
   return output.text;
 }
 
+/** Whether `site` is an each call over one storage, with a filter and an inline callback. */
+function isFilteredInlineEach(site: Site): boolean {
+  return (
+    site.op === "each" &&
+    site.filter !== undefined &&
+    !site.arrayLiteral &&
+    site.callback !== undefined
+  );
+}
+
+/**
+ * Every filtered single-storage each call of the unit suite with an inline callback that keeps its
+ * runtime call in the output of `modules`, nested calls included: one its plan bails on, one whose
+ * planned rewrite failed to emit, and one the plan neither rewrites nor bails on.
+ *
+ * @param modules - The rewritten modules, keyed by file; their sites and plans come from
+ *   {@link analyzed}.
+ * @returns Each such call with the reason its module's bail gives, sorted by file then line.
+ */
+function keptFilteredCalls(modules: ReadonlyMap<string, RewrittenModule>): KeptCall[] {
+  return [...modules]
+    .filter(([file]) => repoName(file).startsWith(UNIT_TESTS))
+    .flatMap(([file, { bails }]) => {
+      const record = analyzed.get(file);
+      const rewritten = new Set(record?.plan.rewrites.map(({ call }) => call));
+      const bailed = new Map(bails.map((bail) => [bail.call, bail]));
+      const keepsCall = (call: Site["call"]): boolean => bailed.has(call) || !rewritten.has(call);
+      return flattenSites(record?.sites ?? [])
+        .filter((site) => isFilteredInlineEach(site) && keepsCall(site.call))
+        .map((site) => ({
+          file: repoName(file),
+          line: site.pos.line,
+          reason: bailed.get(site.call)?.reason,
+        }));
+    })
+    .toSorted((a, b) => (a.file === b.file ? a.line - b.line : compareCodeUnits(a.file, b.file)));
+}
+
+/**
+ * The kept call the one occurrence of a snippet opens in a repository file, which its plan bails on
+ * as `OP_NOT_REWRITTEN`.
+ *
+ * @param file - The slash-separated path of the file, relative to the repository.
+ * @param snippet - The source text that opens the call.
+ * @returns The kept call, on the 1-based line where `snippet` starts.
+ * @throws When `snippet` occurs in `file` zero times or more than once.
+ */
+function keptCall(file: string, snippet: string): KeptCall {
+  const text = readFileSync(join(REPO_ROOT, file), "utf8");
+  if (text.split(snippet).length !== 2) throw new Error(`${file} must hold one ${snippet}`);
+  const line = text.slice(0, text.indexOf(snippet)).split("\n").length;
+  return { file, line, reason: "OP_NOT_REWRITTEN" };
+}
+
 describe("unstrippedProblems", () => {
   describe("over the modules the optimized unit projects transform", () => {
     let checked: string[];
+    let modules: Map<string, RewrittenModule>;
     let outputs: Map<string, SourceFile>;
 
     beforeAll(async () => {
@@ -192,17 +294,32 @@ describe("unstrippedProblems", () => {
         return !name.startsWith(INTEGRATION_TESTS);
       });
       checked = files.map(repoName);
-      const rewritten = await Promise.all(
-        files.map(async (file) => {
-          const { output } = await rewriter.rewrite(view, file);
-          return output === undefined ? [] : [[repoName(file), output.text] as const];
-        }),
+      modules = new Map(
+        await Promise.all(
+          files.map(async (file) => [file, await rewriter.rewrite(view, file)] as const),
+        ),
       );
-      outputs = await parsed(Object.fromEntries(rewritten.flat()));
+      const rewritten = [...modules].flatMap(([file, { output }]) =>
+        output === undefined ? [] : [[repoName(file), output.text] as const],
+      );
+      outputs = await parsed(Object.fromEntries(rewritten));
     }, REWRITE_TIMEOUT_MS);
 
     it("checks the helpers the runtime unit tests import from outside them", () => {
       expect(checked).toStrictEqual(expect.arrayContaining(TRANSFORMED_HELPERS));
+    });
+
+    // The kept calls, sorted by file then line, each located by the source snippet that opens it:
+    // a number as the filter matches no filter form, and the outer call holds an inlined each.
+    it("rewrites every filtered single-storage each with an inline callback but the kept ones", () => {
+      const expected = [
+        keptCall("tests/unit/entity/each.test.ts", "each(storage, 42,"),
+        keptCall("tests/unit/filter.test.ts", "each(storage, { all: [Stunned] }, (outer) =>"),
+      ];
+
+      const kept = keptFilteredCalls(modules);
+
+      expect(kept).toStrictEqual(expected);
     });
 
     it("finds every shape guard gated by the runtime's DEBUG initializer", () => {
@@ -458,12 +575,9 @@ describe("unstrippedProblems", () => {
         },
       },
     ])("reports it has nothing to check for $name", async ({ outputs }) => {
-      const problems = await checkerProblems({
-        [GATED_MODULE]: guardedModule("", GATED_FILTER_GUARD),
-        ...outputs,
-      });
+      const problems = await gatingProblems(outputs);
 
-      expect(problems).toStrictEqual([NO_GUARDS]);
+      expect(problems).toStrictEqual([NO_SHAPE_GUARDS]);
     });
   });
 

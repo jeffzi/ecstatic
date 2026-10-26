@@ -543,7 +543,11 @@ class HazardWalker {
    */
   async #elsewhereSpawn(storage: Expression | undefined): Promise<AcceptedSpawn | undefined> {
     if (storage === undefined) return undefined;
-    const { shape, declarationFiles } = await resolveStorageShape(this.#checker, storage);
+    const { shape, declarationFiles } = await resolveStorageShape(
+      this.#checker,
+      storage,
+      this.#scope.roots,
+    );
     for (const file of declarationFiles) this.files.add(file);
     const { shapes } = this.#scope;
     if (shape === undefined || shapes.length === 0) return undefined;
