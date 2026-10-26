@@ -14,8 +14,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Reject `__proto__` as a component name in `archetype()` and `Archetype()`, alongside the other
-  names reserved on archetypes
+- Reject every `Object.prototype` member name (`__proto__`, `constructor`, `toString`, and the rest)
+  as a component name in `archetype()` and `Archetype()`, alongside the other names reserved on
+  archetypes
+- Reject two distinct component descriptors that share a name in `archetype()` and `Archetype()`, as
+  when two installed copies of the package each declare it; the second used to replace the first
+- Make a view's `id`, field, and optional-slot accessors enumerable, so `Object.keys`,
+  `JSON.stringify`, and spread see a view's fields and slots as they see its required components
+
+### Fixed
+
+- Run a getter in a values record once in `enable`, `enableMany`, `link`, and `setResource`, and
+  read each relation override (its record, `target`, and fields) once in `spawn` and `spawnMany`, so
+  a getter that returns a different value on a second read no longer loses its write, and a
+  checked-mode spawn links the target it validated
+- Keep a field value whose getter grows the storage (by spawning into it) in `enable`, `enableMany`,
+  `link`, and `spawn`; the write used to land in the replaced column and the field read its default
+- Reject a `spawn` past the entity index limit before running any getter on its overrides
 
 ## [0.5.0] - 2026-10-16
 

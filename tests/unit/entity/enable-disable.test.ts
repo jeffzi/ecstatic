@@ -1,6 +1,8 @@
+import { enableOne } from "ecstatic/internal";
 import { assert, describe, expect, it } from "vitest";
 
 import {
+  type EntityId,
   alive,
   archetype,
   components,
@@ -10,12 +12,15 @@ import {
   disableMany,
   enable,
   enableMany,
+  get,
+  has,
   ref,
   register,
   relation,
   spawn,
+  spawnMany,
 } from "../../../src/ecstatic/index.js";
-import { rowOf } from "../fixtures.js";
+import { despawnOnRead, rowOf } from "../fixtures.js";
 
 const { EnDisPosition: Position } = components({
   EnDisPosition: { x: 0, y: 0 },
@@ -172,19 +177,30 @@ describe("disable", () => {
     expect(soa["defense"]?.[row]).toBe(10);
   });
 
-  it("resumes the disabled value on re-enable with no values", () => {
+  it.each([
+    {
+      form: "enable",
+      reenable: (storage: ReturnType<typeof createShieldStorage>["storage"], id: EntityId) => {
+        enable(storage, id, Shield);
+      },
+    },
+    {
+      form: "internal enableOne",
+      reenable: (storage: ReturnType<typeof createShieldStorage>["storage"], id: EntityId) => {
+        enableOne(storage, rowOf(storage, id), Shield);
+      },
+    },
+  ])("$form resumes the disabled value on re-enable with no values", ({ reenable }) => {
     const { storage } = createShieldStorage();
     const id = spawn(storage);
     enable(storage, id, Shield, { hp: 75 });
     disable(storage, id, Shield);
 
-    enable(storage, id, Shield);
+    reenable(storage, id);
 
-    const row = rowOf(storage, id);
-    const soa = storage.columns.get(Shield);
-    assert(soa != null);
-    expect(soa["hp"]?.[row]).toBe(75);
-    expect(soa["defense"]?.[row]).toBe(10);
+    expect(has(storage, id, Shield)).toBe(true);
+    expect(get(storage, id, Shield.hp)).toBe(75);
+    expect(get(storage, id, Shield.defense)).toBe(10);
   });
 
   it("merges overrides with retained values on re-enable with partial values", () => {
@@ -366,6 +382,84 @@ describe("enable record boolean values", () => {
     const row = rowOf(storage, id);
     expect(storage.mask[row]).toBe(0);
     expect(storage.columns.get(Shield)?.["hp"]?.[row]).toBe(50);
+  });
+});
+
+describe("enable values reads", () => {
+  type ShieldStorage = ReturnType<typeof createShieldStorage>["storage"];
+  type ShieldValues = { hp?: number; defense?: number };
+
+  const forms: {
+    form: string;
+    apply: (storage: ShieldStorage, id: EntityId, values: ShieldValues) => void;
+  }[] = [
+    {
+      form: "component form",
+      apply: (storage, id, values) => {
+        enable(storage, id, Shield, values);
+      },
+    },
+    {
+      form: "record form",
+      apply: (storage, id, values) => {
+        enable(storage, id, { EnDisShield: values });
+      },
+    },
+    {
+      form: "internal enableOne",
+      apply: (storage, id, values) => {
+        enableOne(storage, rowOf(storage, id), Shield, values);
+      },
+    },
+  ];
+
+  it.each(forms)(
+    "$form writes a getter value that grows the storage, reading it once",
+    ({ apply }) => {
+      const { storage } = createShieldStorage();
+      const id = spawn(storage);
+      let reads = 0;
+      const values = {
+        get hp(): number {
+          reads += 1;
+          spawnMany(storage, 16);
+          return 75;
+        },
+      };
+
+      apply(storage, id, values);
+
+      expect(get(storage, id, Shield.hp)).toBe(75);
+      expect(reads).toBe(1);
+    },
+  );
+
+  it.each(forms)(
+    "$form writes a getter value that despawns an earlier sibling to the moved row",
+    ({ apply }) => {
+      const { storage } = createShieldStorage();
+      const sibling = spawn(storage);
+      const id = spawn(storage);
+      const values = despawnOnRead(storage, sibling, "hp", 75);
+
+      apply(storage, id, values);
+
+      expect(get(storage, id, Shield.hp)).toBe(75);
+      expect(has(storage, id, Shield)).toBe(true);
+    },
+  );
+
+  it.each(forms)("$form keeps the current value of an absent or undefined field", ({ apply }) => {
+    const { storage } = createShieldStorage();
+    const id = spawn(storage);
+    enable(storage, id, Shield, { hp: 75, defense: 5 });
+    disable(storage, id, Shield);
+
+    // @ts-expect-error the types reject an explicit undefined; JavaScript callers can still pass one
+    apply(storage, id, { hp: undefined });
+
+    expect(get(storage, id, Shield.hp)).toBe(75);
+    expect(get(storage, id, Shield.defense)).toBe(5);
   });
 });
 

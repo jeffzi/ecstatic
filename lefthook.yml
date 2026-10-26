@@ -25,7 +25,7 @@ pre-commit:
     typelint:
       priority: 3
       glob: "**/*.{ts,tsx,mts,cts}"
-      run: npx oxlint --type-aware
+      run: npx oxlint --type-aware {files}
     spelling:
       priority: 3
       glob: "**/*.{ts,tsx,mts,cts,md}"

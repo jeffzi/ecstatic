@@ -10,19 +10,22 @@
 
 import type { ComponentDescriptor, ComponentFields } from "../component.js";
 import { isComponentDescriptor } from "../component.js";
+import { DEBUG } from "../debug.js";
 import type { EntityId } from "../entity-id.js";
 import { entityIndex } from "../entity-id.js";
 import {
   ERROR_DISABLE_EMPTY,
   ERROR_DISABLE_MANY_EMPTY,
+  ERROR_STALE_ENTITY_ID,
   errorNotOptional,
   errorRelationToggle,
   errorUnknownComponent,
 } from "../errors.js";
 import { applyMaskAnd, applyMaskOr, refreshMatchersAll, refreshMatchersRows } from "../matcher.js";
 import { getRelationMeta } from "../relation.js";
-import type { SoAColumns, Storage, World } from "../world.js";
+import type { FieldColumn, Storage, World } from "../world.js";
 import { resolveEntityArch, validateEntity } from "./common.js";
+import { writeColumnValues, writeFieldOverrides, writeRowValues } from "./field-write.js";
 import type {
   AllNames,
   ArchetypeOfStorage,
@@ -53,39 +56,34 @@ function rejectRelation(comp: ComponentDescriptor, targetOp: "link" | "unlink"):
 }
 
 /**
- * Write per-field value overrides into a component's SoA columns.
+ * Look up an optional component's presence bit.
  *
- * @param soa - The component's column record, one column per declared field.
- * @param fields - The component's declared field names, in column order.
- * @param di - Dense row written; must be below the storage's row count.
- * @param values - Fields to patch, stored by reference (no clone); a field absent from the
- *   record or set to `undefined` keeps its current slot value.
+ * @param storage - Storage whose archetype declares the optionals.
+ * @param comp - Component to look up.
+ * @returns The component's presence bit.
+ * @throws If `comp` is not optional on the archetype
  */
-export function writeFieldOverrides(
-  soa: SoAColumns,
-  fields: string[],
-  di: number,
-  values: Record<string, unknown>,
-): void {
-  for (let i = 0; i < fields.length; i++) {
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- i < fields.length
-    const f = fields[i]!;
-    if (values[f] !== undefined) {
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- SoA column exists for every declared field
-      soa[f]![di] = values[f];
-    }
+function optionalBit(storage: Storage, comp: ComponentDescriptor): number {
+  const bit = storage.optionalBitLookup.get(comp);
+  if (bit === undefined) {
+    throw new Error(errorNotOptional(comp.__ecstatic_name));
   }
+  return bit;
 }
 
 /**
  * Enable one optional component on a single dense row.
  *
  * @param storage - Storage owning the row; its mask and matcher caches are updated in place.
- * @param di - Dense row to enable on.
+ * @param di - Dense row to enable on, as resolved before the call.
  * @param comp - Component to enable; must be an optional of the storage's archetype.
- * @param values - Fields to patch after the presence bit is set; `undefined` is a pure bit flip
- *   exposing whatever the slot holds. Ignored for tag components, which have no columns.
- * @throws If `comp` is not optional on the archetype
+ * @param values - Fields to patch, each read once, before the presence bit is set; `undefined`
+ *   is a pure bit flip exposing whatever the slot holds. Ignored for tag components, which have
+ *   no columns. A getter that moves the entity sends the writes to its new row.
+ * @throws If `comp` is not optional on the archetype, before any value is read
+ * @throws If DEBUG and a getter on `values` despawned the entity
+ * @throws Whatever a getter on `values` throws; the fields before it are already written and the
+ *   presence bit is unchanged
  */
 export function enableOne(
   storage: Storage,
@@ -93,18 +91,16 @@ export function enableOne(
   comp: ComponentDescriptor,
   values?: Record<string, unknown>,
 ): void {
-  const bit = storage.optionalBitLookup.get(comp);
-  if (bit === undefined) {
-    throw new Error(errorNotOptional(comp.__ecstatic_name));
+  const bit = optionalBit(storage, comp);
+  if (values === undefined) {
+    applyMaskOr(storage, di, bit);
+    return;
   }
-
-  applyMaskOr(storage, di, bit);
-
-  // Only populate SoA columns for data-carrying components (skip pure tags)
-  const soa = storage.columns.get(comp);
-  if (soa !== undefined && values !== undefined) {
-    writeFieldOverrides(soa, comp.__ecstatic_fields, di, values);
-  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion, typescript/no-non-null-assertion -- di is a live dense row; entities holds packed ids
+  const id = storage.entities[di]! as EntityId;
+  writeFieldOverrides(storage, id, comp, values);
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- the entity is alive, so its sparse slot is populated
+  applyMaskOr(storage, storage.sparse[entityIndex(id)]!, bit);
 }
 
 /**
@@ -136,104 +132,170 @@ export function disableOne(storage: Storage, di: number, comp: ComponentDescript
 // BATCH_DENSE_INDICES is also reused by disableMany() via resolveBatchIndices.
 
 // Module-level scratch reused across calls (despawn.ts pattern): the
-// resolved (comp, values) override list and the per-id dense indices.
+// resolved (comp, values) override list and the per-id dense indices. The
+// resolved list is a stack with `resolvedTop` as its first free entry, so an
+// enable run by a getter while a caller's values are read resolves above the
+// caller's entries and releases back to them.
 const RESOLVED_COMPS: ComponentDescriptor[] = [];
 const RESOLVED_VALUES: (Record<string, unknown> | undefined)[] = [];
+// Each resolved values record's field columns, looked up once per call rather than once per row.
+const RESOLVED_COLUMNS: (readonly FieldColumn[] | undefined)[] = [];
+let resolvedTop = 0;
 const BATCH_DENSE_INDICES: number[] = [];
 
 /**
  * Resolve all (name → comp, values) pairs up front so an unknown name or a
- * non-optional component errors before any mutation. `false` entries are
- * filtered out here so they never enter the per-entity loops.
+ * non-optional component errors before any mutation and before any field
+ * value is read. `false` entries are filtered out here so they never enter the
+ * per-entity loops.
+ *
+ * The entries are pushed onto the module scratch stacks, from the
+ * `resolvedTop` captured before the call up to the new `resolvedTop`;
+ * {@link releaseResolved} drops them, and a throw from here drops the ones
+ * already pushed.
  *
  * @param storage - Storage whose archetype resolves each name and whose optional set validates it.
  * @param overrides - Record grammar: a field record or `true` enables the entry, `false` skips it.
- * @returns The resolved count; entries `[0, count)` of the module scratch arrays
- *   `RESOLVED_COMPS` / `RESOLVED_VALUES` hold the result until the next call overwrites them.
+ * @returns The combined presence bits of every resolved component.
  * @throws If a key names no component on the archetype
  * @throws If a key names a relation component
  * @throws If a key names a component that is not optional on the archetype
+ * @throws Whatever a getter on `overrides` throws
  */
 function resolveEnableOverrides(
   storage: Storage,
   overrides: Record<string, Record<string, unknown> | boolean>,
 ): number {
-  let n = 0;
-  for (const [name, values] of Object.entries(overrides)) {
-    if (values === false) {
-      continue;
-    }
-    const comp = storage.componentByName.get(name);
-    if (comp === undefined) {
-      throw new Error(errorUnknownComponent(name));
-    }
-    rejectRelation(comp, "link");
-    if (!storage.optionalBitLookup.has(comp)) {
-      throw new Error(errorNotOptional(name));
-    }
-    RESOLVED_COMPS[n] = comp;
-    RESOLVED_VALUES[n] = typeof values === "boolean" ? undefined : values;
-    n += 1;
-  }
-  return n;
-}
-
-function resolvedEnableBits(storage: Storage, resolvedN: number): number {
+  const base = resolvedTop;
   let bits = 0;
-  for (let k = 0; k < resolvedN; k++) {
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- k < resolvedN; comp validated at resolve time
-    bits |= storage.optionalBitLookup.get(RESOLVED_COMPS[k]!)!;
+  try {
+    for (const [name, values] of Object.entries(overrides)) {
+      if (values === false) {
+        continue;
+      }
+      const comp = storage.componentByName.get(name);
+      if (comp === undefined) {
+        throw new Error(errorUnknownComponent(name));
+      }
+      rejectRelation(comp, "link");
+      bits |= optionalBit(storage, comp);
+      const record = typeof values === "boolean" ? undefined : values;
+      RESOLVED_COMPS[resolvedTop] = comp;
+      RESOLVED_VALUES[resolvedTop] = record;
+      RESOLVED_COLUMNS[resolvedTop] =
+        record === undefined ? undefined : storage.fieldColumns.get(comp);
+      resolvedTop += 1;
+    }
+  } catch (error) {
+    releaseResolved(base);
+    throw error;
   }
   return bits;
 }
 
 /**
- * Applies all pre-resolved enable overrides on a single dense index: one
- * combined mask write plus the field patches. No matcher refresh here —
- * callers refresh once afterwards (single row or the whole batch).
+ * Whether any resolved entry has field values to write, i.e. whether applying the frame can run
+ * user code.
  *
- * @param storage - Storage owning the row; its mask and columns are written directly.
- * @param di - Dense row to enable on.
- * @param resolvedN - Number of module-scratch entries to apply, as returned by
- *   `resolveEnableOverrides`.
- * @param combinedBits - OR of the resolved components' presence bits, precomputed once per batch
- *   so each row costs a single mask write.
+ * @param resolvedBase - First resolved entry of the frame.
+ * @returns `true` when at least one entry has a values record and columns to write it to.
  */
-function applyResolvedEnables(
-  storage: Storage,
-  di: number,
-  resolvedN: number,
-  combinedBits: number,
-): void {
-  const entityMask = storage.mask;
-  // oxlint-disable-next-line typescript/no-non-null-assertion -- di is a valid dense index
-  entityMask[di] = entityMask[di]! | combinedBits;
-  for (let k = 0; k < resolvedN; k++) {
-    const values = RESOLVED_VALUES[k];
-    if (values !== undefined) {
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- k < resolvedN ≤ RESOLVED_COMPS.length
-      const comp = RESOLVED_COMPS[k]!;
-      const soa = storage.columns.get(comp);
-      if (soa !== undefined) {
-        writeFieldOverrides(soa, comp.__ecstatic_fields, di, values);
-      }
+function resolvedHasValues(resolvedBase: number): boolean {
+  for (let k = resolvedBase; k < resolvedTop; k++) {
+    if (RESOLVED_COLUMNS[k] !== undefined) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Write one entity's field values for every resolved entry that carries a values record; see
+ * {@link writeColumnValues}.
+ *
+ * @param storage - Storage the entity lives in.
+ * @param id - The entity written.
+ * @param resolvedBase - First resolved entry of the frame.
+ * @throws If DEBUG and a getter despawned the entity
+ * @throws Whatever a getter on a values record throws; the fields before it are already written
+ */
+function writeResolvedValues(storage: Storage, id: EntityId, resolvedBase: number): void {
+  for (let k = resolvedBase; k < resolvedTop; k++) {
+    const columns = RESOLVED_COLUMNS[k];
+    if (columns !== undefined) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- an entry with columns has a values record
+      writeColumnValues(storage, id, columns, RESOLVED_VALUES[k]!);
     }
   }
 }
 
 /**
- * Releases the scratch's references to caller-supplied value records once
- * they have been applied, so the module-level array does not pin them
- * between calls. Not needed for RESOLVED_COMPS — descriptors are
- * registry-lifetime — and not a staleness guard: resolveEnableOverrides
- * rewrites every slot below `resolvedN` before any read.
+ * Write one row's field values for every resolved entry that carries a values record, into the
+ * row index given; see {@link writeRowValues}.
  *
- * @param resolvedN - Number of scratch entries to release, as returned by `resolveEnableOverrides`.
+ * @param resolvedBase - First resolved entry of the frame.
+ * @param di - Dense row written.
+ * @throws Whatever a getter on a values record throws; the fields before it are already written
  */
-function clearResolvedValues(resolvedN: number): void {
-  for (let k = 0; k < resolvedN; k++) {
-    RESOLVED_VALUES[k] = undefined;
+function writeResolvedRow(resolvedBase: number, di: number): void {
+  for (let k = resolvedBase; k < resolvedTop; k++) {
+    const columns = RESOLVED_COLUMNS[k];
+    if (columns !== undefined) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- an entry with columns has a values record
+      writeRowValues(columns, RESOLVED_VALUES[k]!, di);
+    }
   }
+}
+
+/**
+ * Drop the resolved entries from `resolvedBase` up, releasing the scratch's
+ * references to caller-supplied value records and to the storage's columns so
+ * the module-level arrays do not pin them between calls. RESOLVED_COMPS needs
+ * no clearing — descriptors are registry-lifetime.
+ *
+ * @param resolvedBase - The `resolvedTop` captured before `resolveEnableOverrides` ran.
+ */
+function releaseResolved(resolvedBase: number): void {
+  for (let k = resolvedBase; k < resolvedTop; k++) {
+    RESOLVED_VALUES[k] = undefined;
+    RESOLVED_COLUMNS[k] = undefined;
+  }
+  resolvedTop = resolvedBase;
+}
+
+/**
+ * Apply the record form of `enable` to one entity: resolve every entry, write every field
+ * value, then set the combined presence bits with one mask write in the entity's current row.
+ *
+ * @param storage - Storage the entity lives in; its mask, columns, and matcher caches are
+ *   updated in place.
+ * @param id - Entity to enable on, already validated against `storage`.
+ * @param record - Record grammar `{Name: values | true | false}`.
+ * @throws If a key names no component on the archetype, a relation, or a non-optional
+ *   component; the row is left unchanged
+ * @throws If DEBUG and a getter despawned the entity
+ * @throws Whatever a getter on `record` or on a values record throws; the fields written before
+ *   it stay written and no presence bit is set
+ */
+function enableRecord(
+  storage: Storage,
+  id: EntityId,
+  record: Record<string, Record<string, unknown> | boolean>,
+): void {
+  const resolvedBase = resolvedTop;
+  const bits = resolveEnableOverrides(storage, record);
+  try {
+    writeResolvedValues(storage, id, resolvedBase);
+  } finally {
+    releaseResolved(resolvedBase);
+  }
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- the entity is alive, so its sparse slot is populated
+  const di = storage.sparse[entityIndex(id)]!;
+  const entityMask = storage.mask;
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- di is a live dense row
+  entityMask[di] = entityMask[di]! | bits;
+  BATCH_DENSE_INDICES[0] = di;
+  refreshMatchersRows(storage, BATCH_DENSE_INDICES, 1, bits);
 }
 
 // ---------------------------------------------------------------------------
@@ -302,25 +364,22 @@ export function enable(
   values?: object,
 ): void {
   const storage = resolveEntityArch(storageOrWorld, id);
-  // oxlint-disable-next-line typescript/no-non-null-assertion -- id validated by resolveEntityArch
-  const di = storage.sparse[entityIndex(id)]!;
 
   if (!isComponentDescriptor(compOrRecord)) {
     // Record form: { Shield: { hp: 75 }, Stunned: true } or { Shield: true }
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the record overloads type this; the impl's `string` arm exists solely for sentence-error types
-    const record = compOrRecord as Record<string, Record<string, unknown> | boolean>;
-    const resolvedN = resolveEnableOverrides(storage, record);
-    const combinedBits = resolvedEnableBits(storage, resolvedN);
-    applyResolvedEnables(storage, di, resolvedN, combinedBits);
-    BATCH_DENSE_INDICES[0] = di;
-    refreshMatchersRows(storage, BATCH_DENSE_INDICES, 1, combinedBits);
-    clearResolvedValues(resolvedN);
+    enableRecord(storage, id, compOrRecord as Record<string, Record<string, unknown> | boolean>);
     return;
   }
 
   rejectRelation(compOrRecord, "link");
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the overload signatures type values as the component's partial field record
-  enableOne(storage, di, compOrRecord, values as Record<string, unknown> | undefined);
+  const bit = optionalBit(storage, compOrRecord);
+  if (values !== undefined) {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the overload signatures type values as the component's partial field record
+    writeFieldOverrides(storage, id, compOrRecord, values as Record<string, unknown>);
+  }
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- the entity is alive, so its sparse slot is populated
+  applyMaskOr(storage, storage.sparse[entityIndex(id)]!, bit);
 }
 
 /**
@@ -495,26 +554,101 @@ export function enableMany(
     overrides = third;
   }
 
-  const resolvedN = resolveEnableOverrides(storage, overrides);
-  const combinedBits = resolvedEnableBits(storage, resolvedN);
-
-  if (ids === undefined) {
-    const n = storage.n;
-    for (let di = 0; di < n; di++) {
-      applyResolvedEnables(storage, di, resolvedN, combinedBits);
+  const resolvedBase = resolvedTop;
+  const bits = resolveEnableOverrides(storage, overrides);
+  try {
+    if (ids === undefined) {
+      enableAllRows(storage, resolvedBase, bits);
+    } else {
+      enableListedRows(storage, ids, resolvedBase, bits);
     }
-    refreshMatchersAll(storage, combinedBits);
-    clearResolvedValues(resolvedN);
-    return;
+  } finally {
+    releaseResolved(resolvedBase);
   }
+}
 
-  resolveBatchIndices(storage, ids);
-  for (let k = 0; k < ids.length; k++) {
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- k < ids.length; resolveBatchIndices populated BATCH_DENSE_INDICES[0..ids.length)
-    applyResolvedEnables(storage, BATCH_DENSE_INDICES[k]!, resolvedN, combinedBits);
+/**
+ * The all-rows form of `enableMany`: write each row's field values, then set the presence bits
+ * on every row and refresh the matchers once. Rows are positional: a getter that despawns or
+ * spawns while the values are read does not change which row indices are written.
+ *
+ * @param storage - Storage whose rows `[0, n)` are enabled, `n` read before any getter runs.
+ * @param resolvedBase - First resolved entry of the frame.
+ * @param bits - Combined presence bits of the resolved components.
+ * @throws Whatever a getter on a values record throws; rows before it keep their written
+ *   values, and no presence bit has been set
+ */
+function enableAllRows(storage: Storage, resolvedBase: number, bits: number): void {
+  const n = storage.n;
+  if (resolvedHasValues(resolvedBase)) {
+    for (let di = 0; di < n; di++) {
+      writeResolvedRow(resolvedBase, di);
+    }
   }
-  refreshMatchersRows(storage, BATCH_DENSE_INDICES, ids.length, combinedBits);
-  clearResolvedValues(resolvedN);
+  const entityMask = storage.mask;
+  for (let di = 0; di < n; di++) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- di < n
+    entityMask[di] = entityMask[di]! | bits;
+  }
+  refreshMatchersAll(storage, bits);
+}
+
+/**
+ * The ids form of `enableMany`: validate every id, write each entity's field values into its
+ * row resolved after its getters run, then set the presence bits on every row, resolved once
+ * more since a later getter can move an earlier entity, and refresh the matchers once.
+ *
+ * @param storage - Storage the entities live in.
+ * @param ids - Entities to enable on.
+ * @param resolvedBase - First resolved entry of the frame.
+ * @param bits - Combined presence bits of the resolved components.
+ * @throws If DEBUG and an id is stale or belongs to another storage; no row has been changed
+ * @throws If DEBUG and a getter despawned a listed entity
+ * @throws Whatever a getter on a values record throws; entities before it keep their written
+ *   values, and no presence bit has been set
+ */
+function enableListedRows(
+  storage: Storage,
+  ids: readonly EntityId[],
+  resolvedBase: number,
+  bits: number,
+): void {
+  if (!resolvedHasValues(resolvedBase)) {
+    resolveBatchIndices(storage, ids);
+    const entityMask = storage.mask;
+    for (let k = 0; k < ids.length; k++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- k < ids.length; resolveBatchIndices populated BATCH_DENSE_INDICES[0..ids.length)
+      const di = BATCH_DENSE_INDICES[k]!;
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- di is a live dense row
+      entityMask[di] = entityMask[di]! | bits;
+    }
+  } else {
+    for (const eid of ids) {
+      validateEntity(storage, eid);
+    }
+    for (const eid of ids) {
+      writeResolvedValues(storage, eid, resolvedBase);
+    }
+    // Resolved once no user code is left to run: a later entity's getters can move an earlier
+    // one, and growth replaces the mask and the world arrays.
+    const entityMask = storage.mask;
+    const sparse = storage.sparse;
+    const generation = storage.generation;
+    for (let k = 0; k < ids.length; k++) {
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- k < ids.length
+      const eid = ids[k]!;
+      const index = entityIndex(eid);
+      if (DEBUG && generation[index] !== eid) {
+        throw new Error(ERROR_STALE_ENTITY_ID);
+      }
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- the entity is alive, so its sparse slot is populated
+      const di = sparse[index]!;
+      BATCH_DENSE_INDICES[k] = di;
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- di is a live dense row
+      entityMask[di] = entityMask[di]! | bits;
+    }
+  }
+  refreshMatchersRows(storage, BATCH_DENSE_INDICES, ids.length, bits);
 }
 
 /**

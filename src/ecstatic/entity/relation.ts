@@ -14,10 +14,12 @@ import {
   errorStaleTarget,
   errorUnlinkRequired,
 } from "../errors.js";
+import { applyMaskOr } from "../matcher.js";
 import type { Relation, RelationConstraints, RelationFields } from "../relation.js";
-import type { Storage, World } from "../world.js";
+import type { SoAColumns, Storage, World } from "../world.js";
 import { resolveEntityArch } from "./common.js";
-import { disableOne, enableOne, writeFieldOverrides } from "./optional.js";
+import { writeFieldOverrides } from "./field-write.js";
+import { disableOne } from "./optional.js";
 import { reverseInsert, reverseRemove } from "./reverse-map.js";
 
 /**
@@ -49,22 +51,33 @@ function removePreviousTarget(
 }
 
 /**
- * Resolve a relation's target column on a storage.
+ * Resolve a relation's column record on a storage.
  *
  * @param storage - Storage whose archetype must declare `rel` as a required
  *   or optional relation.
- * @param rel - Relation whose target column to read.
- * @returns The storage's live target column, indexed by dense row; column
- *   growth replaces it, so index it before the next spawn.
+ * @param rel - Relation whose columns to resolve.
+ * @returns The relation's column record. Growth swaps new arrays into this
+ *   same record, so {@link targetColumnOf} read after a getter runs still
+ *   returns the live target column.
  * @throws If the archetype does not carry the relation.
  */
-function resolveTargetColumn(storage: Storage, rel: ComponentDescriptor): Float64Array {
+function resolveRelationColumns(storage: Storage, rel: ComponentDescriptor): SoAColumns {
   const soa = storage.columns.get(rel);
-  const targetColumn = soa?.["target"];
-  if (!(targetColumn instanceof Float64Array)) {
+  if (soa === undefined || !(soa["target"] instanceof Float64Array)) {
     throw new Error(ERROR_RELATION_NOT_ON_ARCHETYPE);
   }
-  return targetColumn;
+  return soa;
+}
+
+/**
+ * The target column currently in a relation's column record.
+ *
+ * @param soa - A column record returned by {@link resolveRelationColumns}.
+ * @returns The live target column, indexed by dense row.
+ */
+function targetColumnOf(soa: SoAColumns): Float64Array {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- resolveRelationColumns checked the column is a Float64Array; growth replaces it with one of the same type
+  return soa["target"] as Float64Array;
 }
 
 /**
@@ -84,9 +97,15 @@ function resolveTargetColumn(storage: Storage, rel: ComponentDescriptor): Float6
  * @param target - Target entity id, type-checked against the relation's
  *   constraints; a stale target is rejected only under DEBUG.
  * @param values - Data fields to overwrite, stored by reference without
- *   cloning; omitted fields keep their current column values.
+ *   cloning; omitted fields keep their current column values. Every field is
+ *   read once, and the link is written after the last read, so a getter that
+ *   grows the storage or moves the source still has the link land in the
+ *   source's current row.
  * @throws If the relation is not on the entity's archetype
- * @throws If DEBUG and the source or target ID is stale
+ * @throws If DEBUG and the source or target ID is stale, checked again after
+ *   the getters on `values` run
+ * @throws Whatever a getter on `values` throws; the data fields before it
+ *   are already written, and the link itself is left unchanged
  */
 /* oxlint-disable max-params -- public API: link overloads */
 export function link<R extends Relation>(
@@ -106,32 +125,32 @@ export function link(
   /* oxlint-enable max-params */
   const sourceIndex = entityIndex(id);
   const storage = resolveEntityArch(world, id);
-  const di = storage.sparse[sourceIndex];
-  /* istanbul ignore next */
-  if (di === undefined) throw new Error("invariant: entity missing from sparse array");
 
   const targetIndex = entityIndex(target);
   if (DEBUG && world.generation[targetIndex] !== target) {
     throw new Error(errorStaleTarget(rel.__ecstatic_name));
   }
+  const relColumns = resolveRelationColumns(storage, rel);
 
-  const targetColumn = resolveTargetColumn(storage, rel);
+  if (values !== undefined) {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the public overload types values as the relation's partial field record
+    writeFieldOverrides(storage, id, rel, values as Record<string, unknown>);
+    // The getters may have despawned the target, grown the storage (replacing the target
+    // column), or moved the source to another row.
+    if (DEBUG && world.generation[targetIndex] !== target) {
+      throw new Error(errorStaleTarget(rel.__ecstatic_name));
+    }
+  }
+  const targetColumn = targetColumnOf(relColumns);
+  const di = storage.sparse[sourceIndex];
+  /* istanbul ignore next */
+  if (di === undefined) throw new Error("invariant: entity missing from sparse array");
+
   removePreviousTarget(world, rel, targetColumn[di], sourceIndex);
-
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the public overload types values as the relation's partial field record
-  const fieldValues = values as Record<string, unknown> | undefined;
   const optionalBit = storage.optionalBitLookup.get(rel);
   if (optionalBit !== undefined) {
-    // Optional relation: set the presence bit and write data fields
-    enableOne(storage, di, rel, fieldValues);
-  } else if (fieldValues !== undefined) {
-    // Required relation: just write the data fields (always "enabled")
-    const soa = storage.columns.get(rel);
-    /* istanbul ignore next */
-    if (soa === undefined) throw new Error("invariant: relation missing from columns map");
-    writeFieldOverrides(soa, rel.__ecstatic_fields, di, fieldValues);
+    applyMaskOr(storage, di, optionalBit);
   }
-
   targetColumn[di] = target;
   reverseInsert(rel, targetIndex, storage, sourceIndex);
 }
@@ -159,7 +178,7 @@ export function unlink(world: World, id: EntityId, rel: ComponentDescriptor): vo
   /* istanbul ignore next */
   if (di === undefined) throw new Error("invariant: entity missing from sparse array");
 
-  const targetColumn = resolveTargetColumn(storage, rel);
+  const targetColumn = targetColumnOf(resolveRelationColumns(storage, rel));
 
   const optionalBit = storage.optionalBitLookup.get(rel);
   if (optionalBit === undefined) {

@@ -71,13 +71,15 @@ const MAX_OPTIONAL_COMPONENTS = 32;
  * Field names and properties reserved by the archetype storage itself.
  *
  * Part of the runtime contract with the optimizer: every storage writes each
- * component's SoA record to `storage[name]`, and `each` writes required tags to `view[name]`.
- * Reserving every storage field and `__proto__` keeps those writes from replacing a storage
- * field or the storage's (or view's) prototype.
+ * component's SoA record to `storage[name]`, and `each` assigns every required component's slot
+ * to `view[name]`.
+ * Reserving every storage field and every own property of `Object.prototype` keeps those
+ * writes from replacing a storage field, replacing the storage's (or view's) prototype
+ * through `__proto__`, or shadowing an inherited method such as `hasOwnProperty`.
  */
 const RESERVED_NAMES = new Set<string>([
-  // Assigning it replaces the object's prototype instead of adding a property
-  "__proto__",
+  // Read from the running engine so a name it adds to Object.prototype is reserved too
+  ...Object.getOwnPropertyNames(Object.prototype),
   // Storage structure fields
   "entities",
   "sparse",
@@ -141,9 +143,12 @@ function computeArchetypeKey(
  * @param optionals - Component descriptors that may or may not be present (up to 32)
  * @returns A shared, immutable archetype descriptor
  *
+ * @throws If an entry in either list is not a component descriptor
  * @throws If more than 32 optional components
- * @throws If any component name is reserved (on archetypes)
- * @throws If any component appears in both required and optional, or twice in one list
+ * @throws If any component name is reserved on archetypes: a storage or descriptor field, or an
+ *   own property of `Object.prototype`
+ * @throws If two components share a name, within one list or across both, whether they are the
+ *   same descriptor or distinct ones
  */
 export function archetype<
   const C extends readonly ComponentDescriptor[] = readonly [],
@@ -292,9 +297,10 @@ export function resolveArchetype(arch: ArchetypeRef): ArchetypeDescriptor {
  * @throws If `optionals` has more than 32 entries, the 32-bit presence-mask
  *   limit.
  * @throws If an entry is not a component descriptor.
- * @throws If a component appears twice, within one list or across both.
+ * @throws If two components share a name, within one list or across both,
+ *   whether they are the same descriptor or distinct ones.
  * @throws If a component's name collides with a storage or descriptor field
- *   (`RESERVED_NAMES`).
+ *   or an own property of `Object.prototype` (`RESERVED_NAMES`).
  */
 function validateArchetype(
   required: readonly ComponentDescriptor[],
@@ -304,7 +310,9 @@ function validateArchetype(
     throw new Error(`archetype supports at most ${MAX_OPTIONAL_COMPONENTS} optional components`);
   }
 
-  const seenComponents = new Set<ComponentDescriptor>();
+  // Keyed by name, not descriptor: storage aliases and `componentByName` are keyed by name, so
+  // two distinct descriptors sharing one would overwrite each other's entry.
+  const seenNames = new Set<string>();
   const allComponents = [...required, ...optionals];
 
   for (const comp of allComponents) {
@@ -312,13 +320,15 @@ function validateArchetype(
       throw new Error("expected ComponentDescriptor");
     }
 
-    if (seenComponents.has(comp)) {
-      throw new Error(`duplicate component ${comp.__ecstatic_name} in archetype`);
-    }
-    seenComponents.add(comp);
+    const name = comp.__ecstatic_name;
 
-    if (RESERVED_NAMES.has(comp.__ecstatic_name)) {
-      throw new Error(`component name ${comp.__ecstatic_name} is reserved on archetypes`);
+    if (seenNames.has(name)) {
+      throw new Error(`duplicate component ${name} in archetype`);
+    }
+    seenNames.add(name);
+
+    if (RESERVED_NAMES.has(name)) {
+      throw new Error(`component name ${name} is reserved on archetypes`);
     }
   }
 }
