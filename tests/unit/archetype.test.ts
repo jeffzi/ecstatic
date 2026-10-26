@@ -90,13 +90,15 @@ describe("archetype", () => {
       expect(arch.componentByName.get("ArchTestLookupOpt_B")).toBe(B);
     });
 
-    it("provides componentLookup for membership testing", () => {
-      const { ArchTestMember_A: A } = components({
+    it("provides componentLookup holding the required and the optional components", () => {
+      const { ArchTestMember_A: A, ArchTestMember_B: B } = components({
         ArchTestMember_A: { x: 0 },
+        ArchTestMember_B: { y: 0 },
       });
 
-      const arch = archetype([A]);
-      expect(arch.componentLookup.has(A)).toBe(true);
+      const arch = archetype([A], [B]);
+
+      expect(arch.componentLookup).toStrictEqual(new Set([A, B]));
     });
   });
 

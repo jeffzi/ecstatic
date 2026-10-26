@@ -363,8 +363,10 @@ export function releaseView(storage: Storage): void {
  * @param fn - Called once per visited entity with the storage's pooled view
  *   rebound in place; the same object is passed on every call, so keep the
  *   `id` rather than the view for anything outliving the callback.
- * @throws If the filtered form is called without a callback (reachable only
- *   past the overload types).
+ * @throws Error ("invalid each arguments") if the second argument is not a
+ *   callback, or is not a filter (a non-null object) followed by a callback;
+ *   reachable only past the overload types.
+ * @throws Whatever `fn` throws, after the pooled view has been released.
  */
 export function each<S extends Storage>(storage: S, fn: (view: EachViewOf<S>) => void): void;
 export function each<
@@ -415,10 +417,11 @@ export function each(
 }
 
 /**
- * Throws the error `each` throws for arguments it cannot read as a storage, a filter, and a
- * callback, so code generated for an inlined call throws the same error without naming a global.
+ * The failure path of `each`'s argument guard, exported so code generated for an inlined call fails
+ * the same way without naming a global.
  *
- * @throws Error saying the `each` arguments are invalid, always.
+ * @throws Error ("invalid each arguments"), always: the filter and callback arguments do not match
+ *   the filtered or unfiltered form.
  */
 export function throwInvalidEachArguments(): never {
   throw new Error("invalid each arguments");

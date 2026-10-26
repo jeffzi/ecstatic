@@ -203,6 +203,7 @@ describe("assertShape", () => {
       { name: "a number", value: 42 },
       { name: "null", value: null },
       { name: "undefined", value: undefined },
+      { name: "an object whose archetype is no archetype", value: { archetype: 1 } },
     ])("throws naming the expected shape and the missing archetype for $name", ({ value }) => {
       const error = errorFrom(() => {
         assertShape(value, "c1:A{}|");
@@ -263,26 +264,6 @@ describe("assertFilterMember", () => {
     );
   });
 
-  describe("when the archetype holds the component as an optional", () => {
-    it("returns for the component expected present", () => {
-      const storage = storageOf(archetype([Position], [Shield]));
-
-      expect(() => {
-        assertFilterMember(storage, Shield, true);
-      }).not.toThrow();
-    });
-
-    it("throws for the component expected absent", () => {
-      const storage = storageOf(archetype([Position], [Shield]));
-
-      const error = errorFrom(() => {
-        assertFilterMember(storage, Shield, false);
-      });
-
-      expect(error.message).toContain("Shield absent");
-    });
-  });
-
   describe("when the archetype holds a different descriptor of the same name", () => {
     it("throws for the descriptor expected present", () => {
       const storage = storageOf(archetype([Shield]));
@@ -302,6 +283,11 @@ describe("assertFilterMember", () => {
       { name: "null", value: null, expectPresent: true },
       { name: "undefined", value: undefined, expectPresent: false },
       { name: "an object without archetype metadata", value: {}, expectPresent: false },
+      {
+        name: "an object whose archetype is no archetype",
+        value: { archetype: 1 },
+        expectPresent: true,
+      },
     ])(
       "throws naming the component and the missing archetype for $name",
       ({ value, expectPresent }) => {

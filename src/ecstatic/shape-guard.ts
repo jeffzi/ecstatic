@@ -6,13 +6,15 @@
 import type { ArchetypeDescriptor } from "./archetype.js";
 import type { ComponentDescriptor } from "./component.js";
 import { getRelationMeta } from "./relation.js";
-import type { Storage } from "./world.js";
 
 /**
  * Shape key of each storage already checked. An archetype never changes shape after creation, so a
  * storage's key is computed once and a warm call is one lookup and one string comparison.
  */
 const shapeKeys = new WeakMap<object, string>();
+
+/** Error-message tail shared by the guards that receive a value with no archetype. */
+const NO_ARCHETYPE_DETAIL = ", got a value with no archetype";
 
 /**
  * Column kind code of one field default.
@@ -64,11 +66,32 @@ function archetypeShapeKey(arch: ArchetypeDescriptor): string {
  * Reads the archetype a storage-like object carries.
  *
  * @param storage - Untrusted object the call site reads as a storage.
- * @returns Its `archetype` metadata, or `undefined` when it carries none.
+ * @returns Its `archetype` metadata, or `undefined` when it carries none or carries a value
+ *   lacking the lists the guards read.
  */
 function archetypeOf(storage: object): ArchetypeDescriptor | undefined {
-  const meta: Partial<Pick<Storage, "archetype">> = storage;
-  return meta.archetype;
+  const meta: { readonly archetype?: unknown } = storage;
+  return isArchetypeShaped(meta.archetype) ? meta.archetype : undefined;
+}
+
+/**
+ * Whether an untrusted value holds the archetype lists the guards read. Checked by structure, not
+ * by identity, so a descriptor from another copy of the runtime still passes.
+ *
+ * @param value - The value a storage carries as its archetype.
+ * @returns Whether it has `components` and `optionals` arrays and a `componentLookup` set.
+ */
+function isArchetypeShaped(value: unknown): value is ArchetypeDescriptor {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "components" in value &&
+    Array.isArray(value.components) &&
+    "optionals" in value &&
+    Array.isArray(value.optionals) &&
+    "componentLookup" in value &&
+    value.componentLookup instanceof Set
+  );
 }
 
 /**
@@ -78,7 +101,7 @@ function archetypeOf(storage: object): ArchetypeDescriptor | undefined {
  * @returns The error naming `key` and the missing archetype.
  */
 function noArchetypeError(key: string): Error {
-  return new Error(`ecstatic: shape guard expected ${key}, got a value with no archetype`);
+  return new Error(`ecstatic: shape guard expected ${key}${NO_ARCHETYPE_DETAIL}`);
 }
 
 /**
@@ -134,7 +157,7 @@ export function assertFilterMember(
 ): void {
   const arch = typeof storage === "object" && storage !== null ? archetypeOf(storage) : undefined;
   if (arch === undefined) {
-    throw filterGuardError(component, expectPresent, ", got a value with no archetype");
+    throw filterGuardError(component, expectPresent, NO_ARCHETYPE_DETAIL);
   }
   if (arch.componentLookup.has(component) !== expectPresent) {
     throw filterGuardError(component, expectPresent, " in the storage's archetype");

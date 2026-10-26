@@ -131,15 +131,13 @@ export function normalizeFilter(
   anyIds: readonly ComponentDescriptor[],
   noneIds: readonly ComponentDescriptor[],
 ] {
-  if (Array.isArray(filter)) {
+  if (isArray(filter)) {
     return [filter, EMPTY_COMPONENT_IDS, EMPTY_COMPONENT_IDS];
   }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Array.isArray does not narrow readonly arrays
-  const f = filter as EachFilter;
   return [
-    f.all ?? EMPTY_COMPONENT_IDS,
-    f.any ?? EMPTY_COMPONENT_IDS,
-    f.none ?? EMPTY_COMPONENT_IDS,
+    filter.all ?? EMPTY_COMPONENT_IDS,
+    filter.any ?? EMPTY_COMPONENT_IDS,
+    filter.none ?? EMPTY_COMPONENT_IDS,
   ];
 }
 
