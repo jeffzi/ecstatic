@@ -166,9 +166,50 @@ export interface Site {
   readonly context: StmtContext;
   /** Set for an `each` call that passes a filter argument. */
   readonly filtered: boolean;
+  /** The filter argument of a call {@link Site.filtered} marks; absent on every other site. */
+  readonly filter?: Filter;
   /** Set for an `each` call whose storages argument is an array literal, whatever its length. */
   readonly arrayLiteral: boolean;
 }
+
+/** One element of a literal filter's axis. */
+export interface FilterElement {
+  readonly node: NodeID;
+  /** The component name the element's type pins. */
+  readonly name: string;
+}
+
+/**
+ * A filter written as a literal at every level: an array literal, read as its `all` axis, or an
+ * object literal whose every property is an axis written as `key: [ … ]`, with no spread, and every
+ * element's type pinning one component name. Each axis lists its elements in source order; an
+ * omitted axis is empty.
+ */
+export interface LiteralFilter {
+  readonly kind: "literal";
+  readonly all: readonly FilterElement[];
+  readonly any: readonly FilterElement[];
+  readonly none: readonly FilterElement[];
+}
+
+/**
+ * What a non-literal filter's static type says about its value: `array` when every member of the
+ * type is array-like, `object` when every member is a non-array object, `mixed` when members are
+ * both, and `unsupported` when the type is `any` or `unknown` or admits `null`, `undefined`, a
+ * primitive, or a callable.
+ */
+export type FilterForm = "array" | "object" | "mixed" | "unsupported";
+
+/** A filter that is not literal, read off its type alone. */
+export interface NonLiteralFilter {
+  readonly kind: "non-literal";
+  /** The filter expression. */
+  readonly node: NodeID;
+  readonly form: FilterForm;
+}
+
+/** The filter argument of an `each` call. */
+export type Filter = LiteralFilter | NonLiteralFilter;
 
 /**
  * Adds a declaration file to a site, keeping its list sorted and free of duplicates.

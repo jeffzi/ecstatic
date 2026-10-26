@@ -100,6 +100,86 @@ export async function resolveStorageShape(
 }
 
 /**
+ * The static type of an expression. The checker types a value declared in another file, an
+ * imported one or a property of an imported object, from that file, so that file is consulted.
+ *
+ * @param checker - Checker of the program holding `expr`.
+ * @param expr - The expression to type.
+ * @param files - The consulted declaration files, which the declaring file joins.
+ * @returns Its static type.
+ * @throws When the declaring file is no longer available.
+ */
+export async function consultedType(
+  checker: Checker,
+  expr: Expression,
+  files: Set<string>,
+): Promise<Type> {
+  const [file, type] = await Promise.all([
+    foreignValueFileName(checker, expr),
+    typeAtLocation(checker, expr),
+  ]);
+  if (file !== undefined) files.add(file);
+  return type;
+}
+
+/**
+ * The component name a descriptor type pins: its `__ecstatic_name`, which must be a single string
+ * literal.
+ *
+ * @param checker - Checker that produced `type`.
+ * @param type - A component descriptor type.
+ * @param files - The consulted declaration files, which the declarations of `__ecstatic_name` join.
+ * @returns The name, or undefined when `type` does not pin one, as a union of names does not.
+ * @throws When a declaration's source file is no longer available.
+ */
+export async function componentName(
+  checker: Checker,
+  type: Type,
+  files: Set<string>,
+): Promise<string | undefined> {
+  return stringLiteralValue(await consultedProperty(checker, type, "__ecstatic_name", files));
+}
+
+/**
+ * The type of a property, whose declarations are consulted.
+ *
+ * @param checker - Checker that produced `type`.
+ * @param type - Type holding the property.
+ * @param name - Property name.
+ * @param files - The consulted declaration files, which the property's declarations join.
+ * @returns The property's type, or undefined when `type` has no such property.
+ * @throws When a declaration's source file is no longer available.
+ */
+async function consultedProperty(
+  checker: Checker,
+  type: Type,
+  name: string,
+  files: Set<string>,
+): Promise<Type | undefined> {
+  const symbol = await propertyOfType(checker, type, name);
+  if (symbol === undefined) return undefined;
+  const [, propertyType] = await Promise.all([
+    consultDeclarations(symbol, files),
+    typeOfSymbol(checker, symbol),
+  ]);
+  return propertyType;
+}
+
+/**
+ * Adds the files declaring a symbol to the consulted declaration files.
+ *
+ * @param symbol - The symbol; undefined when the type has none, which declares nothing.
+ * @param files - The consulted declaration files, which the symbol's declaring files join.
+ * @throws When a declaration's source file is no longer available.
+ */
+export async function consultDeclarations(
+  symbol: CheckerSymbol | undefined,
+  files: Set<string>,
+): Promise<void> {
+  for (const file of await declarationFileNames(symbol)) files.add(file);
+}
+
+/**
  * Whether a type annotation is a union with `undefined` among its members.
  *
  * @param type - The annotation; undefined when there is none.
@@ -136,7 +216,7 @@ async function fieldKind(checker: Checker, type: Type): Promise<FieldKind> {
  * @param items - Each item, undefined where it did not resolve.
  * @returns The items, or undefined when any of them did not resolve.
  */
-function resolvedAll<T>(items: readonly (T | undefined)[]): T[] | undefined {
+export function resolvedAll<T>(items: readonly (T | undefined)[]): T[] | undefined {
   const resolved: T[] = [];
   for (const item of items) {
     if (item === undefined) return undefined;
@@ -162,7 +242,7 @@ class ShapeResolver {
    */
   async argumentShapes(arg: Expression): Promise<readonly ArchShape[] | Reason> {
     if (isArrayLiteralExpression(arg)) return await this.#elementShapes(arg.elements);
-    const type = await this.#storageType(arg);
+    const type = await consultedType(this.#checker, arg, this.files);
     const shape = await this.#storageShape(type);
     if (shape !== undefined) return [shape];
     // `any` is assignable to an array, so it must not read as a storages list.
@@ -180,7 +260,7 @@ class ShapeResolver {
    * @throws When a consulted declaration's source file is no longer available.
    */
   async storageShape(storage: Expression): Promise<ArchShape | undefined> {
-    return await this.#storageShape(await this.#storageType(storage));
+    return await this.#storageShape(await consultedType(this.#checker, storage, this.files));
   }
 
   /**
@@ -198,23 +278,6 @@ class ShapeResolver {
       elements.map(async (element) => await this.storageShape(element)),
     );
     return resolvedAll(shapes) ?? "STORAGES_DYNAMIC";
-  }
-
-  /**
-   * The static type of a storage expression. The checker types a storage declared in another file,
-   * an imported one or a property of an imported object, from that file, so that file is consulted.
-   *
-   * @param storage - A storage expression.
-   * @returns Its static type.
-   * @throws When the declaring file is no longer available.
-   */
-  async #storageType(storage: Expression): Promise<Type> {
-    const [file, type] = await Promise.all([
-      foreignValueFileName(this.#checker, storage),
-      typeAtLocation(this.#checker, storage),
-    ]);
-    if (file !== undefined) this.files.add(file);
-    return type;
   }
 
   /**
@@ -285,12 +348,11 @@ class ShapeResolver {
    * @throws When a consulted declaration's source file is no longer available.
    */
   async #component(type: Type): Promise<Component | undefined> {
-    const [nameType, relationMeta, componentMeta] = await Promise.all([
-      this.#property(type, "__ecstatic_name"),
+    const [name, relationMeta, componentMeta] = await Promise.all([
+      componentName(this.#checker, type, this.files),
       this.#property(type, "__ecstatic_relation_meta"),
       this.#property(type, "__ecstatic_component_meta"),
     ]);
-    const name = stringLiteralValue(nameType);
     const meta = relationMeta ?? componentMeta;
     if (name === undefined || meta === undefined) return undefined;
     // The component meta is declared optional, so its type includes undefined.
@@ -328,7 +390,7 @@ class ShapeResolver {
    */
   async #field(property: CheckerSymbol): Promise<Field> {
     const [, type, isRef] = await Promise.all([
-      this.#consult(property),
+      consultDeclarations(property, this.files),
       typeOfSymbol(this.#checker, property),
       this.#isRefField(property),
     ]);
@@ -368,20 +430,10 @@ class ShapeResolver {
    * @throws When a declaration's source file is no longer available.
    */
   async #property(type: Type, name: string): Promise<Type | undefined> {
-    const symbol = await propertyOfType(this.#checker, type, name);
-    if (symbol === undefined) return undefined;
-    const [, propertyType] = await Promise.all([
-      this.#consult(symbol),
-      typeOfSymbol(this.#checker, symbol),
-    ]);
-    return propertyType;
+    return await consultedProperty(this.#checker, type, name, this.files);
   }
 
   async #consultType(type: Type): Promise<void> {
-    await this.#consult(await typeSymbol(type));
-  }
-
-  async #consult(symbol: CheckerSymbol | undefined): Promise<void> {
-    for (const file of await declarationFileNames(symbol)) this.files.add(file);
+    await consultDeclarations(await typeSymbol(type), this.files);
   }
 }

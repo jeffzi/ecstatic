@@ -1,4 +1,4 @@
-import type { CallExpression, Node, SourceFile } from "typescript/ast";
+import type { CallExpression, Expression, Node, SourceFile } from "typescript/ast";
 import {
   isArrayLiteralExpression,
   isArrowFunction,
@@ -8,7 +8,9 @@ import {
 
 import { type Checker, sourceFileName } from "../compiler.js";
 import {
+  type ArchShape,
   type Callback,
+  type Filter,
   iterates,
   matchesArgCount,
   type NodeID,
@@ -20,6 +22,7 @@ import { NodeTable } from "../nodes.js";
 import { nodePosition } from "../position.js";
 import type { InlineCallback } from "../syntax.js";
 import { type CallbackScope, inlineCallback, prepareCallback } from "./callback.js";
+import { type FilterReading, readFilter } from "./filter.js";
 import { type PackageRoots, type Recognized, recognize } from "./roots.js";
 import { resolveShapes } from "./shape.js";
 
@@ -82,6 +85,7 @@ interface Draft extends RecognizedCall {
 /** A site whose queries have all answered, its callback's nodes not yet registered. */
 interface PreparedSite {
   readonly site: Site;
+  readonly registerFilter: (() => Filter) | undefined;
   readonly register: (() => Callback) | undefined;
   readonly nested: readonly PreparedSite[];
 }
@@ -150,11 +154,12 @@ async function prepareTree(scope: CallbackScope, draft: Draft): Promise<Prepared
 
 /**
  * Gathers the facts of one site: its argument count, how an `each` passes its storages and filter
- * and the shapes they resolve to, and the queries its inline callback needs.
+ * and what they resolve to, and the queries its inline callback needs.
  *
  * @param scope - The file, with the checker, root cache, and node table.
  * @param draft - The draft of the site.
- * @returns The site, with no callback or nested sites yet, and the registration of its callback.
+ * @returns The site, with no filter, callback, or nested sites yet, and the registrations of its
+ *   filter and callback.
  * @throws When a consulted declaration's source file is no longer available.
  */
 async function prepareSite(
@@ -166,38 +171,95 @@ async function prepareSite(
   const mismatch = iterates(op) && !matchesArgCount(op, args.length);
   // A call that keeps its runtime form never needs its shapes.
   const storages = op === "each" && !mismatch ? args[0] : undefined;
-  const resolution =
-    storages === undefined ? undefined : await resolveShapes(scope.checker, storages);
+  const filter = args.length === 3 ? args[1] : undefined;
+  const each = storages === undefined ? NO_EACH : await readEach(scope, storages, filter);
   const reasons: Reason[] = mismatch ? ["ARG_COUNT"] : [];
-  if (resolution?.reason !== undefined) reasons.push(resolution.reason);
+  if (each.reason !== undefined) reasons.push(each.reason);
   const site: Site = {
     callback: undefined,
     reasons,
     nested: [],
-    shapes: resolution?.shapes ?? [],
-    declarationFiles: [...(resolution?.declarationFiles ?? [])],
+    shapes: each.shapes,
+    declarationFiles: [...each.declarationFiles],
     root: draft.root,
     pos: nodePosition(scope.file, call),
     call: draft.id,
     op,
     context: statementContext(call),
-    filtered: storages !== undefined && args.length === 3,
-    arrayLiteral: storages !== undefined && isArrayLiteralExpression(storages),
+    filtered: each.filter !== undefined,
+    arrayLiteral: each.arrayLiteral,
   };
   const register =
     draft.callback === undefined ? undefined : await prepareCallback(scope, site, draft.callback);
-  return { site, register };
+  return { site, registerFilter: each.filter?.register, register };
+}
+
+/** What the storages and filter arguments of an `each` call resolve to. */
+interface EachReading {
+  /** One shape for a single storage, one per element for an array literal; empty when unresolved. */
+  readonly shapes: readonly ArchShape[];
+  /** Why the shapes are not known statically; undefined when they resolved. */
+  readonly reason: Reason | undefined;
+  /** The filter argument's reading; undefined when the call passes none. */
+  readonly filter: FilterReading | undefined;
+  /** The declaration files both readings consulted, sorted and without duplicates. */
+  readonly declarationFiles: readonly string[];
+  readonly arrayLiteral: boolean;
+}
+
+/** The reading of a call that is no `each`, or one that keeps its runtime form. */
+const NO_EACH: EachReading = {
+  shapes: [],
+  reason: undefined,
+  filter: undefined,
+  declarationFiles: [],
+  arrayLiteral: false,
+};
+
+/**
+ * Resolves the storages and reads the filter of an `each` call.
+ *
+ * @param scope - The file, with the checker and node table.
+ * @param storages - The call's storages argument.
+ * @param filterArg - The call's filter argument; undefined when it passes none.
+ * @returns The storages' shapes or the reason they did not resolve, and the filter's reading,
+ *   with the files both consulted.
+ * @throws When a consulted declaration's source file is no longer available.
+ */
+async function readEach(
+  scope: CallbackScope,
+  storages: Expression,
+  filterArg: Expression | undefined,
+): Promise<EachReading> {
+  const [resolution, filter] = await Promise.all([
+    resolveShapes(scope.checker, storages),
+    filterArg === undefined ? undefined : readFilter(scope.checker, scope.table, filterArg),
+  ]);
+  const declarationFiles = new Set([
+    ...resolution.declarationFiles,
+    ...(filter?.declarationFiles ?? []),
+  ]);
+  return {
+    shapes: resolution.shapes,
+    reason: resolution.reason,
+    filter,
+    declarationFiles: [...declarationFiles].toSorted(),
+    arrayLiteral: isArrayLiteralExpression(storages),
+  };
 }
 
 /**
- * Registers the callback nodes of a prepared site and of its nested sites, depth-first.
+ * Registers the filter and callback nodes of a prepared site, in that source order, then those of
+ * its nested sites, depth-first.
  *
  * @param prepared - The prepared site.
  * @returns The finished site.
  */
 function finish(prepared: PreparedSite): Site {
+  const filter = prepared.registerFilter?.();
   const callback = prepared.register?.();
-  return { ...prepared.site, callback, nested: prepared.nested.map(finish) };
+  const site: Site = { ...prepared.site, callback, nested: prepared.nested.map(finish) };
+  return filter === undefined ? site : { ...site, filter };
 }
 
 /**
