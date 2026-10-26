@@ -14,10 +14,13 @@ import {
 import { RULES, type Rule } from "../../src/plugin/optimizer/emit/catalog.js";
 import type { EmitFile } from "../../src/plugin/optimizer/emit/emit.js";
 import {
+  compareCodeUnits,
   DETAIL_PLACEHOLDER,
+  type Reason,
   REASONS,
   type ReasonInfo,
   reasonInfo,
+  type Site,
 } from "../../src/plugin/optimizer/facts.js";
 import { type Bail, plan, type PlanResult } from "../../src/plugin/optimizer/plan.js";
 import {
@@ -27,6 +30,7 @@ import {
 } from "../../src/plugin/optimizer/rewrite.js";
 import { openSession, type Session } from "../../src/plugin/optimizer/session.js";
 import { advanceCall } from "../benchmarks/fixtures.js";
+import { relativePath } from "../unit/optimizer/project.js";
 import { createProject, removeTempDirs } from "../unit/plugin/tsconfig-fixtures.js";
 import {
   CORPUS_FILES,
@@ -39,6 +43,16 @@ import {
 } from "./fixture-corpus.js";
 
 const BENCHMARK_ROOT = realpathSync(fileURLToPath(new URL("../../benchmarks", import.meta.url)));
+
+const REPO_ROOT = realpathSync(fileURLToPath(new URL("../..", import.meta.url)));
+
+const UNIT_ROOT = join(REPO_ROOT, "tests", "unit");
+
+/** Every `.ts` file of the unit suite, absolute and sorted. */
+const UNIT_FILES = readdirSync(UNIT_ROOT, { recursive: true, withFileTypes: true })
+  .filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
+  .map((entry) => join(entry.parentPath, entry.name))
+  .toSorted(compareCodeUnits);
 
 const BAIL_CORPUS = "bail";
 
@@ -104,6 +118,17 @@ interface Found {
   readonly detail: string | undefined;
 }
 
+/**
+ * A filtered each call that keeps its runtime call: the slash-separated file relative to the
+ * repository, the 1-based line of the call, and the reason the plan gives, `undefined` when the plan
+ * neither rewrites nor bails it.
+ */
+interface KeptCall {
+  readonly file: string;
+  readonly line: number;
+  readonly reason: Reason | undefined;
+}
+
 /** One rule a fixture's rewrite claim says its rewrite applies, with the file and line of the claim. */
 interface Claim {
   readonly file: string;
@@ -123,9 +148,10 @@ interface Stray {
   readonly dir: string;
 }
 
-/** What rewriting every file of a corpus gave, with the plan and applied rules of each file. */
+/** What rewriting every file of a corpus gave, with the sites, plan, and applied rules of each file. */
 interface CorpusRun {
   readonly modules: ReadonlyMap<string, RewrittenModule>;
+  readonly analyzed: ReadonlyMap<string, readonly Site[]>;
   readonly planned: ReadonlyMap<string, PlanResult>;
   readonly applied: ReadonlyMap<string, ReadonlySet<Rule>>;
 }
@@ -359,15 +385,18 @@ function catalogGaps(
   return { gaps, uncovered: RULES.filter((rule) => !covered.has(rule)) };
 }
 
-/** Rewrites every one of `files` in one view of `session`, recording each file's plan and applied rules. */
+/** Rewrites every one of `files` in one view of `session`, recording each file's sites, plan, and applied rules. */
 async function rewriteAll(session: Session, files: readonly string[]): Promise<CorpusRun> {
   const view = await session.update();
+  const analyzed = new Map<string, readonly Site[]>();
   const planned = new Map<string, PlanResult>();
   const emitted = new Map<string, EmitFile>();
   const seams: RewriteSeams = {
     analyze: async (checker, source, roots) => {
       const analysis = await analyze(checker, source, roots);
-      planned.set(sourceFileName(source), plan(analysis.sites));
+      const file = sourceFileName(source);
+      analyzed.set(file, analysis.sites);
+      planned.set(file, plan(analysis.sites));
       return analysis;
     },
     inline: (file, inlining, uses) => {
@@ -383,7 +412,44 @@ async function rewriteAll(session: Session, files: readonly string[]): Promise<C
   const applied = new Map(
     [...emitted].map(([file, emit]) => [file, new Set(emit.applied())] as const),
   );
-  return { modules, planned, applied };
+  return { modules, analyzed, planned, applied };
+}
+
+/** `site` followed by every site nested in its callback, depth first. */
+function withNested(site: Site): Site[] {
+  return [site, ...site.nested.flatMap(withNested)];
+}
+
+/** Whether `site` is an each call over one storage, with a filter and an inline callback. */
+function isFilteredInlineEach(site: Site): boolean {
+  return site.op === "each" && site.filtered && !site.arrayLiteral && site.callback !== undefined;
+}
+
+/**
+ * Every filtered single-storage each call with an inline callback that `run` planned no rewrite for,
+ * nested calls included.
+ *
+ * @param run - The run whose sites and plans are read.
+ * @returns Each such call with the reason its plan gives, sorted by file then line.
+ */
+function keptFilteredCalls(run: CorpusRun): KeptCall[] {
+  return [...run.analyzed]
+    .flatMap(([file, sites]) => {
+      const result = run.planned.get(file);
+      const rewritten = new Set(result?.rewrites.map(({ call }) => call));
+      return sites
+        .flatMap(withNested)
+        .filter((site) => isFilteredInlineEach(site) && !rewritten.has(site.call))
+        .map((site) => ({
+          file: relativePath(REPO_ROOT, file),
+          line: site.pos.line,
+          reason: result?.bails.find(({ call }) => call === site.call)?.reason,
+        }));
+    })
+    .toSorted((a, b) => {
+      const byFile = compareCodeUnits(a.file, b.file);
+      return byFile === 0 ? a.line - b.line : byFile;
+    });
 }
 
 /** The module `run` rewrote from `file`; throws when the run did not rewrite it. */
@@ -598,6 +664,31 @@ describe("benchmarks", () => {
       .map(({ mode }) => mode);
 
     expect(modes).toStrictEqual(["realloc-safe"]);
+  });
+});
+
+describe("unit suite", () => {
+  /**
+   * The filtered calls of the unit suite that keep their runtime call, sorted by file then line:
+   * - a number as the filter matches no filter form;
+   * - the outer call holds an inlined each, so it keeps its runtime call.
+   */
+  const KEPT: readonly KeptCall[] = [
+    { file: "tests/unit/entity/each.test.ts", line: 420, reason: "OP_NOT_REWRITTEN" },
+    { file: "tests/unit/filter.test.ts", line: 369, reason: "OP_NOT_REWRITTEN" },
+  ];
+  let session: Session;
+  let run: CorpusRun;
+
+  beforeAll(async () => {
+    session = await openSession(join(REPO_ROOT, "tests", "tsconfig.json"));
+    run = await rewriteAll(session, UNIT_FILES);
+  }, CORPUS_TIMEOUT_MS);
+
+  afterAll(() => session.close());
+
+  it("rewrites every filtered single-storage each with an inline callback but the kept ones", () => {
+    expect(keptFilteredCalls(run)).toStrictEqual(KEPT);
   });
 });
 

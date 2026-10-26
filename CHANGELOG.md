@@ -9,8 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Add the `ecstatic/vite` plugin, which compiles a single-storage, unfiltered `each()` call with an
-  inline callback into a loop over the storage's columns
+- Add the `ecstatic/vite` plugin, which compiles a single-storage `each()` call with an inline
+  callback, filtered or unfiltered, into a loop over the storage's columns
 
 ### Changed
 
