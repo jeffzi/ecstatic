@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 import type { World } from "ecstatic";
-import { Bench, type TimestampProvider } from "tinybench";
+import { Bench, type Fn } from "tinybench";
 import {
   afterEach,
   beforeEach,
@@ -14,13 +14,7 @@ import {
   vi,
 } from "vitest";
 
-import {
-  type BenchLifecycle,
-  measure,
-  type MeasureOptions,
-  type Measurement,
-  type NoInline,
-} from "../../benchmarks/measure.js";
+import { type BenchLifecycle, measure, type NoInline } from "../../benchmarks/measure.js";
 import { REPO_ROOT } from "../unit/plugin/tsconfig-fixtures.js";
 import { type BareWorldCtx, buildBareWorld } from "./fixtures.js";
 import { realBunRequired } from "./real-bun.js";
@@ -28,13 +22,14 @@ import { realBunRequired } from "./real-bun.js";
 /**
  * The simulated machine every test measures on.
  *
- * `trace` holds builds, body calls, clock reads, collections, and world destroys, in the order they
- * happen. `ns` is the simulated time in whole nanoseconds; builds, bodies, and destroys advance it
- * by their cost, and a clock read that directly follows another read finds it one nanosecond on, so
- * a loop polling the clock sees it move while a sample's two reads see only what ran between them.
- * Every clock read goes through `SIM_CLOCK`, the timestamp provider each test hands the bench.
- * `stepNs` is the step the clock reports in. `noInlined` holds every function the stand-in for Bun's
- * `noInline` received.
+ * `trace` holds samples starting, builds, body calls, clock reads, collections, world destroys, and
+ * the loading of `bun:jsc`, calls of its `noInline`, and queued microtasks some tests record, in the
+ * order they happen. `ns` is the simulated time in whole nanoseconds; builds, bodies, and destroys
+ * advance it by their cost (a destroy by `destroyNs`), and a clock read that directly follows
+ * another read finds it at the start of the next step, so a loop polling the clock sees it move one
+ * step per change while a sample's two reads see only what ran between them. Every read of `performance.now()` reads this clock; tinybench's own clock,
+ * bound when it loaded, stays the real one. `stepNs` is the step the clock reports in. `noInlined`
+ * holds every function the stand-in for Bun's `noInline` received.
  */
 const sim = vi.hoisted(() => ({
   trace: [] as string[],
@@ -134,31 +129,19 @@ function recorder({
   return { lifecycle: { kind, build, body }, built, received, bodyError, buildError };
 }
 
-/** Reads the simulated clock, in whole nanoseconds as `process.hrtime.bigint()` reports them. */
-function readClock(): bigint {
-  if (sim.trace.at(-1) === "clock") sim.ns += 1;
+/** Reads the simulated clock, in milliseconds as `performance.now()` reports them. */
+function readClock(): number {
+  if (sim.trace.at(-1) === "clock") sim.ns = (Math.floor(sim.ns / sim.stepNs) + 1) * sim.stepNs;
   sim.trace.push("clock");
-  return BigInt(Math.floor(sim.ns / sim.stepNs) * sim.stepNs);
+  return (Math.floor(sim.ns / sim.stepNs) * sim.stepNs) / NS_PER_MS;
 }
 
-/** The simulated clock as a timestamp provider, shaped like tinybench's hrtime one. */
-const SIM_CLOCK: TimestampProvider = {
-  name: "simulated",
-  fn: readClock,
-  toMs: (ns) => Number(ns) / NS_PER_MS,
-  fromMs: (ms) => BigInt(Math.round(ms * NS_PER_MS)),
-};
+/** tinybench's own `Bench.add`, which the spy every test installs passes each task on to. */
+// oxlint-disable-next-line typescript/unbound-method -- only ever invoked as `benchAdd.call(bench, …)`
+const benchAdd = Bench.prototype.add;
 
-/** The error a read of `performance.now()` throws: the driver may read only the bench's clock. */
-const FOREIGN_CLOCK = "read performance.now(), not the clock the bench times on";
-
-/** Measures `lifecycle` with the bench timing on the simulated clock. */
-function measureOnSim(
-  lifecycle: BenchLifecycle<BareWorldCtx>,
-  options: MeasureOptions = {},
-): Promise<Measurement> {
-  return measure(lifecycle, { timestampProvider: SIM_CLOCK, ...options });
-}
+/** The spy on `Bench.add` every test installs, marking each sample's start in the trace. */
+let taskAdds: MockInstance<Bench["add"]>;
 
 /** How many times `event` appears in the trace between `from` and `to`. */
 function count(event: string, from = 0, to = sim.trace.length): number {
@@ -170,47 +153,33 @@ function warmupBodyCalls(): number {
   return count("body", 0, sim.trace.indexOf("gc"));
 }
 
-/** The number of samples before the collection: each run of consecutive body calls is one. */
+/** The number of samples before the collection. */
 function warmupSamples(): number {
-  return sim.trace
-    .slice(0, sim.trace.indexOf("gc"))
-    .filter((e, i, events) => e === "body" && events[i - 1] !== "body").length;
+  return count("sample", 0, sim.trace.indexOf("gc"));
 }
 
-/** The builds, body calls, and destroys of the trace, as runs of one event and their lengths. */
-function lifecycleRuns(): [string, number][] {
-  const runs: [string, number][] = [];
-  for (const event of sim.trace) {
-    if (event !== "build" && event !== "body" && event !== "destroy") continue;
-    const last = runs.at(-1);
-    if (last?.[0] === event) {
-      last[1] += 1;
-    } else {
-      runs.push([event, 1]);
-    }
-  }
-  return runs;
+/** The trace's events of the given kinds, in order. */
+function only(...kinds: string[]): string[] {
+  return sim.trace.filter((e) => kinds.includes(e));
 }
 
-/** The lifecycle events of the trace, each run of repeats collapsed into one. */
+/** The builds, body calls, collections, and destroys of the trace, each run of repeats collapsed. */
 function lifecycleOrder(): string[] {
-  const events = sim.trace.filter((e) => e !== "clock");
+  const events = only("build", "body", "gc", "destroy");
   return events.filter((e, i) => e !== events[i - 1]);
 }
 
-/** The number of consecutive body calls in each sample after the collection. */
+/** The number of body calls in each sample after the collection. */
 function callsPerTimedSample(): number[] {
-  const runs: number[] = [];
-  let run = 0;
+  const calls: number[] = [];
   for (const event of sim.trace.slice(sim.trace.indexOf("gc") + 1)) {
-    if (event === "body") {
-      run += 1;
-    } else if (run > 0) {
-      runs.push(run);
-      run = 0;
+    if (event === "sample") {
+      calls.push(0);
+    } else if (event === "body" && calls.length > 0) {
+      calls[calls.length - 1] = (calls.at(-1) ?? 0) + 1;
     }
   }
-  return runs;
+  return calls;
 }
 
 /** Makes the running engine read as Bun until the current test finishes. */
@@ -242,8 +211,24 @@ beforeEach(() => {
   sim.stepNs = 1;
   sim.destroyNs = 0;
   sim.noInlined.length = 0;
-  vi.spyOn(performance, "now").mockImplementation(() => {
-    throw new Error(FOREIGN_CLOCK);
+  // A plain own property, not a spy: the timer-step probe reads the clock millions of times, and a
+  // spy records every call until the worker runs out of memory.
+  Object.defineProperty(performance, "now", { value: readClock, configurable: true });
+  taskAdds = vi.spyOn(Bench.prototype, "add").mockImplementation(function (
+    this: Bench,
+    name: string,
+    fn: Fn,
+    options,
+  ) {
+    return benchAdd.call(
+      this,
+      name,
+      () => {
+        sim.trace.push("sample");
+        return fn();
+      },
+      options,
+    );
   });
   vi.stubGlobal("gc", () => {
     sim.trace.push("gc");
@@ -251,6 +236,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  Reflect.deleteProperty(performance, "now");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -259,7 +245,7 @@ describe("measure on a warmed benchmark", () => {
   it("builds once, warms up before the collection, times after it, then destroys the world once", async () => {
     const { lifecycle } = recorder({ kind: "warmed" });
 
-    await measureOnSim(lifecycle);
+    await measure(lifecycle);
 
     expect(lifecycleOrder()).toStrictEqual(["build", "body", "gc", "body", "destroy"]);
     expect([count("build"), count("destroy")]).toStrictEqual([1, 1]);
@@ -268,7 +254,7 @@ describe("measure on a warmed benchmark", () => {
   it("runs every body call against the one context it built", async () => {
     const { lifecycle, built, received } = recorder({ kind: "warmed" });
 
-    await measureOnSim(lifecycle);
+    await measure(lifecycle);
 
     expect(received.every((ctx) => ctx === built[0])).toBe(true);
   });
@@ -278,7 +264,7 @@ describe("measure on a warmed benchmark", () => {
     async ({ fails }) => {
       const { lifecycle, bodyError } = recorder({ kind: "warmed", bodyFails: fails });
 
-      const outcome = measureOnSim(lifecycle);
+      const outcome = measure(lifecycle);
 
       await expect(outcome).rejects.toBe(bodyError);
       expect(count("destroy")).toBe(1);
@@ -287,92 +273,68 @@ describe("measure on a warmed benchmark", () => {
 });
 
 describe("measure on a manual benchmark", () => {
-  it("builds a fresh context for every sample and runs the body once on it", async () => {
-    const { lifecycle, built, received } = recorder({ kind: "manual" });
+  it("builds a fresh world for every body call of a batched sample and runs the body once on it", async () => {
+    sim.stepNs = 1000;
+    const { lifecycle, built, received } = recorder({ kind: "manual", bodyNs: 25_000 });
 
-    await measureOnSim(lifecycle);
+    await measure(lifecycle);
 
     expect(new Set(built).size).toBe(received.length);
     expect(received.every((ctx, i) => ctx === built[i])).toBe(true);
   });
 
-  it("destroys each sample's world right after its body call", async () => {
-    const { lifecycle } = recorder({ kind: "manual" });
+  it("builds each call's world, reads the clock, runs the body, reads the clock, then destroys the world, one call at a time", async () => {
+    sim.stepNs = 1000;
+    const { lifecycle } = recorder({ kind: "manual", bodyNs: 25_000 });
 
-    await measureOnSim(lifecycle);
+    await measure(lifecycle);
 
-    const events = sim.trace.filter((e) => e === "build" || e === "body" || e === "destroy");
-    expect(events.join(",")).toBe(
-      Array(events.length / 3)
-        .fill("build,body,destroy")
-        .join(","),
+    const events = sim.trace
+      .slice(sim.trace.indexOf("build"))
+      .filter((e) => e === "build" || e === "clock" || e === "body" || e === "destroy");
+    expect(events).toStrictEqual(
+      Array.from({ length: count("body") }, () => [
+        "build",
+        "clock",
+        "body",
+        "clock",
+        "destroy",
+      ]).flat(),
     );
   });
 
   it.each([
-    { stepNs: 1000, bodyNs: 199_000, contexts: 2 },
-    { stepNs: 1000, bodyNs: 25_000, contexts: 8 },
-    { stepNs: 1000, bodyNs: 200_000, contexts: 1 },
-    { stepNs: 1000, bodyNs: 99_000, contexts: 3 },
-    { stepNs: 10_000, bodyNs: 100_000, contexts: 20 },
+    { stepNs: 1000, bodyNs: 199_000, calls: 2 },
+    { stepNs: 1000, bodyNs: 25_000, calls: 8 },
+    { stepNs: 1000, bodyNs: 200_000, calls: 1 },
+    { stepNs: 1000, bodyNs: 99_000, calls: 3 },
+    { stepNs: 10_000, bodyNs: 100_000, calls: 20 },
   ])(
-    "times $contexts contexts per sample for a $bodyNs ns body on a $stepNs ns timer, growing from one in proportion to how far a sample falls short of 200 steps",
-    async ({ stepNs, bodyNs, contexts }) => {
+    "times $calls calls per manual sample for a $bodyNs ns body on a $stepNs ns timer, growing from one in proportion to how far a sample falls short of 200 steps",
+    async ({ stepNs, bodyNs, calls }) => {
       sim.stepNs = stepNs;
       const { lifecycle } = recorder({ kind: "manual", bodyNs });
 
-      await measureOnSim(lifecycle);
+      await measure(lifecycle);
 
-      expect(new Set(callsPerTimedSample())).toStrictEqual(new Set([contexts]));
+      expect(new Set(callsPerTimedSample())).toStrictEqual(new Set([calls]));
     },
   );
 
-  it("runs the body exactly once on each context a batched sample built", async () => {
+  it("destroys the world of every call up to the one whose body throws, builds none after it, and rethrows", async () => {
     sim.stepNs = 1000;
-    const { lifecycle, built, received } = recorder({ kind: "manual", bodyNs: 25_000 });
-
-    await measureOnSim(lifecycle);
-
-    const builtSet = new Set(built);
-    expect(received).toHaveLength(built.length);
-    expect(new Set(received).size).toBe(received.length);
-    expect(received.every((ctx) => builtSet.has(ctx))).toBe(true);
-  });
-
-  it("builds all of a batched sample's contexts before its first body call and destroys them after its last", async () => {
-    sim.stepNs = 1000;
-    const { lifecycle } = recorder({ kind: "manual", bodyNs: 25_000 });
-
-    await measureOnSim(lifecycle);
-
-    const runs = lifecycleRuns();
-    const samples = Array.from({ length: runs.length / 3 }, (_, i) => runs.slice(3 * i, 3 * i + 3));
-    expect(runs.length % 3).toBe(0);
-    expect(
-      samples.every(
-        ([build, body, destroy]) =>
-          build?.[0] === "build" &&
-          body?.[0] === "body" &&
-          destroy?.[0] === "destroy" &&
-          build[1] === body[1] &&
-          body[1] === destroy[1],
-      ),
-    ).toBe(true);
-    expect(samples.at(-1)?.[1]?.[1]).toBe(8);
-  });
-
-  it("destroys every context a batched sample built and rethrows when the body throws on a later one", async () => {
-    sim.stepNs = 1000;
-    const { lifecycle, built, bodyError } = recorder({
+    const { lifecycle, bodyError } = recorder({
       kind: "manual",
       bodyNs: 25_000,
-      bodyFails: () => sim.trace.at(-2) === "body",
+      bodyFails: () => count("body") === 3,
     });
 
-    const outcome = measureOnSim(lifecycle);
+    const outcome = measure(lifecycle);
 
     await expect(outcome).rejects.toBe(bodyError);
-    expect(count("destroy")).toBe(built.length);
+    expect(only("build", "body", "destroy")).toStrictEqual(
+      Array.from({ length: 3 }, () => ["build", "body", "destroy"]).flat(),
+    );
   });
 
   it("rethrows the body's error, not a cap error, when a sample grown to the cap fails before its span is read", async () => {
@@ -387,24 +349,33 @@ describe("measure on a manual benchmark", () => {
       },
     });
 
-    const outcome = measureOnSim(lifecycle);
+    const outcome = measure(lifecycle);
 
     await expect(outcome).rejects.toBe(bodyError);
     expect(count("destroy")).toBe(built.length);
   });
 
-  it("destroys the contexts a batched sample built before its build threw, and rethrows", async () => {
+  it("destroys every world built before a batched sample's build throws, and rethrows", async () => {
     sim.stepNs = 1000;
     const { lifecycle, built, buildError } = recorder({
       kind: "manual",
       bodyNs: 25_000,
-      buildFails: () => sim.trace.at(-2) === "build",
+      buildFails: () => count("build") === 3,
     });
 
-    const outcome = measureOnSim(lifecycle);
+    const outcome = measure(lifecycle);
 
     await expect(outcome).rejects.toBe(buildError);
-    expect(count("destroy")).toBe(built.length);
+    expect(built).toHaveLength(2);
+    expect(only("build", "body", "destroy")).toStrictEqual([
+      "build",
+      "body",
+      "destroy",
+      "build",
+      "body",
+      "destroy",
+      "build",
+    ]);
   });
 
   it.each(BODY_FAILURE_PHASES)(
@@ -412,11 +383,14 @@ describe("measure on a manual benchmark", () => {
     async ({ fails }) => {
       const { lifecycle, bodyError } = recorder({ kind: "manual", bodyFails: fails });
 
-      const outcome = measureOnSim(lifecycle);
+      const outcome = measure(lifecycle);
 
       await expect(outcome).rejects.toBe(bodyError);
-      const events = sim.trace.filter((e) => e !== "clock" && e !== "gc");
-      expect(events.slice(-3)).toStrictEqual(["build", "body", "destroy"]);
+      expect(only("build", "body", "destroy").slice(-3)).toStrictEqual([
+        "build",
+        "body",
+        "destroy",
+      ]);
       expect(count("destroy")).toBe(count("build"));
     },
   );
@@ -429,7 +403,7 @@ describe("measure on a manual benchmark", () => {
     async ({ fails }) => {
       const { lifecycle, built, buildError } = recorder({ kind: "manual", buildFails: fails });
 
-      const outcome = measureOnSim(lifecycle);
+      const outcome = measure(lifecycle);
 
       await expect(outcome).rejects.toBe(buildError);
       expect(count("destroy")).toBe(built.length);
@@ -449,7 +423,7 @@ describe("measure's timing", () => {
       const { lifecycle } = recorder({ kind, bodyNs, buildNs: NS_PER_MS });
       sim.destroyNs = NS_PER_MS;
 
-      const result = await measureOnSim(lifecycle);
+      const result = await measure(lifecycle);
 
       expect(result).toStrictEqual(allTimes(bodyNs));
     },
@@ -462,7 +436,7 @@ describe("measure's timing", () => {
       bodyNs: (call) => costs[call % costs.length] ?? Number.NaN,
     });
 
-    const result = await measureOnSim(lifecycle);
+    const result = await measure(lifecycle);
 
     expect(result).toStrictEqual({
       min: expect.closeTo(1000, 3),
@@ -488,7 +462,7 @@ describe("measure's timing", () => {
       sim.stepNs = stepNs;
       const { lifecycle } = recorder({ kind: "warmed", bodyNs });
 
-      await measureOnSim(lifecycle);
+      await measure(lifecycle);
 
       expect(new Set(callsPerTimedSample())).toStrictEqual(new Set([calls]));
     },
@@ -505,7 +479,7 @@ describe("measure's timing", () => {
       sim.stepNs = 1000;
       const { lifecycle } = recorder({ kind, bodyNs: () => (timed ? 50_000 : 100_000) });
 
-      await measureOnSim(lifecycle);
+      await measure(lifecycle);
 
       expect(new Set(callsPerTimedSample())).toStrictEqual(new Set([2]));
     },
@@ -525,7 +499,7 @@ describe("measure's timing", () => {
         bodyNs: (call) => (call === lastWarmupCall ? 100_000 : bodyNs),
       });
 
-      await measureOnSim(lifecycle);
+      await measure(lifecycle);
 
       expect(new Set(callsPerTimedSample())).toStrictEqual(new Set([2]));
     },
@@ -537,7 +511,7 @@ describe("measure's timing", () => {
       sim.stepNs = 1000;
       const { lifecycle } = recorder({ kind, bodyNs: (call) => (call === 0 ? 200_000 : 50_000) });
 
-      await measureOnSim(lifecycle);
+      await measure(lifecycle);
 
       expect(new Set(callsPerTimedSample())).toStrictEqual(new Set([4]));
     },
@@ -547,7 +521,7 @@ describe("measure's timing", () => {
     sim.stepNs = 1000;
     const { lifecycle } = recorder({ kind: "warmed", bodyNs: (call) => (call === 0 ? 0 : 2000) });
 
-    await measureOnSim(lifecycle);
+    await measure(lifecycle);
 
     expect(new Set(callsPerTimedSample())).toStrictEqual(new Set([100]));
   });
@@ -556,7 +530,7 @@ describe("measure's timing", () => {
     sim.stepNs = 1000;
     const { lifecycle } = recorder({ kind, bodyNs: 25_000 });
 
-    const result = await measureOnSim(lifecycle);
+    const result = await measure(lifecycle);
 
     expect(result).toStrictEqual(allTimes(25_000));
     const batches = [...new Set(callsPerTimedSample())];
@@ -569,7 +543,7 @@ describe("measure's timing", () => {
     async (kind) => {
       const { lifecycle } = recorder({ kind });
 
-      await measureOnSim(lifecycle);
+      await measure(lifecycle);
 
       const gcAt = sim.trace.indexOf("gc");
       const between = sim.trace.slice(
@@ -583,29 +557,26 @@ describe("measure's timing", () => {
     },
   );
 
-  it.each(KINDS)(
-    "times each %s sample between one read of the bench's clock before its first body call and one after its last",
-    async (kind) => {
-      sim.stepNs = 1000;
-      const { lifecycle } = recorder({ kind, bodyNs: 25_000 });
+  it("times each warmed sample, warmup and timed alike, between one clock read before its first body call and one after its last", async () => {
+    sim.stepNs = 1000;
+    const { lifecycle } = recorder({ kind: "warmed", bodyNs: 25_000 });
 
-      const result = await measureOnSim(lifecycle);
+    await measure(lifecycle);
 
-      const timed = sim.trace
-        .slice(sim.trace.indexOf("gc") + 1)
-        .filter((e) => e === "clock" || e === "body")
-        .filter((e, i, events) => e !== "body" || events[i - 1] !== "body");
-      expect(timed).toStrictEqual(
-        Array.from({ length: result.samples }, () => ["clock", "body", "clock"]).flat(),
-      );
-    },
-  );
+    const events = sim.trace
+      .slice(sim.trace.indexOf("build"))
+      .filter((e) => e === "clock" || e === "body")
+      .filter((e, i, all) => e !== "body" || all[i - 1] !== "body");
+    expect(events).toStrictEqual(
+      Array.from({ length: count("sample") }, () => ["clock", "body", "clock"]).flat(),
+    );
+  });
 
   it("throws before anything runs when no garbage collector is exposed", async () => {
     vi.stubGlobal("gc", undefined);
     const { lifecycle } = recorder({ kind: "warmed" });
 
-    const outcome = measureOnSim(lifecycle);
+    const outcome = measure(lifecycle);
 
     await expect(outcome).rejects.toThrow(NO_GC);
     expect(sim.trace).toStrictEqual([]);
@@ -628,7 +599,7 @@ describe("measure's timing", () => {
         },
       };
 
-      await measureOnSim(queuing);
+      await measure(queuing);
 
       expect(sim.trace.indexOf("microtask")).toBeGreaterThan(sim.trace.lastIndexOf("body"));
     },
@@ -644,7 +615,7 @@ describe("measure's stopping rule", () => {
     async ({ bodyNs, warmup, timed }) => {
       const { lifecycle } = recorder({ kind: "warmed", bodyNs });
 
-      const result = await measureOnSim(lifecycle);
+      const result = await measure(lifecycle);
 
       expect(warmupBodyCalls()).toBe(warmup);
       expect(result.samples).toBe(timed);
@@ -660,7 +631,7 @@ describe("measure's stopping rule", () => {
       sim.stepNs = stepNs;
       const { lifecycle } = recorder({ kind: "manual", bodyNs });
 
-      const result = await measureOnSim(lifecycle);
+      const result = await measure(lifecycle);
 
       expect(warmupSamples()).toBe(1000);
       expect(result.samples).toBe(2000);
@@ -680,21 +651,21 @@ describe("measure's batch cap", () => {
       },
     });
 
-    const outcome = measureOnSim(lifecycle);
+    const outcome = measure(lifecycle);
 
     await expect(outcome).rejects.toThrow(/\b4000000\b/);
     expect(received).toHaveLength(1 + 200 + 40_000);
     expect(count("destroy")).toBe(1);
   });
 
-  it("fails a manual run naming the context count asked for past 64, before building them, destroying every context built", async () => {
+  it("fails a manual run naming the call count asked for past 64, before building any world for that sample", async () => {
     sim.stepNs = 1000;
     const { lifecycle, built } = recorder({
       kind: "manual",
       bodyNs: (call) => (call === 0 ? 10_000 : 1500),
     });
 
-    const outcome = measureOnSim(lifecycle);
+    const outcome = measure(lifecycle);
 
     await expect(outcome).rejects.toThrow(/\b134\b/);
     expect(built).toHaveLength(1 + 20);
@@ -702,28 +673,18 @@ describe("measure's batch cap", () => {
   });
 });
 
-/** Spies on tinybench's `Bench.add`, passing every call through, until the test finishes. */
-function spyOnTaskAdds(): MockInstance<Bench["add"]> {
-  const spy = vi.spyOn(Bench.prototype, "add");
-  onTestFinished(() => {
-    spy.mockRestore();
-  });
-  return spy;
-}
-
 describe("measure's noInline", () => {
   it.each(KINDS)(
     "applies an injected noInline to exactly the function a %s benchmark hands tinybench, before handing it over",
     async (kind) => {
       const noInline = vi.fn<NoInline>();
-      const add = spyOnTaskAdds();
       const { lifecycle } = recorder({ kind });
 
-      await measureOnSim(lifecycle, { noInline });
+      await measure(lifecycle, { noInline });
 
-      expect(noInline.mock.calls).toStrictEqual(add.mock.calls.map(([, task]) => [task]));
+      expect(noInline.mock.calls).toStrictEqual(taskAdds.mock.calls.map(([, task]) => [task]));
       expect(Math.max(...noInline.mock.invocationCallOrder)).toBeLessThan(
-        Math.min(...add.mock.invocationCallOrder),
+        Math.min(...taskAdds.mock.invocationCallOrder),
       );
     },
   );
@@ -732,12 +693,11 @@ describe("measure's noInline", () => {
     "applies bun:jsc's noInline under Bun to exactly the function a %s benchmark hands tinybench",
     async (kind) => {
       pretendBun();
-      const add = spyOnTaskAdds();
       const { lifecycle } = recorder({ kind });
 
-      await measureOnSim(lifecycle);
+      await measure(lifecycle);
 
-      expect(sim.noInlined).toStrictEqual(add.mock.calls.map(([, task]) => task));
+      expect(sim.noInlined).toStrictEqual(taskAdds.mock.calls.map(([, task]) => task));
     },
   );
 
@@ -747,7 +707,7 @@ describe("measure's noInline", () => {
     const fresh = await import("../../benchmarks/measure.js");
     const { lifecycle } = recorder({ kind: "warmed" });
 
-    await fresh.measure(lifecycle, { timestampProvider: SIM_CLOCK });
+    await fresh.measure(lifecycle);
 
     expect(sim.trace).not.toContain("bun:jsc");
     expect(sim.noInlined).toStrictEqual([]);
