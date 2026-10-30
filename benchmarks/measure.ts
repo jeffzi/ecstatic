@@ -4,10 +4,10 @@ import { destroyWorld, type World } from "ecstatic";
 import {
   Bench,
   type FnOptions,
-  type FnReturnedObject,
-  type HookMode,
   type SortedSamples,
   type Task,
+  type TimestampProvider,
+  type TimestampValue,
 } from "tinybench";
 
 import type { Engine } from "./runner.js";
@@ -16,9 +16,37 @@ const NS_PER_MS = 1e6;
 
 /**
  * Every sample, warmed or manual, spans at least this many timer steps once warmup settles its
- * count, so one step is at most 0.5 % of it.
+ * count, so one step is at most 0.5 % of it. A warmup sample that falls short scales its count by
+ * how far short it fell, so the count lands near the smallest one that reaches this span: a manual
+ * sample keeps that many worlds alive at once, and any count past that holds more memory for no
+ * gain in resolution.
  */
 const MIN_STEPS_PER_SAMPLE = 200;
+
+/**
+ * How much a warmup sample that read no timer step multiplies its count by: a zero span gives no
+ * ratio to scale by, so the count grows by a fixed factor large enough to reach a measurable span
+ * in few samples.
+ */
+const ZERO_STEP_GROWTH = 100;
+
+/** The most calls a warmed sample may run, or contexts a manual sample may build. */
+interface CountCap {
+  readonly limit: number;
+  readonly unit: "calls" | "contexts";
+}
+
+/**
+ * Past this many calls per sample, a warmed body is too short for the timer: the cap turns it into
+ * an error instead of a batch that grows without bound.
+ */
+const WARMED_CAP: CountCap = { limit: 1_000_000, unit: "calls" };
+
+/**
+ * Past this many contexts per sample, a manual body is too short for the timer: every context is a
+ * live world held for the whole sample, so the cap bounds that memory and fails the run instead.
+ */
+const MANUAL_CAP: CountCap = { limit: 64, unit: "contexts" };
 
 /** How many clock transitions the startup probe takes the smallest of. */
 const STEP_PROBES = 16;
@@ -56,8 +84,11 @@ const MANUAL_BUDGETS: Budgets = {
 
 const TASK_NAME = "body";
 
-/** Runs a whole benchmark (warmup, collection, every timed sample) for a per-sample function. */
-type RunBench = (budgets: Budgets, sample: () => FnReturnedObject, hooks: FnOptions) => Measurement;
+/**
+ * Runs a whole benchmark (warmup, collection, every timed sample) for a per-sample function and
+ * returns its completed task.
+ */
+type RunBench = (budgets: Budgets, sample: () => void, hooks: FnOptions) => Task;
 
 /** Bun's `noInline` from `bun:jsc`: keeps JavaScriptCore from inlining a function into its callers. */
 export type NoInline = typeof bunNoInline;
@@ -93,17 +124,27 @@ export interface Measurement {
 export interface MeasureOptions {
   /** Applied to the per-sample function before tinybench sees it; on Node, none is applied. */
   readonly noInline?: NoInline;
+  /**
+   * The clock tinybench times every sample on, which the timer-step probe and warmup also read;
+   * defaults to the provider tinybench resolves for `"auto"`: `process.hrtime.bigint()` on Node,
+   * `Bun.nanoseconds()` on Bun.
+   */
+  readonly timestampProvider?: TimestampProvider;
 }
 
 /**
  * Measures one benchmark with tinybench's synchronous runner.
  *
- * The timer step is measured at startup from `performance.now()` deltas. Warmup runs untimed, then
+ * tinybench times every sample, reading its clock immediately before and after the per-sample
+ * function, and the timer-step probe and warmup read that same clock, so the three cannot disagree
+ * on its step. The timer step is measured at startup from the clock's deltas. Warmup runs, then
  * `globalThis.gc()` collects once, then the timed samples run; no build or destroy falls inside a
- * sample's clock reads. Warmup doubles a sample's count, starting at 1, until one sample spans at
- * least `MIN_STEPS_PER_SAMPLE` timer steps, and every timed sample runs that count: a warmed sample
- * times that many consecutive body calls on its one context, and a manual sample builds that many
- * contexts and times one body call on each. Either reports its span divided by the count.
+ * sample's clock reads. A sample's count starts at 1, and every warmup sample that spans fewer than
+ * `MIN_STEPS_PER_SAMPLE` timer steps grows it in proportion to how far short it fell (by
+ * `ZERO_STEP_GROWTH` when it read no step); every timed sample runs the count warmup settled on: a
+ * warmed sample runs that many consecutive body calls on its one context, and a manual sample builds
+ * that many contexts and runs the body once on each. Every statistic is tinybench's per-sample one
+ * divided by the count.
  *
  * @param lifecycle - The benchmark to measure.
  * @param options - Overrides for what the engine provides.
@@ -113,6 +154,10 @@ export interface MeasureOptions {
  * @throws Error when Bun is running but `bun:jsc` cannot be loaded, before anything runs.
  * @throws Error when tinybench loses the task, ends the run in a state other than completed, or
  * keeps no samples, or when a manual sample runs without all of its contexts.
+ * @throws Error when warmup asks for more calls per warmed sample than `WARMED_CAP` allows, or more
+ * contexts per manual sample than `MANUAL_CAP` allows, naming the count it asked for: the body is
+ * too short to time at that cap. No sample runs that count, and every world built so far is
+ * destroyed first.
  * @throws Whatever `build` or `body` throws, once every world built so far is destroyed: a warmed
  * benchmark's one world, or every world a manual benchmark's failing sample built. An `Error`
  * propagates unchanged, and so does any value a warmed benchmark's `build` throws, since it runs
@@ -127,18 +172,19 @@ export async function measure<C extends { world: World }>(
     throw new Error("benchmarks require an exposed gc: run node or bun with --expose-gc");
   }
   const noInline = options.noInline ?? (await engineNoInline());
-  const stepMs = timerStepMs();
+  const clock = options.timestampProvider ?? autoTimestampProvider();
+  const stepMs = timerStepMs(clock);
   const runBench: RunBench = (budgets, sample, hooks) => {
     noInline?.(sample);
-    const task = benchTask(budgets, sample, hooks);
+    const task = benchTask(budgets, clock, sample, hooks);
     task.warmupSync();
     collect();
     task.runSync();
-    return statistics(task);
+    return task;
   };
   return lifecycle.kind === "warmed"
-    ? measureWarmed(lifecycle, stepMs, runBench)
-    : measureManual(lifecycle, stepMs, runBench);
+    ? measureWarmed(lifecycle, clock, stepMs, runBench)
+    : measureManual(lifecycle, clock, stepMs, runBench);
 }
 
 /**
@@ -163,18 +209,28 @@ async function engineNoInline(): Promise<NoInline | undefined> {
 }
 
 /**
- * Measures the timer's step by polling `performance.now()` across `STEP_PROBES` changes of its
- * reading.
+ * The timestamp provider tinybench resolves for `"auto"`, read from a `Bench` so the probe, warmup
+ * and tinybench's own sample timing share one clock.
  *
+ * @returns `process.hrtime.bigint()`'s provider on Node, `Bun.nanoseconds()`'s on Bun.
+ */
+function autoTimestampProvider(): TimestampProvider {
+  return new Bench({ timestampProvider: "auto" }).timestampProvider;
+}
+
+/**
+ * Measures the timer's step by polling `clock` across `STEP_PROBES` changes of its reading.
+ *
+ * @param clock - The clock to probe.
  * @returns The smallest change seen, in milliseconds.
  */
-function timerStepMs(): number {
+function timerStepMs(clock: TimestampProvider): number {
   let step = Number.POSITIVE_INFINITY;
-  let last = performance.now();
+  let last = clock.fn();
   for (let seen = 0; seen < STEP_PROBES;) {
-    const now = performance.now();
+    const now = clock.fn();
     if (now !== last) {
-      step = Math.min(step, now - last);
+      step = Math.min(step, elapsedMs(clock, last, now));
       last = now;
       seen += 1;
     }
@@ -182,26 +238,57 @@ function timerStepMs(): number {
   return step;
 }
 
+/**
+ * The time between two readings of `clock`.
+ *
+ * @param clock - The clock both readings came from.
+ * @param start - The earlier reading.
+ * @param end - The later reading.
+ * @returns The time from `start` to `end`, in milliseconds.
+ */
+function elapsedMs(clock: TimestampProvider, start: TimestampValue, end: TimestampValue): number {
+  // A bigint reading is whole nanoseconds since an arbitrary origin; converting both to numbers
+  // before subtracting would round away the nanoseconds once that origin lies far enough back.
+  return clock.toMs(
+    typeof start === "bigint" && typeof end === "bigint"
+      ? end - start
+      : Number(end) - Number(start),
+  );
+}
+
+// Both samplers below: tinybench's hooks never see a sample's span, so a warmup sample reads the
+// clock around its own body calls to settle the count, while a timed sample reads nothing and leaves
+// tinybench's two reads around it as the only ones.
 function measureWarmed<C extends { world: World }>(
   { build, body }: BenchLifecycle<C>,
+  clock: TimestampProvider,
   stepMs: number,
   runBench: RunBench,
 ): Measurement {
   const ctx = build();
   try {
     let calls = 1;
-    let spanMs = 0;
-    const sample = (): FnReturnedObject => {
-      const started = performance.now();
-      for (let call = 0; call < calls; call++) body(ctx);
-      spanMs = performance.now() - started;
-      return reportedSample(spanMs, calls);
+    let warming = false;
+    let spanMs: number | undefined;
+    const sample = (): void => {
+      if (warming) {
+        const started = clock.fn();
+        for (let call = 0; call < calls; call++) body(ctx);
+        spanMs = elapsedMs(clock, started, clock.fn());
+      } else {
+        for (let call = 0; call < calls; call++) body(ctx);
+      }
     };
-    return runBench(WARMED_BUDGETS, sample, {
-      afterEach: (mode) => {
-        calls = settledCount(calls, mode, spanMs, stepMs);
+    const task = runBench(WARMED_BUDGETS, sample, {
+      beforeEach: (mode) => {
+        warming = mode === "warmup";
+        spanMs = undefined;
+      },
+      afterEach: () => {
+        calls = settledCount(calls, spanMs, stepMs, WARMED_CAP);
       },
     });
+    return statistics(task, calls);
   } finally {
     destroyWorld(ctx.world);
   }
@@ -209,71 +296,102 @@ function measureWarmed<C extends { world: World }>(
 
 function measureManual<C extends { world: World }>(
   { build, body }: BenchLifecycle<C>,
+  clock: TimestampProvider,
   stepMs: number,
   runBench: RunBench,
 ): Measurement {
   let contexts = 1;
-  let spanMs = 0;
+  let warming = false;
+  let spanMs: number | undefined;
   const built: C[] = [];
-  const sample = (): FnReturnedObject => {
+  const sample = (): void => {
     if (built.length !== contexts)
       throw new Error("a manual sample ran without all of its contexts");
-    const started = performance.now();
-    for (const ctx of built) body(ctx);
-    spanMs = performance.now() - started;
-    return reportedSample(spanMs, contexts);
+    if (warming) {
+      const started = clock.fn();
+      for (const ctx of built) body(ctx);
+      spanMs = elapsedMs(clock, started, clock.fn());
+    } else {
+      for (const ctx of built) body(ctx);
+    }
   };
-  return runBench(MANUAL_BUDGETS, sample, {
-    beforeEach: () => {
+  const task = runBench(MANUAL_BUDGETS, sample, {
+    beforeEach: (mode) => {
+      warming = mode === "warmup";
+      spanMs = undefined;
       while (built.length < contexts) built.push(build());
     },
     // tinybench runs this even when `beforeEach` threw, so a build that fails partway through a
     // sample's setup still has the contexts built before it destroyed: `built` holds exactly those.
-    afterEach: (mode) => {
+    afterEach: () => {
       for (const ctx of built.splice(0)) destroyWorld(ctx.world);
-      contexts = settledCount(contexts, mode, spanMs, stepMs);
+      contexts = settledCount(contexts, spanMs, stepMs, MANUAL_CAP);
     },
   });
-}
-
-function reportedSample(spanMs: number, count: number): FnReturnedObject {
-  return { overriddenDuration: spanMs / count, overriddenIterationCost: spanMs };
+  return statistics(task, contexts);
 }
 
 /**
  * The count the next sample runs, settled during warmup and fixed once timing begins, so every
  * timed sample runs the same count.
  *
+ * Each warmup sample decides on its own span alone, so a later short sample grows the count again
+ * even after an earlier one reached `MIN_STEPS_PER_SAMPLE` steps.
+ *
  * @param count - The count the sample that just ended ran.
- * @param mode - The phase that sample ran in.
- * @param spanMs - That sample's span, in milliseconds.
+ * @param spanMs - That sample's span, in milliseconds, which only a warmup sample reads; `undefined`
+ * for a timed sample, so timing never changes the count, and for a warmup sample that threw before
+ * reading it, so the cap never masks its error.
  * @param stepMs - The timer's step, in milliseconds.
- * @returns Double `count` when a warmup sample spanned fewer than `MIN_STEPS_PER_SAMPLE` timer
- * steps, else `count` unchanged.
+ * @param cap - The largest count the driver may run.
+ * @returns `ceil(count × MIN_STEPS_PER_SAMPLE / steps)` when the sample spanned `steps` timer steps,
+ * fewer than `MIN_STEPS_PER_SAMPLE`; `count × ZERO_STEP_GROWTH` when it read no step; else `count`
+ * unchanged.
+ * @throws Error when the grown count exceeds `cap.limit`, naming the count asked for.
  */
 function settledCount(
   count: number,
-  mode: HookMode | undefined,
-  spanMs: number,
+  spanMs: number | undefined,
   stepMs: number,
+  cap: CountCap,
 ): number {
+  if (spanMs === undefined) return count;
   // A span is a whole number of timer steps; rounding recovers it from the millisecond floats.
-  return mode === "warmup" && Math.round(spanMs / stepMs) < MIN_STEPS_PER_SAMPLE
-    ? count * 2
-    : count;
+  const steps = Math.round(spanMs / stepMs);
+  if (steps >= MIN_STEPS_PER_SAMPLE) return count;
+  const grown =
+    steps === 0 ? count * ZERO_STEP_GROWTH : Math.ceil((count * MIN_STEPS_PER_SAMPLE) / steps);
+  if (grown > cap.limit) {
+    throw new Error(
+      `warmup asked for ${grown} ${cap.unit} per sample: the body is too short to time at the cap of ${cap.limit} ${cap.unit}`,
+    );
+  }
+  return grown;
 }
 
 /**
  * Adds `sample` to a bench of its own as a synchronous task that keeps its samples.
  *
  * @param budgets - The bench's stopping rule for warmup and the timed run.
- * @param sample - The per-sample function; it reports its own duration.
+ * @param clock - The clock the bench times each call of `sample` on.
+ * @param sample - The per-sample function; tinybench times each call of it.
  * @param hooks - The task's lifecycle hooks.
  * @returns The task, ready for `warmupSync` then `runSync`.
  * @throws Error when tinybench does not return the task it was given.
  */
-function benchTask(budgets: Budgets, sample: () => FnReturnedObject, hooks: FnOptions): Task {
-  const bench = new Bench({ ...budgets, retainSamples: true, throws: true, warmup: false });
+function benchTask(
+  budgets: Budgets,
+  clock: TimestampProvider,
+  sample: () => void,
+  hooks: FnOptions,
+): Task {
+  const bench = new Bench({
+    ...budgets,
+    retainSamples: true,
+    throws: true,
+    timestampProvider: clock,
+    warmup: false,
+  });
   // Without `async: false`, adding the task calls it once to detect whether it is async.
   bench.add(TASK_NAME, sample, { ...hooks, async: false });
   const task = bench.getTask(TASK_NAME);
@@ -282,18 +400,20 @@ function benchTask(budgets: Budgets, sample: () => FnReturnedObject, hooks: FnOp
 }
 
 /**
- * The statistics of a completed task's retained samples, converted to nanoseconds.
+ * The statistics of a completed task's retained samples, per body call and in nanoseconds.
  *
  * @param task - A task whose timed run completed.
- * @returns The samples' extremes, percentiles, mean, and count.
+ * @param count - The body calls each timed sample ran.
+ * @returns The samples' extremes, percentiles, and mean, each divided by `count`, and how many
+ * samples there were.
  * @throws Error when the task did not complete or kept no samples.
  */
-function statistics(task: Task): Measurement {
+function statistics(task: Task, count: number): Measurement {
   const { result } = task;
   if (result.state !== "completed") throw new Error(`the benchmark ended ${result.state}`);
   const retained: SortedSamples | undefined = result.latency.samples;
   if (retained === undefined) throw new Error("tinybench kept no samples");
-  const ns = retained.map((ms) => ms * NS_PER_MS);
+  const ns = retained.map((ms) => (ms * NS_PER_MS) / count);
   return {
     min: percentile(ns, 0),
     p25: percentile(ns, 0.25),
