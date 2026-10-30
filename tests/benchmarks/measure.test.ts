@@ -511,18 +511,18 @@ describe("measure's timing", () => {
     },
   );
 
-  // Warmup ends after exactly 16 warmed samples (each passes 250 ms / 16) or 1000 manual ones, so
-  // the short call below is the last warmup sample's.
+  // Warmup ends after exactly 16 warmed samples (the first 15 alone pass its 250 ms) or 1000
+  // manual ones, so the short call below is the last warmup sample's.
   it.each([
-    { kind: "warmed", stepNs: 100_000, bodyNs: 20_000_000, lastWarmupCall: 15 },
-    { kind: "manual", stepNs: 1000, bodyNs: 200_000, lastWarmupCall: 999 },
+    { kind: "warmed", bodyNs: 20_000_000, lastWarmupCall: 15 },
+    { kind: "manual", bodyNs: 200_000, lastWarmupCall: 999 },
   ] as const)(
     "keeps the count a $kind benchmark's last, short warmup sample grew it to through every timed sample",
-    async ({ kind, stepNs, bodyNs, lastWarmupCall }) => {
-      sim.stepNs = stepNs;
+    async ({ kind, bodyNs, lastWarmupCall }) => {
+      sim.stepNs = 1000;
       const { lifecycle } = recorder({
         kind,
-        bodyNs: (call) => (call === lastWarmupCall ? bodyNs / 2 : bodyNs),
+        bodyNs: (call) => (call === lastWarmupCall ? 100_000 : bodyNs),
       });
 
       await measureOnSim(lifecycle);

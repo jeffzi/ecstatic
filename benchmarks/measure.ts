@@ -48,8 +48,15 @@ const WARMED_CAP: CountCap = { limit: 1_000_000, unit: "calls" };
  */
 const MANUAL_CAP: CountCap = { limit: 64, unit: "contexts" };
 
-/** How many clock transitions the startup probe takes the smallest of. */
-const STEP_PROBES = 16;
+/**
+ * How many clock transitions the startup probe takes the smallest of.
+ *
+ * A read of the clock plus the loop around it takes about as long as a step, so most transitions
+ * the probe sees span two or three steps. Sixteen of them often never include a single-step one,
+ * and the probe then overstates the step by two to four times, inflating every batch; two thousand
+ * find it every time, for about 0.2 ms of startup.
+ */
+const STEP_PROBES = 2000;
 
 /** A stopping rule for warmup and the timed run. */
 interface Budgets {
