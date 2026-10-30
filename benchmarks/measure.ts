@@ -5,6 +5,7 @@ import {
   Bench,
   type FnOptions,
   type FnReturnedObject,
+  type HookMode,
   type SortedSamples,
   type Task,
 } from "tinybench";
@@ -13,8 +14,11 @@ import type { Engine } from "./runner.js";
 
 const NS_PER_MS = 1e6;
 
-/** A warmed sample spans at least this many timer steps, so one step is at most 1 % of it. */
-const MIN_STEPS_PER_SAMPLE = 100;
+/**
+ * Every sample, warmed or manual, spans at least this many timer steps once warmup settles its
+ * count, so one step is at most 0.5 % of it.
+ */
+const MIN_STEPS_PER_SAMPLE = 200;
 
 /** How many clock transitions the startup probe takes the smallest of. */
 const STEP_PROBES = 16;
@@ -40,7 +44,8 @@ const WARMED_BUDGETS: Budgets = {
 
 /**
  * A manual benchmark's stopping rule: fixed sample counts with no time minimum, since every sample
- * builds a world whose cost the clock never sees, and a synchronous run cannot be cut short.
+ * builds worlds whose cost the clock never sees, and a synchronous run cannot be cut short. The
+ * counts are samples, not body calls, so a sample's context count leaves them unchanged.
  */
 const MANUAL_BUDGETS: Budgets = {
   warmupTime: 0,
@@ -62,8 +67,9 @@ export type NoInline = typeof bunNoInline;
  *
  * A `warmed` benchmark builds one context, warms the body up on it, times every sample on it, and
  * destroys its world once timing ends, so its body must leave the context as it found it. A
- * `manual` benchmark builds a fresh context for every sample, warmup included, and destroys each
- * sample's world after its one body call, so its body may consume the world freely.
+ * `manual` benchmark builds fresh contexts for every sample, warmup included, runs the body once on
+ * each, and destroys every one of the sample's worlds after its last body call, so its body may
+ * consume the world freely.
  */
 export interface BenchLifecycle<C extends { world: World }> {
   readonly kind: "warmed" | "manual";
@@ -94,8 +100,10 @@ export interface MeasureOptions {
  *
  * The timer step is measured at startup from `performance.now()` deltas. Warmup runs untimed, then
  * `globalThis.gc()` collects once, then the timed samples run; no build or destroy falls inside a
- * sample's clock reads. A warmed sample times as many consecutive body calls as keep one timer step
- * within 1 % of its span, a count fixed during warmup; a manual sample times one call.
+ * sample's clock reads. Warmup doubles a sample's count, starting at 1, until one sample spans at
+ * least `MIN_STEPS_PER_SAMPLE` timer steps, and every timed sample runs that count: a warmed sample
+ * times that many consecutive body calls on its one context, and a manual sample builds that many
+ * contexts and times one body call on each. Either reports its span divided by the count.
  *
  * @param lifecycle - The benchmark to measure.
  * @param options - Overrides for what the engine provides.
@@ -104,8 +112,11 @@ export interface MeasureOptions {
  * @throws Error when no garbage collector is exposed, before anything runs.
  * @throws Error when Bun is running but `bun:jsc` cannot be loaded, before anything runs.
  * @throws Error when tinybench loses the task, ends the run in a state other than completed, or
- * keeps no samples, or when a manual sample runs without a context.
- * @throws Whatever `build` or `body` throws, unchanged, after the world it built is destroyed.
+ * keeps no samples, or when a manual sample runs without all of its contexts.
+ * @throws Whatever `build` or `body` throws, once every world built so far is destroyed: a warmed
+ * benchmark's one world, or every world a manual benchmark's failing sample built. An `Error`
+ * propagates unchanged, and so does any value a warmed benchmark's `build` throws, since it runs
+ * before tinybench does; tinybench wraps any other non-`Error` value in a new `Error`.
  */
 export async function measure<C extends { world: World }>(
   lifecycle: BenchLifecycle<C>,
@@ -127,7 +138,7 @@ export async function measure<C extends { world: World }>(
   };
   return lifecycle.kind === "warmed"
     ? measureWarmed(lifecycle, stepMs, runBench)
-    : measureManual(lifecycle, runBench);
+    : measureManual(lifecycle, stepMs, runBench);
 }
 
 /**
@@ -184,13 +195,11 @@ function measureWarmed<C extends { world: World }>(
       const started = performance.now();
       for (let call = 0; call < calls; call++) body(ctx);
       spanMs = performance.now() - started;
-      return { overriddenDuration: spanMs / calls, overriddenIterationCost: spanMs };
+      return reportedSample(spanMs, calls);
     };
     return runBench(WARMED_BUDGETS, sample, {
-      // Warmup settles the batch: once it is fixed, every timed sample runs the same count. A
-      // span is a whole number of timer steps; rounding recovers it from the millisecond floats.
       afterEach: (mode) => {
-        if (mode === "warmup" && Math.round(spanMs / stepMs) < MIN_STEPS_PER_SAMPLE) calls *= 2;
+        calls = settledCount(calls, mode, spanMs, stepMs);
       },
     });
   } finally {
@@ -200,28 +209,58 @@ function measureWarmed<C extends { world: World }>(
 
 function measureManual<C extends { world: World }>(
   { build, body }: BenchLifecycle<C>,
+  stepMs: number,
   runBench: RunBench,
 ): Measurement {
-  let ctx: C | undefined;
+  let contexts = 1;
+  let spanMs = 0;
+  const built: C[] = [];
   const sample = (): FnReturnedObject => {
-    const current = ctx;
-    if (current === undefined) throw new Error("a manual sample ran without a context");
+    if (built.length !== contexts)
+      throw new Error("a manual sample ran without all of its contexts");
     const started = performance.now();
-    body(current);
-    const spanMs = performance.now() - started;
-    return { overriddenDuration: spanMs, overriddenIterationCost: spanMs };
+    for (const ctx of built) body(ctx);
+    spanMs = performance.now() - started;
+    return reportedSample(spanMs, contexts);
   };
   return runBench(MANUAL_BUDGETS, sample, {
     beforeEach: () => {
-      ctx = build();
+      while (built.length < contexts) built.push(build());
     },
-    // tinybench runs this even when `beforeEach` threw, so a failed build leaves nothing to destroy.
-    afterEach: () => {
-      const done = ctx;
-      ctx = undefined;
-      if (done !== undefined) destroyWorld(done.world);
+    // tinybench runs this even when `beforeEach` threw, so a build that fails partway through a
+    // sample's setup still has the contexts built before it destroyed: `built` holds exactly those.
+    afterEach: (mode) => {
+      for (const ctx of built.splice(0)) destroyWorld(ctx.world);
+      contexts = settledCount(contexts, mode, spanMs, stepMs);
     },
   });
+}
+
+function reportedSample(spanMs: number, count: number): FnReturnedObject {
+  return { overriddenDuration: spanMs / count, overriddenIterationCost: spanMs };
+}
+
+/**
+ * The count the next sample runs, settled during warmup and fixed once timing begins, so every
+ * timed sample runs the same count.
+ *
+ * @param count - The count the sample that just ended ran.
+ * @param mode - The phase that sample ran in.
+ * @param spanMs - That sample's span, in milliseconds.
+ * @param stepMs - The timer's step, in milliseconds.
+ * @returns Double `count` when a warmup sample spanned fewer than `MIN_STEPS_PER_SAMPLE` timer
+ * steps, else `count` unchanged.
+ */
+function settledCount(
+  count: number,
+  mode: HookMode | undefined,
+  spanMs: number,
+  stepMs: number,
+): number {
+  // A span is a whole number of timer steps; rounding recovers it from the millisecond floats.
+  return mode === "warmup" && Math.round(spanMs / stepMs) < MIN_STEPS_PER_SAMPLE
+    ? count * 2
+    : count;
 }
 
 /**

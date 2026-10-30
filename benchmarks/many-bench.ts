@@ -2,8 +2,9 @@
  * Batch lifecycle: one `spawnMany`/`despawnMany` call covering what the
  * entity suite does with N individual calls.
  *
- * Every body consumes the world it runs against, so all of these rebuild it
- * untimed per iteration via `manualBench`.
+ * Every body consumes the world it runs against, so all of these run under
+ * `manualBench`, which builds fresh worlds untimed, one per body run a sample
+ * times.
  */
 
 import { despawnMany, register, spawn, spawnMany } from "ecstatic";

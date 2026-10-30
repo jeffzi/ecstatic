@@ -139,9 +139,31 @@ function count(event: string, from = 0, to = sim.trace.length): number {
   return sim.trace.slice(from, to).filter((e) => e === event).length;
 }
 
-/** The number of body calls before the collection: the warmup samples. */
+/** The number of body calls before the collection. */
 function warmupBodyCalls(): number {
   return count("body", 0, sim.trace.indexOf("gc"));
+}
+
+/** The number of samples before the collection: each run of consecutive body calls is one. */
+function warmupSamples(): number {
+  return sim.trace
+    .slice(0, sim.trace.indexOf("gc"))
+    .filter((e, i, events) => e === "body" && events[i - 1] !== "body").length;
+}
+
+/** The builds, body calls, and destroys of the trace, as runs of one event and their lengths. */
+function lifecycleRuns(): [string, number][] {
+  const runs: [string, number][] = [];
+  for (const event of sim.trace) {
+    if (event !== "build" && event !== "body" && event !== "destroy") continue;
+    const last = runs.at(-1);
+    if (last?.[0] === event) {
+      last[1] += 1;
+    } else {
+      runs.push([event, 1]);
+    }
+  }
+  return runs;
 }
 
 /** The lifecycle events of the trace, each run of repeats collapsed into one. */
@@ -259,6 +281,85 @@ describe("measure on a manual benchmark", () => {
     );
   });
 
+  it.each([
+    { stepNs: 1000, bodyNs: 199_000, contexts: 2 },
+    { stepNs: 1000, bodyNs: 25_000, contexts: 8 },
+    { stepNs: 1000, bodyNs: 200_000, contexts: 1 },
+    { stepNs: 10_000, bodyNs: 100_000, contexts: 32 },
+  ])(
+    "times $contexts contexts per sample for a $bodyNs ns body on a $stepNs ns timer, doubling from one until a sample spans 200 steps",
+    async ({ stepNs, bodyNs, contexts }) => {
+      sim.stepNs = stepNs;
+      const { lifecycle } = recorder({ kind: "manual", bodyNs });
+
+      await measure(lifecycle);
+
+      expect(new Set(callsPerTimedSample())).toStrictEqual(new Set([contexts]));
+    },
+  );
+
+  it("runs the body exactly once on each context a batched sample built", async () => {
+    sim.stepNs = 1000;
+    const { lifecycle, built, received } = recorder({ kind: "manual", bodyNs: 25_000 });
+
+    await measure(lifecycle);
+
+    const builtSet = new Set(built);
+    expect(received).toHaveLength(built.length);
+    expect(new Set(received).size).toBe(received.length);
+    expect(received.every((ctx) => builtSet.has(ctx))).toBe(true);
+  });
+
+  it("builds all of a batched sample's contexts before its first body call and destroys them after its last", async () => {
+    sim.stepNs = 1000;
+    const { lifecycle } = recorder({ kind: "manual", bodyNs: 25_000 });
+
+    await measure(lifecycle);
+
+    const runs = lifecycleRuns();
+    const samples = Array.from({ length: runs.length / 3 }, (_, i) => runs.slice(3 * i, 3 * i + 3));
+    expect(runs.length % 3).toBe(0);
+    expect(
+      samples.every(
+        ([build, body, destroy]) =>
+          build?.[0] === "build" &&
+          body?.[0] === "body" &&
+          destroy?.[0] === "destroy" &&
+          build[1] === body[1] &&
+          body[1] === destroy[1],
+      ),
+    ).toBe(true);
+    expect(samples.at(-1)?.[1]?.[1]).toBe(8);
+  });
+
+  it("destroys every context a batched sample built and rethrows when the body throws on a later one", async () => {
+    sim.stepNs = 1000;
+    const { lifecycle, built, bodyError } = recorder({
+      kind: "manual",
+      bodyNs: 25_000,
+      bodyFails: () => sim.trace.at(-2) === "body",
+    });
+
+    const outcome = measure(lifecycle);
+
+    await expect(outcome).rejects.toBe(bodyError);
+    expect(count("destroy")).toBe(built.length);
+  });
+
+  it("destroys the contexts a batched sample built before its build threw, and rethrows", async () => {
+    sim.stepNs = 1000;
+    const { lifecycle, built, buildError } = recorder({
+      kind: "manual",
+      bodyNs: 25_000,
+      buildFails: () => sim.trace.at(-2) === "build",
+    });
+
+    const outcome = measure(lifecycle);
+
+    await expect(outcome).rejects.toBe(buildError);
+    expect(count("destroy")).toBe(built.length);
+  });
+
   it.each(BODY_FAILURE_PHASES)(
     "destroys the failing sample's world and rethrows when the body throws during $phase",
     async ({ fails }) => {
@@ -290,15 +391,20 @@ describe("measure on a manual benchmark", () => {
 });
 
 describe("measure's timing", () => {
-  it.each(KINDS)(
-    "leaves a %s benchmark's times unchanged by a slow build and destroy",
-    async (kind) => {
-      const { lifecycle } = recorder({ kind, bodyNs: 100_000, buildNs: NS_PER_MS });
+  it.each([
+    { kind: "warmed", stepNs: 1, bodyNs: 100_000 },
+    { kind: "manual", stepNs: 1, bodyNs: 100_000 },
+    { kind: "manual", stepNs: 1000, bodyNs: 25_000 },
+  ] as const)(
+    "leaves a $kind benchmark's times unchanged by a slow build and destroy for a $bodyNs ns body on a $stepNs ns timer",
+    async ({ kind, stepNs, bodyNs }) => {
+      sim.stepNs = stepNs;
+      const { lifecycle } = recorder({ kind, bodyNs, buildNs: NS_PER_MS });
       sim.destroyNs = NS_PER_MS;
 
       const result = await measure(lifecycle);
 
-      expect(result).toStrictEqual(allTimes(100_000));
+      expect(result).toStrictEqual(allTimes(bodyNs));
     },
   );
 
@@ -324,10 +430,10 @@ describe("measure's timing", () => {
   });
 
   it.each([
-    { stepNs: 1000, bodyNs: 100_000 },
-    { stepNs: 100, bodyNs: 10_000 },
+    { stepNs: 1000, bodyNs: 200_000 },
+    { stepNs: 100, bodyNs: 20_000 },
   ])(
-    "times one call per warmed sample when a call spans 100 steps of a $stepNs ns timer",
+    "times one call per warmed sample when a call spans 200 steps of a $stepNs ns timer",
     async ({ stepNs, bodyNs }) => {
       sim.stepNs = stepNs;
       const { lifecycle } = recorder({ kind: "warmed", bodyNs });
@@ -339,46 +445,47 @@ describe("measure's timing", () => {
   );
 
   it.each([
-    { stepNs: 1000, bodyNs: 99_000 },
-    { stepNs: 10_000, bodyNs: 100_000 },
+    { stepNs: 1000, bodyNs: 199_000, calls: 2 },
+    { stepNs: 10_000, bodyNs: 100_000, calls: 32 },
   ])(
-    "times a fixed batch per warmed sample spanning 100 steps of a $stepNs ns timer for a $bodyNs ns body",
-    async ({ stepNs, bodyNs }) => {
+    "times $calls calls per warmed sample for a $bodyNs ns body on a $stepNs ns timer, doubling from one until a sample spans 200 steps",
+    async ({ stepNs, bodyNs, calls }) => {
       sim.stepNs = stepNs;
       const { lifecycle } = recorder({ kind: "warmed", bodyNs });
 
       await measure(lifecycle);
 
-      const batches = [...new Set(callsPerTimedSample())];
-      expect(batches).toHaveLength(1);
-      expect((batches[0] ?? 0) * bodyNs).toBeGreaterThanOrEqual(100 * stepNs);
+      expect(new Set(callsPerTimedSample())).toStrictEqual(new Set([calls]));
     },
   );
 
-  it("keeps the batch warmup fixed when the timed calls turn shorter", async () => {
-    let timed = false;
-    vi.stubGlobal("gc", () => {
-      sim.trace.push("gc");
-      timed = true;
-    });
-    sim.stepNs = 20_000;
-    const { lifecycle } = recorder({ kind: "warmed", bodyNs: () => (timed ? 1 : 2) * NS_PER_MS });
+  it.each(KINDS)(
+    "keeps the batch a %s benchmark's warmup settled when the timed calls turn shorter",
+    async (kind) => {
+      let timed = false;
+      vi.stubGlobal("gc", () => {
+        sim.trace.push("gc");
+        timed = true;
+      });
+      sim.stepNs = 1000;
+      const { lifecycle } = recorder({ kind, bodyNs: () => (timed ? 50_000 : 100_000) });
 
-    await measure(lifecycle);
+      await measure(lifecycle);
 
-    expect(new Set(callsPerTimedSample())).toStrictEqual(new Set([1]));
-  });
+      expect(new Set(callsPerTimedSample())).toStrictEqual(new Set([2]));
+    },
+  );
 
-  it("reports a batched sample's span divided by its call count", async () => {
+  it.each(KINDS)("reports a batched %s sample's span divided by its call count", async (kind) => {
     sim.stepNs = 1000;
-    const { lifecycle } = recorder({ kind: "warmed", bodyNs: 1000 });
+    const { lifecycle } = recorder({ kind, bodyNs: 25_000 });
 
     const result = await measure(lifecycle);
 
-    expect(result).toStrictEqual(allTimes(1000));
+    expect(result).toStrictEqual(allTimes(25_000));
     const batches = [...new Set(callsPerTimedSample())];
     expect(batches).toHaveLength(1);
-    expect((batches[0] ?? 0) * 1000).toBeGreaterThanOrEqual(100 * 1000);
+    expect((batches[0] ?? 0) * 25_000).toBeGreaterThanOrEqual(200 * 1000);
   });
 
   it.each(KINDS)(
@@ -452,14 +559,18 @@ describe("measure's stopping rule", () => {
     },
   );
 
-  it.each([{ bodyNs: 100 }, { bodyNs: 100 * NS_PER_MS }])(
-    "warms a $bodyNs ns manual body for exactly 1000 samples and times exactly 2000",
-    async ({ bodyNs }) => {
+  it.each([
+    { stepNs: 1, bodyNs: 100 * NS_PER_MS },
+    { stepNs: 1000, bodyNs: 25_000 },
+  ])(
+    "warms a $bodyNs ns manual body on a $stepNs ns timer for exactly 1000 samples and times exactly 2000",
+    async ({ stepNs, bodyNs }) => {
+      sim.stepNs = stepNs;
       const { lifecycle } = recorder({ kind: "manual", bodyNs });
 
       const result = await measure(lifecycle);
 
-      expect(warmupBodyCalls()).toBe(1000);
+      expect(warmupSamples()).toBe(1000);
       expect(result.samples).toBe(2000);
     },
   );
