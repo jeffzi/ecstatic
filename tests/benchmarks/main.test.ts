@@ -431,7 +431,13 @@ function isAlive(pid: number): boolean {
   }
 }
 
-describe("benchmarks/main.ts when interrupted", () => {
+/**
+ * Whether this platform delivers a signal a process can handle. Windows has no POSIX signals:
+ * `subprocess.kill()` terminates the process outright, so its handlers never run.
+ */
+const CAN_SIGNAL = process.platform !== "win32";
+
+describe.runIf(CAN_SIGNAL)("benchmarks/main.ts when interrupted", () => {
   afterAll(() => {
     removeTempDirs();
   });
