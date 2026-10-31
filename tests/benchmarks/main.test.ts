@@ -1,15 +1,21 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { cpus } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { packageBin } from "../package-bin.js";
 import { ROW_LOOP } from "../unit/optimizer/printed.js";
-import { REPO_ROOT, withTempProject } from "../unit/plugin/tsconfig-fixtures.js";
+import {
+  createProject,
+  removeTempDirs,
+  REPO_ROOT,
+  withTempProject,
+} from "../unit/plugin/tsconfig-fixtures.js";
 import {
   advanceCall,
   benchmarkTreeWith,
@@ -59,7 +65,8 @@ const REFUSED_WRITE = "EACCES: permission denied";
  * process the process spawns is appended to the file `PROBE_SPAWNS` names; a spawn of `bun` runs Node
  * instead, so a run under both engines needs no Bun install, unless `PROBE_REAL_BUN` is set. A child
  * given `--child` with the benchmark `PROBE_FAIL_CHILD` names exits with {@link FAILED_CHILD_EXIT}
- * before measuring anything.
+ * before measuring anything; one given the benchmark `PROBE_HANG_CHILD` names writes its pid to
+ * the file `PROBE_HANG_PID` names, then blocks until a signal kills it.
  */
 const PROBE_SOURCE = `
 import childProcess from "node:child_process";
@@ -76,10 +83,16 @@ const {
   PROBE_REFUSE_WRITES,
   PROBE_REAL_BUN,
   PROBE_FAIL_CHILD,
+  PROBE_HANG_CHILD,
+  PROBE_HANG_PID,
 } = process.env;
 appendFileSync(PROBE_LOG, JSON.stringify({ argv: process.argv, execArgv: process.execArgv }) + "\\n");
 if (process.argv.includes("--child") && process.argv.at(-1) === PROBE_FAIL_CHILD) {
   process.exit(${String(FAILED_CHILD_EXIT)});
+}
+if (process.argv.includes("--child") && process.argv.at(-1) === PROBE_HANG_CHILD) {
+  appendFileSync(PROBE_HANG_PID, String(process.pid));
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
 }
 
 function refusal(file) {
@@ -406,6 +419,69 @@ describe("benchmarks/main.ts when a child fails", () => {
       `--child ${FAILING} failed with exit code ${String(FAILED_CHILD_EXIT)}`,
     );
   });
+});
+
+/** Whether the process `pid` still exists. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe("benchmarks/main.ts when interrupted", () => {
+  afterAll(() => {
+    removeTempDirs();
+  });
+
+  it.each(["SIGINT", "SIGTERM"] as const)(
+    "exits 1 on %s after taking down the child measuring",
+    async (signal) => {
+      const dir = createProject({ "probe.mjs": PROBE_SOURCE, "child.pid": "" });
+      const childPid = join(dir, "child.pid");
+      const parent = spawn(process.execPath, [TSX, MAIN, BENCH_FILTER], {
+        cwd: REPO_ROOT,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `${process.env["NODE_OPTIONS"] ?? ""} --import ${pathToFileURL(join(dir, "probe.mjs")).href}`,
+          PROBE_LOG: join(dir, "processes.jsonl"),
+          PROBE_WRITES: join(dir, "writes.log"),
+          PROBE_SPAWNS: join(dir, "spawns.jsonl"),
+          PROBE_OUT_DIR: OUT_DIR,
+          PROBE_HANG_CHILD: BENCH,
+          PROBE_HANG_PID: childPid,
+        },
+      });
+      const exited = once(parent, "exit");
+      await vi.waitFor(
+        () => {
+          expect(readFileSync(childPid, "utf8")).not.toBe("");
+        },
+        { timeout: COMPILE_TIMEOUT_MS, interval: 50 },
+      );
+      const pid = Number(readFileSync(childPid, "utf8"));
+      // The hung child blocks until a signal kills it; when the parent fails to, kill it here so a
+      // regression fails this case without leaving a process behind.
+      onTestFinished(() => {
+        if (isAlive(pid)) process.kill(pid, "SIGKILL");
+      });
+
+      parent.kill(signal);
+      const [status] = await exited;
+
+      expect(status).toBe(1);
+      await vi.waitFor(
+        () => {
+          expect(isAlive(pid)).toBe(false);
+        },
+        { timeout: 5000, interval: 50 },
+      );
+    },
+    COMPILE_TIMEOUT_MS,
+  );
 });
 
 /** A benchmark whose body adds to its suite's sink, so a run leaves that sink non-zero. */
