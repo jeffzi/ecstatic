@@ -107,8 +107,8 @@ benchmark's number comparable to another's.
 Before it measures, a child loads only the driver and the suite of the benchmark it measures, and
 none of the code that spawns children. On Bun, code loaded in the process slows a reading even when
 none of it runs: with every suite and the spawning code loaded, `many/despawn_all` read about 3–4 %
-and `many/despawn` about 1 % slower. The entry's own code still leaves those two about 1.5 % and 0.2
-% slower than alone in a module of their own, as the
+and `many/despawn` about 1 % slower. Even so, those two still read about 1.5 % and 0.2 % slower than
+alone in a module of their own, as the
 [`despawn_all`](../docs/benchmarks/specifications/batch.md#despawn_all) and
 [`despawn`](../docs/benchmarks/specifications/batch.md#despawn) specifications record.
 

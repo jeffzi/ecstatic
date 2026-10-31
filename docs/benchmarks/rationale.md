@@ -116,16 +116,16 @@ the suite runs. Reject a change that adds such a placement effect unless it remo
 across the suite than it adds. A change may leave an existing effect in place. Record every
 remaining effect in its benchmark's specification.
 
-Consuming benchmarks report no heap statistic: the per-iteration world construction would dominate
-the delta rather than reporting what the body itself allocated.
+Consuming benchmarks report no heap statistic: the per-call world construction would dominate the
+delta rather than reporting what the body itself allocated.
 
 **Process isolation.** Every benchmark is measured in a process of its own, so its figure carries no
 residue from whatever ran before it and reading one benchmark against another is meaningful. Before
 it measures, the process loads only the driver and the suite of the benchmark it measures, because
 on Bun code loaded in the process slows a reading even when none of it runs: with every suite and
 the code that spawns children loaded, `many/despawn_all` read about 3–4 % and `many/despawn` about 1
-% slower. The entry's own code still leaves those two about 1.5 % and 0.2 % slower than alone in a
-module of their own, as the [`despawn_all`](specifications/batch.md#despawn_all) and
+% slower. Even so, those two still read about 1.5 % and 0.2 % slower than alone in a module of their
+own, as the [`despawn_all`](specifications/batch.md#despawn_all) and
 [`despawn`](specifications/batch.md#despawn) specifications record. See
 [`benchmarks/README.md`](../../benchmarks/README.md) for how the runner does this and what it costs.
 
