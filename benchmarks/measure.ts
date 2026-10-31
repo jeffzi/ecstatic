@@ -129,7 +129,10 @@ export interface Measurement {
 
 /** What `measure` takes from its engine; each defaults to what the running engine provides. */
 export interface MeasureOptions {
-  /** Applied to the per-sample function before tinybench sees it; on Node, none is applied. */
+  /**
+   * Applied to the benchmark's body and the per-sample function before tinybench sees the latter;
+   * the default is `bun:jsc`'s under Bun, and none on Node.
+   */
   readonly noInline?: NoInline;
 }
 
@@ -151,6 +154,11 @@ export interface MeasureOptions {
  * calls one world at a time: for each it builds a world, reads the clock, runs the body once,
  * reads the clock, and destroys the world, and its span is the sum of those per-call spans. Every
  * statistic is a sample's span divided by its count.
+ *
+ * Under Bun, the body and the per-sample function go through `noInline` (`bun:jsc`'s, unless
+ * `options` passes one) before any sample runs. Without it on the body, JavaScriptCore compiles the
+ * body into the loop that repeats it, so a short body's reading includes the loop; the per-sample
+ * function keeps it because tinybench calls that function inside a try/finally.
  *
  * @param lifecycle - The benchmark to measure.
  * @param options - Overrides for what the engine provides.
@@ -183,6 +191,7 @@ export async function measure<C extends { world: World }>(
     collect();
   };
   const noInline = options.noInline ?? (await engineNoInline());
+  noInline?.(lifecycle.body);
   const stepMs = timerStepMs();
   const runBench: RunBench = (budgets, sample, hooks, around) => {
     noInline?.(sample);
