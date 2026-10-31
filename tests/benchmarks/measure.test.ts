@@ -112,11 +112,15 @@ function recorder({
   const bodyError = new Error("the body failed");
   const buildError = new Error("the build failed");
   const cost = typeof bodyNs === "number" ? () => bodyNs : bodyNs;
+  // Every build returns a fresh context over this one world: the tests tell calls apart by
+  // context, and a manual case times tens of thousands of calls, too many real worlds to build
+  // within a test's time limit. Destroying it again after the first time is a no-op.
+  const shared = buildBareWorld();
   const build = (): BareWorldCtx => {
     sim.trace.push("build");
     sim.ns += buildNs;
     if (buildFails()) throw buildError;
-    const ctx = buildBareWorld();
+    const ctx = { ...shared };
     built.push(ctx);
     return ctx;
   };
