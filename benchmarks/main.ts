@@ -24,12 +24,13 @@
  * successful parent run writes to stdout, so a partial report never reaches a
  * consumer parsing it; diagnostics go to stderr.
  *
- * Importing a suite module registers its benchmarks as a side effect. Every
- * suite that accumulates results returns them from its `sinkValue`; after
- * measuring, the child stores their sum in `globalThis.benchSink`, so the
- * results stay reachable and the engine cannot drop the work that made them.
- * The reference suite accumulates nothing, so it is imported for registration
- * alone.
+ * Importing a suite module registers its benchmarks as a side effect, so this
+ * module imports none statically; `suite-loader.ts` loads them. The parent
+ * loads every suite to list the benchmarks; a child loads only its own
+ * benchmark's suite. Every suite that accumulates results returns them from its
+ * `sinkValue`; after measuring, the child stores its own suite's sink in
+ * `globalThis.benchSink`, so the results stay reachable and the engine cannot
+ * drop the work that made them.
  */
 
 import { spawn } from "node:child_process";
@@ -38,12 +39,6 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { errorMessage, isEnoent } from "../scripts/caught.js";
-import { sinkValue as accessSink } from "./access-bench.js";
-import { sinkValue as entitySink } from "./entity-bench.js";
-import { sinkValue as iterationSink } from "./iteration-bench.js";
-import { sinkValue as manySink } from "./many-bench.js";
-// oxlint-disable-next-line import/no-unassigned-import -- importing the suite registers its benchmarks; it exports nothing
-import "./reference-bench.js";
 import { type Measurement, runningEngine } from "./measure.js";
 import {
   type BenchReport,
@@ -61,6 +56,7 @@ import {
   selectBenchmarks,
   UsageError,
 } from "./runner.js";
+import { loadAllSuites, loadSuite } from "./suite-loader.js";
 
 const FAILURE_EXIT = 1;
 const USAGE_EXIT = 2;
@@ -74,7 +70,7 @@ const BENCHMARK_PROJECT = fileURLToPath(new URL("tsconfig.json", import.meta.url
 const SINGLE_LAYOUT = [{ name: 0, types: [] }];
 
 declare global {
-  /** The sum of every suite's sink after a child's measurement; unset until one finishes. */
+  /** The measured benchmark's suite's sink after a child's measurement; unset until one finishes. */
   var benchSink: number | undefined;
 }
 
@@ -128,18 +124,24 @@ function childReport(benchName: string, measurement: Measurement): BenchReport {
 }
 
 /**
- * Measure exactly one benchmark and print its report to stdout, then store the sum of every
- * suite's sink in `globalThis.benchSink`.
+ * Load the suite `benchName` belongs to and no other, measure exactly that one benchmark, store
+ * its suite's sink in `globalThis.benchSink`, then print its report to stdout.
  *
- * @param benchName - Exact name of the benchmark to measure; must be in `benchNames()`.
- * @throws Error when `benchName` is not registered, no `gc` is exposed, `bun:jsc` cannot be loaded
- * under Bun, or the measurement itself fails (see `measure`'s `@throws`), before anything is
- * printed; whatever the benchmark's build or body throws also propagates, so a failing benchmark
- * exits non-zero rather than printing a report.
+ * A name whose group names no suite loads none, and measures whatever was registered under it
+ * beforehand; its stored sink is 0.
+ *
+ * @param benchName - Exact name of the benchmark to measure; must be in `benchNames()` once its
+ * suite is loaded.
+ * @returns Once the report is printed and the sink stored.
+ * @throws Error when the suite module fails to load (its own error), `benchName` is not
+ * registered, no `gc` is exposed, `bun:jsc` cannot be loaded under Bun, or the measurement itself
+ * fails (see `measure`'s `@throws`), before anything is printed; whatever the benchmark's build or
+ * body throws also propagates, so a failing benchmark exits non-zero rather than printing a report.
  */
 async function runChild(benchName: string): Promise<void> {
+  const sinkValue = await loadSuite(benchName);
   const measurement = await measureBench(benchName);
-  globalThis.benchSink = accessSink() + entitySink() + iterationSink() + manySink();
+  globalThis.benchSink = sinkValue();
   process.stdout.write(`${JSON.stringify(childReport(benchName, measurement))}\n`);
 }
 
@@ -226,13 +228,18 @@ async function childEntry(optimized: boolean): Promise<string> {
  * minutes finishing the remaining children — a failing benchmark is
  * deterministic, and comparison tooling re-invokes this command once per sample.
  *
+ * The parent loads every suite to list the benchmarks; each child it spawns
+ * loads only its own benchmark's suite and stores that suite's sink.
+ *
  * @param engines - Engines to run every selected benchmark under; the outer loop, so one engine's
  * children all finish before the next engine's start.
  * @param optimized - Whether to compile the sources through the optimizer first and run every
  * child from the compiled output, under aliases marked `optimized/`.
  * @param filter - Unanchored regex source selecting benchmarks by name; `undefined` runs every
  * registered benchmark.
- * @throws Error when the filter matches no benchmark; `UsageError` on an invalid filter regex;
+ * @returns Once the merged report is printed.
+ * @throws Error when a suite module fails to load (its own error) or the filter matches no
+ * benchmark, both before any child is spawned; `UsageError` on an invalid filter regex;
  * `CompileError` when the optimized compile fails, and Error when its compiler process cannot
  * start or exits mid-compile, both before any child is spawned; `ChildReportError` on an unusable
  * child report; and the spawn or exit error of the first child that fails.
@@ -242,6 +249,7 @@ async function runParent(
   optimized: boolean,
   filter?: string,
 ): Promise<void> {
+  await loadAllSuites();
   const selected = selectBenchmarks(benchNames(), filter);
   if (selected.length === 0) {
     throw new Error(`filter '${String(filter)}' matched no benchmark`);
