@@ -83,8 +83,12 @@ How the world around it is managed depends on what the body does:
   with the count.
 
 The driver collects garbage once, after warmup and before the first timed sample, never inside a
-sample. Under Bun it passes the sample function, never the body, to `noInline` from `bun:jsc`, so
-JavaScriptCore keeps the sample function out of the sampling loop it compiles.
+sample. A world-consuming benchmark collects while one world, built and run once untimed, is alive,
+and destroys it after. A collection with no world alive frees objects the warmed-up code still
+refers to, and the engine discards that code: on Node the first timed samples of the spawn
+benchmarks then ran several times slower, inflating the slowest percentiles. Under Bun it passes the
+sample function, never the body, to `noInline` from `bun:jsc`, so JavaScriptCore keeps the sample
+function out of the sampling loop it compiles.
 
 Batching a net-neutral body is sound only while the loop that repeats it times like a plain loop. A
 benchmark library's own batching loop can be the code the optimizing compiler works on. A batched

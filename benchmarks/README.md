@@ -90,9 +90,10 @@ as a flag.
 
 The suite requires an exposed garbage collector and exits non-zero without one. The driver collects
 garbage once, after warmup and before the first timed sample, so no collection left over from setup
-or warmup lands inside a timed sample. The guard lives in the child process that measures. The
-runner spawns every child with `--expose-gc`, so the guard fires only when someone runs a child by
-hand without the flag.
+or warmup lands inside a timed sample. A world-consuming benchmark holds one world, built and run
+once untimed, across that collection, so the collection frees nothing the warmed-up code still
+refers to. The guard lives in the child process that measures. The runner spawns every child with
+`--expose-gc`, so the guard fires only when someone runs a child by hand without the flag.
 
 ### One process per benchmark
 

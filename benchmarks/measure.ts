@@ -87,9 +87,15 @@ const TASK_NAME = "body";
 
 /**
  * Runs a whole benchmark (warmup, collection, every timed sample) for a per-sample function and
- * returns its completed task.
+ * returns its completed task. `around`, when given, runs the collection it is handed, so a sampler
+ * can keep objects alive across it.
  */
-type RunBench = (budgets: Budgets, sample: () => FnReturnedObject, hooks: FnOptions) => Task;
+type RunBench = (
+  budgets: Budgets,
+  sample: () => FnReturnedObject,
+  hooks: FnOptions,
+  around?: (collect: () => void) => void,
+) => Task;
 
 /** Bun's `noInline` from `bun:jsc`: keeps JavaScriptCore from inlining a function into its callers. */
 export type NoInline = typeof bunNoInline;
@@ -134,7 +140,10 @@ export interface MeasureOptions {
  * and hands tinybench the span as the sample's duration, so tinybench's own clock never changes a
  * figure, and warmup and timed samples are measured the same way. The timer step is measured at
  * startup from `performance.now()`'s deltas. Warmup runs, then `globalThis.gc()` collects once, then
- * the timed samples run; no build or destroy falls inside a pair of clock reads. A sample's count
+ * the timed samples run; no build or destroy falls inside a pair of clock reads. A manual benchmark
+ * collects while one world it built and ran the body on, untimed, is alive, and destroys that world
+ * after: collecting with no world alive frees objects the warmed-up code still refers to, and the
+ * engine discards that code, so the first timed samples would run unoptimized. A sample's count
  * starts at 1, and every warmup sample that spans fewer than `MIN_STEPS_PER_SAMPLE` timer steps
  * grows it in proportion to how far short it fell (by `ZERO_STEP_GROWTH` when it read no step);
  * every timed sample runs the count warmup settled on. A warmed sample runs that many consecutive
@@ -156,7 +165,8 @@ export interface MeasureOptions {
  * short to time at that cap. No sample runs that count, and no world is built for it.
  * @throws Whatever `build` or `body` throws, once every world built so far is destroyed: a warmed
  * benchmark's one world, or every world a manual benchmark built, each destroyed right after its own
- * body call, the failing call's included when its `build` returned. An `Error` propagates
+ * body call, the failing call's included when its `build` returned, and the world held across the
+ * collection. An `Error` propagates
  * unchanged, and so does any value a warmed benchmark's `build` throws, since it runs before
  * tinybench does; tinybench wraps any other non-`Error` value in a new `Error`.
  */
@@ -168,13 +178,18 @@ export async function measure<C extends { world: World }>(
   if (collect === undefined) {
     throw new Error("benchmarks require an exposed gc: run node or bun with --expose-gc");
   }
+  // A synchronous full collection; `gc`'s other overloads can return a promise.
+  const collectNow = (): void => {
+    collect();
+  };
   const noInline = options.noInline ?? (await engineNoInline());
   const stepMs = timerStepMs();
-  const runBench: RunBench = (budgets, sample, hooks) => {
+  const runBench: RunBench = (budgets, sample, hooks, around) => {
     noInline?.(sample);
     const task = benchTask(budgets, sample, hooks);
     task.warmupSync();
-    collect();
+    if (around === undefined) collectNow();
+    else around(collectNow);
     task.runSync();
     return task;
   };
@@ -277,7 +292,23 @@ function measureManual<C extends { world: World }>(
     pacing.spanMs = summedMs;
     return reportedSample(summedMs, pacing.calls);
   };
-  const task = runBench(MANUAL_BUDGETS, sample, settlingHooks(pacing, stepMs, MANUAL_CAP));
+  // The collection must find the objects a sample keeps alive (see `measure`), so one world, with
+  // the body run on it, lives across it.
+  const holdWorld = (collect: () => void): void => {
+    const ctx = build();
+    try {
+      body(ctx);
+      collect();
+    } finally {
+      destroyWorld(ctx.world);
+    }
+  };
+  const task = runBench(
+    MANUAL_BUDGETS,
+    sample,
+    settlingHooks(pacing, stepMs, MANUAL_CAP),
+    holdWorld,
+  );
   return statistics(task);
 }
 

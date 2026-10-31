@@ -293,11 +293,13 @@ describe("measure on a manual benchmark", () => {
 
     await measure(lifecycle);
 
-    const events = sim.trace
-      .slice(sim.trace.indexOf("build"))
+    const gcAt = sim.trace.indexOf("gc");
+    const sampled = [...sim.trace.slice(0, gcAt - 2), ...sim.trace.slice(gcAt + 2)];
+    const events = sampled
+      .slice(sampled.indexOf("build"))
       .filter((e) => e === "build" || e === "clock" || e === "body" || e === "destroy");
     expect(events).toStrictEqual(
-      Array.from({ length: count("body") }, () => [
+      Array.from({ length: count("body") - 1 }, () => [
         "build",
         "clock",
         "body",
@@ -305,6 +307,32 @@ describe("measure on a manual benchmark", () => {
         "destroy",
       ]).flat(),
     );
+  });
+
+  it("collects garbage while a world it built and ran the body on once, untimed, is alive, then destroys that world", async () => {
+    const { lifecycle } = recorder({ kind: "manual" });
+
+    await measure(lifecycle);
+
+    const gcAt = sim.trace.indexOf("gc");
+    expect(sim.trace.slice(gcAt - 2, gcAt + 2)).toStrictEqual(["build", "body", "gc", "destroy"]);
+  });
+
+  it("destroys the world held across the collection and rethrows when the body throws on it", async () => {
+    const { lifecycle, bodyError } = recorder({
+      kind: "manual",
+      bodyFails: () => sim.trace.at(-2) === "build",
+    });
+
+    const outcome = measure(lifecycle);
+
+    await expect(outcome).rejects.toBe(bodyError);
+    expect(only("build", "body", "gc", "destroy").slice(-3)).toStrictEqual([
+      "build",
+      "body",
+      "destroy",
+    ]);
+    expect(count("destroy")).toBe(count("build"));
   });
 
   it.each([
@@ -549,15 +577,14 @@ describe("measure's timing", () => {
 
       await measure(lifecycle);
 
-      const gcAt = sim.trace.indexOf("gc");
-      const between = sim.trace.slice(
-        sim.trace.lastIndexOf("body", gcAt) + 1,
-        sim.trace.indexOf("body", gcAt),
-      );
+      const timing = only("clock", "body", "gc");
+      const gcAt = timing.indexOf("gc");
+      const lastRead = timing.lastIndexOf("clock", gcAt);
       expect(count("gc")).toBe(1);
-      expect(between.filter((e) => e === "clock" || e === "gc").join(" ")).toMatch(
-        /^(clock )+gc clock$/,
-      );
+      expect({
+        beforeLastRead: timing[lastRead - 1],
+        afterGc: timing.slice(gcAt + 1, gcAt + 3),
+      }).toStrictEqual({ beforeLastRead: "body", afterGc: ["clock", "body"] });
     },
   );
 
