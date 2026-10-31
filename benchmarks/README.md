@@ -28,15 +28,21 @@ are always prefixed with the engine (`node/access/get_1field`, `bun/access/get_1
 matches the plain benchmark name (without the engine prefix), so `'^iteration/'` selects the
 iteration group under every requested engine.
 
-Each figure in the report is the median time per call of the benchmark body. `performance.now()`
-advances in steps of about 41.7 ns under both engines on the Apple M2 Max where the suite was
-measured. A net-neutral benchmark leaves the world as it found it, so it times a batch of
-consecutive calls per sample. The driver sizes the batch so one step is at most 1 % of the sample's
-span, then divides the span by the batch size. A world-consuming benchmark times one call per sample
-against a fresh world, so each of its samples is a whole number of steps. At that resolution the
-timer resolves a body near 375 ns to about 11 %, and two readings less than one step apart are
-indistinguishable. [Timing lifecycle](../docs/benchmarks/rationale.md#conventions) explains why
-batching is safe for net-neutral bodies and why world-consuming bodies run one call per sample.
+Each figure in the report is the median sample divided by the calls that sample ran.
+`performance.now()` advances in steps of about 41.7 ns under both engines on the Apple M2 Max where
+the suite was measured. Warmup sizes every benchmark's count, net-neutral or world-consuming, so a
+sample spans at least 200 timer steps, and every timed sample runs that count. A net-neutral
+benchmark leaves the world as it found it, so it times its calls back to back on one world. A
+world-consuming benchmark times its calls one fresh world at a time: each world is built before its
+call and destroyed after it, outside the clock, and the sample's span is the sum of its calls'
+spans.
+
+A batched reading is the median over samples of each sample's span divided by its count. That
+average takes in the slow calls a single call's median leaves out, so a benchmark whose count is
+above 1 reads higher than the median of one call: about 7.5 % for `many/despawn_all` on Bun, a body
+near 1.1 µs. A change in count therefore moves a benchmark's reading even when the body's cost is
+unchanged. [Timing lifecycle](../docs/benchmarks/rationale.md#conventions) explains why each kind is
+timed the way it is.
 
 Bare `"ecstatic"` imports resolve through the package's own `exports` map to `dist/`, so both the
 suite and the allocation gate measure the last compiled output; build before running the suite by
@@ -97,6 +103,14 @@ Sharing one process makes a benchmark's numbers depend on what ran before it —
 state, and accumulated GC pressure all carry over. Measured in one process, `post_churn_throughput`
 reads around 240 µs; measured first in its own process, around 9 µs. Isolation is what makes one
 benchmark's number comparable to another's.
+
+Before it measures, a child loads only the driver and the suite of the benchmark it measures, and
+none of the code that spawns children. On Bun, code loaded in the process slows a reading even when
+none of it runs: with every suite and the spawning code loaded, `many/despawn_all` read about 3–4 %
+and `many/despawn` about 1 % slower. The entry's own code still leaves those two about 1.5 % and 0.2
+% slower than alone in a module of their own, as the
+[`despawn_all`](../docs/benchmarks/specifications/batch.md#despawn_all) and
+[`despawn`](../docs/benchmarks/specifications/batch.md#despawn) specifications record.
 
 The cost is roughly 150–300 ms of startup per child. The runner prints nothing but the report on
 success; the first child failure aborts the run with the child's diagnostics on stderr.

@@ -12,7 +12,7 @@ singular equivalent: clearing a whole archetype, removing a subset, spawning int
 buffer, and despawning across archetypes.
 
 Every body here changes the population, so the suite's `manualBench` shim rebuilds the world before
-each iteration and destroys it after, both outside the clock. Every benchmark ends with
+each call a sample times and destroys it after, both outside the clock. Every benchmark ends with
 `destroyWorld()`.
 
 - [spawn_empty](#spawn_empty)
@@ -30,7 +30,7 @@ each iteration and destroys it after, both outside the clock. Every benchmark en
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register empty archetype |
-| Warmup   | 1000 untimed samples, each on a fresh world        |
+| Warmup   | 1000 untimed samples, a fresh world per call       |
 
 **Operation:**
 
@@ -52,7 +52,7 @@ amortizes.
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register spawn archetype |
-| Warmup   | 1000 untimed samples, each on a fresh world        |
+| Warmup   | 1000 untimed samples, a fresh world per call       |
 
 **Operation:**
 
@@ -75,7 +75,7 @@ callers holding a reusable buffer.
 | Property | Value                                                                   |
 | -------- | ----------------------------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register spawn archetype, pre-sized out array |
-| Warmup   | 1000 untimed samples, each on a fresh world                             |
+| Warmup   | 1000 untimed samples, a fresh world per call                            |
 
 **Operation:**
 
@@ -106,10 +106,10 @@ dominates.
 
 **Purpose:** Measure batch removal of a list of entities.
 
-| Property | Value                                       |
-| -------- | ------------------------------------------- |
-| Setup    | Pre-populated world (5x)                    |
-| Warmup   | 1000 untimed samples, each on a fresh world |
+| Property | Value                                        |
+| -------- | -------------------------------------------- |
+| Setup    | Pre-populated world (5x)                     |
+| Warmup   | 1000 untimed samples, a fresh world per call |
 
 **Operation:**
 
@@ -123,6 +123,11 @@ remain. A final pass bumps generations and pushes the freelist, leaving the 4N b
 The world builder shuffles the ID order to defeat sequential access. The delta from
 [`entity/despawn`](entity.md#despawn) is the per-call overhead the batch phases amortize.
 
+**Placement:** On Bun, this body reads 0.2 % slower in `many-bench.ts` than alone in a module of its
+own (median of 20 processes per placement). An earlier run of 20 read equal medians for the two
+placements. Compare Bun readings of this benchmark with each other, not with a copy of its body
+measured elsewhere.
+
 ---
 
 ## despawn_half
@@ -133,7 +138,7 @@ path that full-batch despawn skips.
 | Property | Value                                                   |
 | -------- | ------------------------------------------------------- |
 | Setup    | Pre-populated world (5x), first N/2 of shuffled tracked |
-| Warmup   | 1000 untimed samples, each on a fresh world             |
+| Warmup   | 1000 untimed samples, a fresh world per call            |
 
 **Operation:**
 
@@ -156,10 +161,10 @@ swap-and-pops, it shows the batch form's amortization under realistic partial ch
 
 **Purpose:** Measure clearing an entire archetype through the no-IDs overload.
 
-| Property | Value                                       |
-| -------- | ------------------------------------------- |
-| Setup    | Pre-populated world (5x)                    |
-| Warmup   | 1000 untimed samples, each on a fresh world |
+| Property | Value                                        |
+| -------- | -------------------------------------------- |
+| Setup    | Pre-populated world (5x)                     |
+| Warmup   | 1000 untimed samples, a fresh world per call |
 
 **Operation:**
 
@@ -172,6 +177,10 @@ and pushing the freelist in a single pass. The delta from [`many/despawn`](#desp
 removed, no ID list to validate — prices the per-ID work the caller can skip when clearing
 everything.
 
+**Placement:** On Bun, this body reads 1.5 % slower in `many-bench.ts` than alone in a module of its
+own (median of 20 processes per placement). An earlier run of 20 read 1.3 % slower. Compare Bun
+readings of this benchmark with each other, not with a copy of its body measured elsewhere.
+
 ---
 
 ## despawn_world
@@ -181,7 +190,7 @@ everything.
 | Property | Value                                                                              |
 | -------- | ---------------------------------------------------------------------------------- |
 | Setup    | Pre-populated world (5x), 2 archetypes; N/2 IDs taken from each, shuffled together |
-| Warmup   | 1000 untimed samples, each on a fresh world                                        |
+| Warmup   | 1000 untimed samples, a fresh world per call                                       |
 
 **Operation:**
 

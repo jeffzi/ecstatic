@@ -7,8 +7,9 @@ accumulator is explained in [rationale](../rationale.md#conventions).
 
 Single-entity lifecycle calls, one at a time. `spawn_recycle` and `alive_check` leave the population
 as they found it, so they reuse one world across samples, warmup included. The rest change it, so
-the suite's `manualBench` shim rebuilds their world before each sample, warmup samples included, and
-destroys it after, both outside the clock. Every benchmark here ends with `destroyWorld()`.
+the suite's `manualBench` shim rebuilds their world before each call a sample times, warmup samples
+included, and destroys it after, both outside the clock. Every benchmark here ends with
+`destroyWorld()`.
 
 - [spawn_empty](#spawn_empty)
 - [spawn_with_data](#spawn_with_data)
@@ -24,7 +25,7 @@ destroys it after, both outside the clock. Every benchmark here ends with `destr
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register empty archetype |
-| Warmup   | 1000 untimed samples, each on a fresh world        |
+| Warmup   | 1000 untimed samples, a fresh world per call       |
 
 **Operation:**
 
@@ -46,7 +47,7 @@ cost. Regressions here indicate overhead in the sparse set or freelist path.
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register spawn archetype |
-| Warmup   | 1000 untimed samples, each on a fresh world        |
+| Warmup   | 1000 untimed samples, a fresh world per call       |
 
 **Operation:**
 
@@ -69,7 +70,7 @@ rather than rebuilt per call.
 | Property | Value                                              |
 | -------- | -------------------------------------------------- |
 | Setup    | Pre-populated world (5x), register spawn archetype |
-| Warmup   | 1000 untimed samples, each on a fresh world        |
+| Warmup   | 1000 untimed samples, a fresh world per call       |
 
 **Operation:**
 
@@ -84,7 +85,7 @@ for (let i = 0; i < N; i++) {
 from. `spawn_with_data` builds a fresh nested literal on every call; this benchmark hoists it out of
 the loop. The delta is what constructing those objects costs — two allocations per spawn that the
 caller can avoid entirely. The hoist stays inside the timed body, so its two allocations, made once
-per sample, are still counted.
+per call, are still counted.
 
 ---
 
@@ -92,10 +93,10 @@ per sample, are still counted.
 
 **Purpose:** Measure entity removal cost via swap-and-pop deletion.
 
-| Property | Value                                       |
-| -------- | ------------------------------------------- |
-| Setup    | Pre-populated world (5x)                    |
-| Warmup   | 1000 untimed samples, each on a fresh world |
+| Property | Value                                        |
+| -------- | -------------------------------------------- |
+| Setup    | Pre-populated world (5x)                     |
+| Warmup   | 1000 untimed samples, a fresh world per call |
 
 **Operation:**
 
