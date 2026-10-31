@@ -6,8 +6,9 @@
  * The optimized compile and `measureBench` are the pieces here that do real
  * work: one writes files and drives a compiler, the other runs a benchmark
  * through `measure`. Everything else touches neither the process, the
- * filesystem, nor `node:child_process` — that shell lives in `main.ts`. Keeping
- * the decisions separate from the I/O is what makes them testable.
+ * filesystem, nor `node:child_process` — that shell lives in `main.ts` and
+ * `parent.ts`. Keeping the decisions separate from the I/O is what makes them
+ * testable.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -50,7 +51,13 @@ export function isDefaultEngines(engines: readonly Engine[]): boolean {
   );
 }
 
-/** Thrown for a malformed command line; the caller maps it to exit code 2. */
+/** Exit status of a run that failed at runtime, or of a parent run that was interrupted. */
+export const FAILURE_EXIT = 1;
+
+/** Exit status of a run whose command line is malformed. */
+export const USAGE_EXIT = 2;
+
+/** Thrown for a malformed command line; the caller maps it to {@link USAGE_EXIT}. */
 export class UsageError extends Error {}
 
 const GENERATION_PATTERN = /^[1-9]\d*$/;

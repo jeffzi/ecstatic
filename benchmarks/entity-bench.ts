@@ -2,8 +2,8 @@
  * Single-entity lifecycle: `spawn`, `despawn`, `alive`, one call at a time.
  *
  * Bodies that leave the population changed run under `manualBench`, which
- * rebuilds the world untimed before each sample. `spawn_recycle` and
- * `alive_check` restore what they touch, so they reuse one world instead.
+ * builds fresh worlds untimed, one per body run a sample times. `spawn_recycle`
+ * and `alive_check` restore what they touch, so they reuse one world instead.
  */
 
 import { alive, despawn, register, spawn } from "ecstatic";

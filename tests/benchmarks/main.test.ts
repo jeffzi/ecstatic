@@ -1,15 +1,21 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { cpus } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { packageBin } from "../package-bin.js";
 import { ROW_LOOP } from "../unit/optimizer/printed.js";
-import { REPO_ROOT, withTempProject } from "../unit/plugin/tsconfig-fixtures.js";
+import {
+  createProject,
+  removeTempDirs,
+  REPO_ROOT,
+  withTempProject,
+} from "../unit/plugin/tsconfig-fixtures.js";
 import {
   advanceCall,
   benchmarkTreeWith,
@@ -59,7 +65,8 @@ const REFUSED_WRITE = "EACCES: permission denied";
  * process the process spawns is appended to the file `PROBE_SPAWNS` names; a spawn of `bun` runs Node
  * instead, so a run under both engines needs no Bun install, unless `PROBE_REAL_BUN` is set. A child
  * given `--child` with the benchmark `PROBE_FAIL_CHILD` names exits with {@link FAILED_CHILD_EXIT}
- * before measuring anything.
+ * before measuring anything; one given the benchmark `PROBE_HANG_CHILD` names writes its pid to
+ * the file `PROBE_HANG_PID` names, then blocks until a signal kills it.
  */
 const PROBE_SOURCE = `
 import childProcess from "node:child_process";
@@ -76,10 +83,16 @@ const {
   PROBE_REFUSE_WRITES,
   PROBE_REAL_BUN,
   PROBE_FAIL_CHILD,
+  PROBE_HANG_CHILD,
+  PROBE_HANG_PID,
 } = process.env;
 appendFileSync(PROBE_LOG, JSON.stringify({ argv: process.argv, execArgv: process.execArgv }) + "\\n");
 if (process.argv.includes("--child") && process.argv.at(-1) === PROBE_FAIL_CHILD) {
   process.exit(${String(FAILED_CHILD_EXIT)});
+}
+if (process.argv.includes("--child") && process.argv.at(-1) === PROBE_HANG_CHILD) {
+  appendFileSync(PROBE_HANG_PID, String(process.pid));
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
 }
 
 function refusal(file) {
@@ -408,7 +421,76 @@ describe("benchmarks/main.ts when a child fails", () => {
   });
 });
 
-/** A benchmark whose body adds to its suite's sink, so a run leaves the summed sink non-zero. */
+/** Whether the process `pid` still exists. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether this platform delivers a signal a process can handle. Windows has no POSIX signals:
+ * `subprocess.kill()` terminates the process outright, so its handlers never run.
+ */
+const CAN_SIGNAL = process.platform !== "win32";
+
+describe.runIf(CAN_SIGNAL)("benchmarks/main.ts when interrupted", () => {
+  afterAll(() => {
+    removeTempDirs();
+  });
+
+  it.each(["SIGINT", "SIGTERM"] as const)(
+    "exits 1 on %s after taking down the child measuring",
+    async (signal) => {
+      const dir = createProject({ "probe.mjs": PROBE_SOURCE, "child.pid": "" });
+      const childPid = join(dir, "child.pid");
+      const parent = spawn(process.execPath, [TSX, MAIN, BENCH_FILTER], {
+        cwd: REPO_ROOT,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `${process.env["NODE_OPTIONS"] ?? ""} --import ${pathToFileURL(join(dir, "probe.mjs")).href}`,
+          PROBE_LOG: join(dir, "processes.jsonl"),
+          PROBE_WRITES: join(dir, "writes.log"),
+          PROBE_SPAWNS: join(dir, "spawns.jsonl"),
+          PROBE_OUT_DIR: OUT_DIR,
+          PROBE_HANG_CHILD: BENCH,
+          PROBE_HANG_PID: childPid,
+        },
+      });
+      const exited = once(parent, "exit");
+      await vi.waitFor(
+        () => {
+          expect(readFileSync(childPid, "utf8")).not.toBe("");
+        },
+        { timeout: COMPILE_TIMEOUT_MS, interval: 50 },
+      );
+      const pid = Number(readFileSync(childPid, "utf8"));
+      // The hung child blocks until a signal kills it; when the parent fails to, kill it here so a
+      // regression fails this case without leaving a process behind.
+      onTestFinished(() => {
+        if (isAlive(pid)) process.kill(pid, "SIGKILL");
+      });
+
+      parent.kill(signal);
+      const [status] = await exited;
+
+      expect(status).toBe(1);
+      await vi.waitFor(
+        () => {
+          expect(isAlive(pid)).toBe(false);
+        },
+        { timeout: 5000, interval: 50 },
+      );
+    },
+    COMPILE_TIMEOUT_MS,
+  );
+});
+
+/** A benchmark whose body adds to its suite's sink, so a run leaves that sink non-zero. */
 const SINKING_BENCH = "access/get_1field";
 
 /** The benchmark the child probe registers with a body that throws {@link THROWN}. */
@@ -429,7 +511,11 @@ const SINK_SUITES = ["access-bench.ts", "entity-bench.ts", "iteration-bench.ts",
  * suite's sink. The first suite's benchmark is {@link SINKING_BENCH}, which the `--child` suite
  * already runs.
  */
-const SINKING_BENCHES = ["entity/alive_check", "iteration/each_with_despawn", "many/spawn_empty"];
+const SINKING_BENCHES = [
+  "entity/alive_check",
+  "iteration/each_with_despawn",
+  "many/spawn_empty",
+] as const;
 
 /** One child starting tsx, then measuring a benchmark for its 1.25 s of warmup and timing, on a slow CI runner. */
 const CHILD_TIMEOUT_MS = 60_000;
@@ -441,15 +527,16 @@ const CHILD_TIMEOUT_MS = 60_000;
  * `CHILD_PROBE_SINK` names what the run stored in `globalThis.benchSink` and each suite's sink
  * value. When `CHILD_PROBE_THROWING` is set, it first registers a benchmark under that name whose
  * body throws; when `CHILD_PROBE_TIMED` is set, one under that name whose body waits as
- * {@link TIMED_BENCH} says.
+ * {@link TIMED_BENCH} says. When `CHILD_PROBE_PRIME` is set, it measures the benchmark it names
+ * before the child starts, so that benchmark's suite's sink is non-zero too.
  */
 const CHILD_PROBE_SOURCE = `
 import { writeFileSync } from "node:fs";
 
 const base = ${JSON.stringify(pathToFileURL(join(REPO_ROOT, "benchmarks")).href)} + "/";
-const { CHILD_PROBE_SINK, CHILD_PROBE_THROWING, CHILD_PROBE_TIMED } = process.env;
+const { CHILD_PROBE_SINK, CHILD_PROBE_THROWING, CHILD_PROBE_TIMED, CHILD_PROBE_PRIME } = process.env;
 const suites = await Promise.all(${JSON.stringify(SINK_SUITES)}.map((file) => import(base + file)));
-const { registerBench } = await import(base + "runner.ts");
+const { measureBench, registerBench } = await import(base + "runner.ts");
 const { makeThroughputWorld, warmedBench } = await import(base + "helpers.ts");
 if (CHILD_PROBE_THROWING !== undefined) {
   registerBench(
@@ -471,6 +558,9 @@ if (CHILD_PROBE_TIMED !== undefined) {
     }),
   );
 }
+if (CHILD_PROBE_PRIME !== undefined) {
+  await measureBench(CHILD_PROBE_PRIME);
+}
 process.on("exit", () => {
   const sinks = suites.map((suite) => suite.sinkValue());
   writeFileSync(CHILD_PROBE_SINK, JSON.stringify({ stored: globalThis.benchSink, sinks }));
@@ -491,13 +581,14 @@ interface ChildRun {
  *
  * @param benchName - The benchmark the child measures.
  * @param options - `exposeGc: false` leaves out `--expose-gc`; `throwing` has the probe register
- * {@link THROWING_BENCH}, and `timed` {@link TIMED_BENCH}.
+ * {@link THROWING_BENCH}, and `timed` {@link TIMED_BENCH}; `prime` names a benchmark the probe
+ * measures before the child starts.
  * @returns The child's exit status and output, and the sink its probe wrote on exit.
  * @throws Error when the child cannot be started or the probe's files cannot be written or read.
  */
 function runChild(
   benchName: string,
-  options: { exposeGc?: boolean; throwing?: boolean; timed?: boolean } = {},
+  options: { exposeGc?: boolean; throwing?: boolean; timed?: boolean; prime?: string } = {},
 ): ChildRun {
   return withTempProject({ "probe.mjs": CHILD_PROBE_SOURCE, "sink.json": "" }, (dir) => {
     const sinkFile = join(dir, "sink.json");
@@ -507,6 +598,9 @@ function runChild(
     }
     if (options.timed === true) {
       env["CHILD_PROBE_TIMED"] = TIMED_BENCH;
+    }
+    if (options.prime !== undefined) {
+      env["CHILD_PROBE_PRIME"] = options.prime;
     }
     const flags = options.exposeGc === false ? [] : ["--expose-gc"];
     const probe = pathToFileURL(join(dir, "probe.mjs")).href;
@@ -543,16 +637,21 @@ function reportedStats(stdout: string): unknown {
   return ["benchmarks", "0", "runs", "0", "stats"].reduce(field, report);
 }
 
-/** Asserts the probe stored the sum of all sink values and the sink of suite `suite` is non-zero. */
-function expectSinkStored(sink: unknown, suite: number): void {
+/**
+ * Asserts the child stored the sink of suite `suite` alone, with that sink and the primed suite's
+ * sink both non-zero, so storing another suite's sink or the sum of every sink fails.
+ */
+function expectSinkStored(sink: unknown, suite: number, primed: number): void {
   const sinks = field(sink, "sinks");
   const values = Array.isArray(sinks) ? sinks.map(Number) : [];
   expect({
     stored: field(sink, "stored"),
     ownSinkNonZero: values[suite] !== 0,
+    primedSinkNonZero: values[primed] !== 0,
   }).toStrictEqual({
-    stored: values.reduce((total, value) => total + value, 0),
+    stored: values[suite],
     ownSinkNonZero: true,
+    primedSinkNonZero: true,
   });
 }
 
@@ -560,7 +659,7 @@ describe("benchmarks/main.ts --child", () => {
   let run: ChildRun;
 
   beforeAll(() => {
-    run = runChild(SINKING_BENCH);
+    run = runChild(SINKING_BENCH, { prime: SINKING_BENCHES[0] });
   }, CHILD_TIMEOUT_MS);
 
   it("prints one JSON report of the benchmark's statistics under its plain name, and nothing else", () => {
@@ -607,8 +706,8 @@ describe("benchmarks/main.ts --child", () => {
     expect(ranked).toStrictEqual(ranked.toSorted((a, b) => a - b));
   });
 
-  it("stores the sum of every suite's sink value, its own suite's included, in globalThis.benchSink", () => {
-    expectSinkStored(run.sink, SINK_SUITES.indexOf("access-bench.ts"));
+  it("stores its own suite's sink value in globalThis.benchSink", () => {
+    expectSinkStored(run.sink, SINK_SUITES.indexOf("access-bench.ts"), 1);
   });
 });
 
@@ -616,11 +715,11 @@ describe.each(SINKING_BENCHES.map((bench, index) => ({ bench, suite: index + 1 }
   "benchmarks/main.ts --child $bench",
   ({ bench, suite }) => {
     it(
-      "stores the sum of every suite's sink value, its own suite's included, in globalThis.benchSink",
+      "stores its own suite's sink value in globalThis.benchSink",
       () => {
-        const { sink } = runChild(bench);
+        const { sink } = runChild(bench, { prime: SINKING_BENCH });
 
-        expectSinkStored(sink, suite);
+        expectSinkStored(sink, suite, 0);
       },
       CHILD_TIMEOUT_MS,
     );

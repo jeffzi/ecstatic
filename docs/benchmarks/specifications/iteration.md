@@ -15,12 +15,12 @@ storage the benchmark iterates. [`frame`](#frame) iterates nine storages, one of
 storage.
 
 `each_with_despawn` and `deferred_despawn` consume the population they run against, so the suite's
-`manualBench` shim rebuilds their world before each iteration and destroys it after, both outside
-the clock. The rest are [net-neutral](../rationale.md#conventions) and reuse one world. A consuming
-benchmark's sample times one call of the body. A net-neutral benchmark's sample times a fixed batch
-of consecutive calls, sized so one timer step is at most 1 % of the sample
-([timing lifecycle](../rationale.md#conventions)). Every benchmark here ends with `destroyWorld()`.
-The tracked archetype also declares the optional Alive tag, but no benchmark here enables it.
+`manualBench` shim gives them a fresh world for each call a sample times, built before the call and
+destroyed after it, both outside the clock. The rest are [net-neutral](../rationale.md#conventions)
+and reuse one world, timing their calls back to back. Warmup sizes both kinds' count of calls so a
+sample spans at least 200 timer steps ([timing lifecycle](../rationale.md#conventions)). Every
+benchmark here ends with `destroyWorld()`. The tracked archetype also declares the optional Alive
+tag, but no benchmark here enables it.
 
 - [throughput](#throughput)
 - [helper_call](#helper_call)
@@ -194,7 +194,7 @@ the pair brackets how view width affects per-entity cost.
 | Property | Value                                                                             |
 | -------- | --------------------------------------------------------------------------------- |
 | Setup    | Bare world with N entities (Position, Velocity), then one read-only `each()` pass |
-| Warmup   | 1000 untimed samples, each on a fresh world                                       |
+| Warmup   | 1000 untimed samples, a fresh world per call                                      |
 
 **Operation:**
 
@@ -224,7 +224,7 @@ them with one batch `despawnMany()` after the loop.
 | Property | Value                                                                                                   |
 | -------- | ------------------------------------------------------------------------------------------------------- |
 | Setup    | Bare world with N entities (Position, Velocity), then one collect + flush cycle and a respawn back to N |
-| Warmup   | 1000 untimed samples, each on a fresh world                                                             |
+| Warmup   | 1000 untimed samples, a fresh world per call                                                            |
 
 **Operation:**
 

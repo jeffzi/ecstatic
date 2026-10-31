@@ -265,11 +265,13 @@ export function warmedBench<C extends { world: World }>(
 
 /**
  * Describe a benchmark whose body consumes the world it runs against — spawning, despawning,
- * anything that leaves the population changed — so every sample builds its own.
+ * anything that leaves the population changed — so every sample builds fresh worlds, one per body
+ * call it times.
  *
- * @param build - Produces a fresh context per sample; its cost falls outside the clock.
- * @param body - Work to time, run once per sample against the context `build` just made; it may
- * consume the world freely.
+ * @param build - Produces a fresh context; each sample calls it once per body call it times, and
+ * its cost falls outside the clock.
+ * @param body - Work to time, run exactly once on each context the sample built; it may consume the
+ * world freely.
  * @returns A manual description carrying `build` and `body`; neither runs until it is measured.
  */
 export function manualBench<C extends { world: World }>(

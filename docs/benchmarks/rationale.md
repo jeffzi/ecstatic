@@ -47,12 +47,14 @@ iterates the background storage as one of its nine storages.
 
 **Warmup.** tinybench runs untimed warmup samples before it records any, so the measured body
 reflects the engine's steady state rather than one-time optimization and inline-cache warmup costs.
-A net-neutral benchmark warms up on its one world for at least 16 samples and 250 ms. Warmup doubles
-the calls per sample until one sample spans at least 100 timer steps, and every timed sample reuses
-that count. A world-consuming benchmark warms up for 1000 samples, each on a fresh world.
+A net-neutral benchmark warms up on its one world for at least 16 samples and 250 ms. After each
+warmup sample shorter than 200 timer steps, warmup scales the calls per sample by how far short the
+sample fell, so the count lands near 200 steps, and every timed sample reuses the count warmup ended
+with. A world-consuming benchmark warms up for 1000 samples and scales its calls per sample the same
+way, each call on a fresh world.
 
 **Sink pattern.** A module-level `sink` variable accumulates values from read-only benchmarks. Once
-the benchmark has run, the entry point adds every suite's sink and stores the total in
+the benchmark has run, the entry point stores the sink of the measured benchmark's own suite in
 `globalThis.benchSink`, where it stays readable. tinybench keeps no sink of its own, so the suite
 owns this one. Without it, V8 may prove the loop body's results unobservable and delete it.
 
@@ -70,17 +72,23 @@ How the world around it is managed depends on what the body does:
   and reuse that world for every sample. Each sample times a fixed number of consecutive calls of
   the body and reports the sample's span divided by that count. The driver destroys the world once
   timing ends.
-- **World-consuming bodies** — anything that leaves the population changed — get a fresh world per
-  sample, and each sample times exactly one call. The suite's own `manualBench` helper builds the
-  world before each call and destroys it after. Both happen outside the clock, even when the body
-  throws, so each call starts from identical state. These benchmarks run fixed sample counts, 1000
-  warmup and 2000 timed, instead of a time budget. tinybench counts only the clocked span toward its
-  time budget, so the untimed world build in every sample would otherwise multiply a benchmark's
-  wall time.
+- **World-consuming bodies** — anything that leaves the population changed — get a fresh world for
+  every call. Each sample times its count of calls one at a time: the suite's own `manualBench`
+  helper builds a world before each call, and the driver destroys it after. Both happen outside the
+  clock, even when the body throws, so each call starts from identical state. The sample reports the
+  sum of its calls' spans divided by the count. These benchmarks run fixed sample counts, 1000
+  warmup and 2000 timed, whatever the count, instead of a time budget. tinybench counts only the
+  clocked span toward its time budget, and the untimed builds in each sample scale with its count,
+  so a time budget would multiply a benchmark's wall time; even with fixed counts, wall time grows
+  with the count.
 
 The driver collects garbage once, after warmup and before the first timed sample, never inside a
-sample. Under Bun it passes the sample function, never the body, to `noInline` from `bun:jsc`, so
-JavaScriptCore keeps the sample function out of the sampling loop it compiles.
+sample. A world-consuming benchmark collects while one world, built and run once untimed, is alive,
+and destroys it after. A collection with no world alive frees objects the warmed-up code still
+refers to, and the engine discards that code: on Node the first timed samples of the spawn
+benchmarks then ran several times slower, inflating the slowest percentiles. Under Bun it passes the
+sample function, never the body, to `noInline` from `bun:jsc`, so JavaScriptCore keeps the sample
+function out of the sampling loop it compiles.
 
 Batching a net-neutral body is sound only while the loop that repeats it times like a plain loop. A
 benchmark library's own batching loop can be the code the optimizing compiler works on. A batched
@@ -93,10 +101,16 @@ change that loses that match brings back the placement effect that the placement
 
 Batching is what buys resolution. `performance.now()` advances in steps, about 41.7 ns under both
 Node and Bun on the Apple M2 Max the suite was measured on. The driver measures the step at startup
-rather than assuming it, and batches a net-neutral body until one step is at most 1 % of a sample's
-span. A body that already spans 100 steps runs once per sample. A world-consuming body still runs
-once per sample, so its sample is a whole number of steps. The clock resolves a body near 375 ns to
-about 11 %. Two of its readings less than one step apart are equal within the clock's resolution.
+rather than assuming it, and warmup sizes every body's count so a sample spans at least 200 steps,
+which keeps one step at most 0.5 % of the span. A body that already spans 200 steps runs once per
+sample. A net-neutral sample times its calls back to back; a world-consuming sample sums the spans
+of its calls, each on a fresh world.
+
+A batched reading is the median over samples of each sample's span divided by its count. That
+average takes in the slow tail a single call's median leaves out, so a benchmark whose count is
+above 1 reads higher than the median of one call: about 7.5 % for `many/despawn_all` on Bun, a body
+near 1.1 µs. A change in count therefore moves a benchmark's reading even when the body's cost is
+unchanged.
 
 **Placement rule.** A change to how bodies are timed must not make placement matter. Identical code
 timed in its home module and alone in a module of its own must not read further apart than
@@ -106,11 +120,17 @@ the suite runs. Reject a change that adds such a placement effect unless it remo
 across the suite than it adds. A change may leave an existing effect in place. Record every
 remaining effect in its benchmark's specification.
 
-Consuming benchmarks report no heap statistic: the per-iteration world construction would dominate
-the delta rather than reporting what the body itself allocated.
+Consuming benchmarks report no heap statistic: the per-call world construction would dominate the
+delta rather than reporting what the body itself allocated.
 
 **Process isolation.** Every benchmark is measured in a process of its own, so its figure carries no
-residue from whatever ran before it and reading one benchmark against another is meaningful. See
+residue from whatever ran before it and reading one benchmark against another is meaningful. Before
+it measures, the process loads only the driver and the suite of the benchmark it measures, because
+on Bun code loaded in the process slows a reading even when none of it runs: with every suite and
+the code that spawns children loaded, `many/despawn_all` read about 3–4 % and `many/despawn` about 1
+% slower. Even so, those two still read about 1.5 % and 0.2 % slower than alone in a module of their
+own, as the [`despawn_all`](specifications/batch.md#despawn_all) and
+[`despawn`](specifications/batch.md#despawn) specifications record. See
 [`benchmarks/README.md`](../../benchmarks/README.md) for how the runner does this and what it costs.
 
 ---

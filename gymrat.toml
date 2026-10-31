@@ -1,0 +1,9 @@
+bench = "npx tsx --expose-gc benchmarks/main.ts --engine node,bun"
+prepare = "npm ci && npm run -s build"
+adapter = "mitata"
+samples = 6
+checks = "npm test && npm run check"
+runbook = "benchmarks/gymrat-runbook.md"
+
+[stop]
+max_iterations = 10
