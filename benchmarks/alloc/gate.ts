@@ -34,8 +34,10 @@ import { DEFAULT_N } from "../helpers.js";
 import {
   childSpawnSpec,
   describeAbnormalExit,
+  FAILURE_EXIT,
   isDefaultEngines,
   parseArgs,
+  USAGE_EXIT,
   UsageError,
 } from "../runner.js";
 import {
@@ -61,8 +63,6 @@ const WARMUP_ROUNDS = 200;
  * kilobytes high — and the median must land in the settled tail.
  */
 const ROUNDS = 21;
-const FAILURE_EXIT = 1;
-const USAGE_EXIT = 2;
 
 function median(values: readonly number[]): number {
   const sorted = values.toSorted((a, b) => a - b);

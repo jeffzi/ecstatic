@@ -2,9 +2,10 @@
  * Loads benchmark suites on demand.
  *
  * Importing a suite module registers its benchmarks as a side effect. A benchmark child loads only
- * the suite its benchmark belongs to: under Bun, the other suites' code loaded in the same process
- * slows the measured benchmark's timed calls. Every suite registers its benchmarks under its own
- * group, the part of the name before the `/`.
+ * the suite its benchmark belongs to: under Bun, module code loaded in the same process slows the
+ * measured benchmark's timed calls even when none of it runs, and the other suites' code is part of
+ * that. Every suite registers its benchmarks under its own group, the part of the name before the
+ * `/`.
  */
 
 /**
