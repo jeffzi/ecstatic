@@ -38,11 +38,10 @@ call and destroyed after it, outside the clock, and the sample's span is the sum
 spans.
 
 A batched reading is the median over samples of each sample's span divided by its count, and it need
-not match the median of one call per sample. On Bun, `many/despawn_all`, a body near 1.0 µs, read
-2.2 % slower timed one call per sample than at its settled count of 8 to 9 calls, over 20
-alternating pairs of processes. A change in count therefore moves a benchmark's reading even when
-the body's cost is unchanged. [Timing lifecycle](../docs/benchmarks/rationale.md#conventions)
-explains why each kind is timed the way it is.
+not match the median of one call per sample. A change in count therefore moves a benchmark's reading
+even when the body's cost is unchanged.
+[Timing lifecycle](../docs/benchmarks/rationale.md#conventions) explains why each kind is timed the
+way it is.
 
 Bare `"ecstatic"` imports resolve through the package's own `exports` map to `dist/`, so both the
 suite and the allocation gate measure the last compiled output; build before running the suite by
@@ -107,8 +106,8 @@ benchmark's number comparable to another's.
 
 Before it measures, a child loads only the driver and the suite of the benchmark it measures, and
 none of the code that spawns children. On Bun, code loaded in the process can slow a reading even
-when none of it runs: with every suite and the spawning code loaded, `many/despawn` read 0.8 %
-slower over 20 alternating pairs of processes, while `many/despawn_all` read no differently.
+when none of it runs. The [rationale](../docs/benchmarks/rationale.md#conventions) gives the
+measurement.
 
 The cost is roughly 150–300 ms of startup per child. The runner prints nothing but the report on
 success; the first child failure aborts the run with the child's diagnostics on stderr.

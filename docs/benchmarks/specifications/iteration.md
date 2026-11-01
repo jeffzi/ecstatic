@@ -313,9 +313,9 @@ each(storage, (e) => sink += e.F5.a + e.F5.b + e.F5.c + e.F5.d + e.F5.e)
 
 **Rationale:** Five array reads per entity.
 
-**Placement:** On Bun, this body reads 2.0 % faster in a benchmark child than alone in a module of
-its own (20 alternating pairs of processes). Compare Bun readings of this benchmark with each other,
-not with a copy of its body measured elsewhere.
+**Placement:** On Bun, this body reads 2.0 % faster in its home module than alone in a module of its
+own (20 alternating pairs of processes). Compare Bun readings of this benchmark with each other, not
+with a copy of its body measured elsewhere.
 
 ---
 
@@ -336,6 +336,6 @@ each(storage, (e) => sink += e.F10.a + e.F10.b + ... + e.F10.j)
 
 **Rationale:** Ten array reads per entity, one from each of ten separate column arrays.
 
-**Placement:** On Bun, this body reads 0.9 % faster in a benchmark child than alone in a module of
-its own (20 alternating pairs of processes). Compare Bun readings of this benchmark with each other,
-not with a copy of its body measured elsewhere.
+**Placement:** On Bun, this body reads 0.9 % faster in its home module than alone in a module of its
+own (20 alternating pairs of processes). Compare Bun readings of this benchmark with each other, not
+with a copy of its body measured elsewhere.

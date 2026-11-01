@@ -87,35 +87,11 @@ sample. A world-consuming benchmark collects while one world, built and run once
 and destroys it after. A collection with no world alive frees objects the warmed-up code still
 refers to, and the engine discards that code: on Node the first timed samples of the spawn
 benchmarks then ran several times slower, inflating the slowest percentiles. Under Bun the driver
-passes both the benchmark's body and the sample function to `noInline` from `bun:jsc`. Without
-`noInline` on the body, JavaScriptCore compiles the body into the loop that repeats it, so a short
-body's reading includes that loop. The sample function goes through `noInline` as well, so
-JavaScriptCore keeps it out of the sampling loop that calls it.
-
-Batching a net-neutral body is sound only while the loop that repeats it times like a plain loop. A
-benchmark library's own batching loop can be the code the optimizing compiler works on. A batched
-reading then depends on how that loop compiles around the body, not on the body alone. The same
-function reads differently in its own module than copied into another. The driver therefore repeats
-the body inside the sample function, a loop that times like a plain loop on both engines. The plain
-loop that checks this runs the calls per sample and sample count the driver usually settles on: 8
-calls and about 111,500 samples on Node, 15 calls and about 110,000 samples on Bun. Timed in 12
-processes per side, the sides interleaved and their order rotated from one round to the next, the
-[`throughput`](specifications/iteration.md#throughput) body batched this way read 1104 ns against
-the plain loop's 1104 ns on Node, and 594 ns against 594 ns on Bun. A change that loses that match
-brings back the placement effect that the placement rule rejects.
-
-Batching is what buys resolution. `performance.now()` advances in steps, about 41.7 ns under both
-Node and Bun on the Apple M2 Max the suite was measured on. The driver measures the step at startup
-rather than assuming it, and warmup sizes every body's count so a sample spans at least 200 steps,
-which keeps one step at most 0.5 % of the span. A body that already spans 200 steps runs once per
-sample. A net-neutral sample times its calls back to back; a world-consuming sample sums the spans
-of its calls, each on a fresh world.
-
-A batched reading is the median over samples of each sample's span divided by its count, and it need
-not match the median of one call per sample. On Bun, `many/despawn_all`, a body near 1.0 µs, read
-2.2 % slower timed one call per sample than at its settled count of 8 to 9 calls, over 20
-alternating pairs of processes. A change in count therefore moves a benchmark's reading even when
-the body's cost is unchanged.
+passes both the benchmark's body and the sample function (the function tinybench calls once per
+sample, which repeats the body) to `noInline` from `bun:jsc`. Without `noInline` on the body,
+JavaScriptCore compiles the body into the loop that repeats it, so a short body's reading includes
+that loop. The sample function goes through `noInline` as well, so JavaScriptCore keeps it out of
+the sampling loop that calls it.
 
 **Placement rule.** A change to how bodies are timed must not make placement matter. Identical code
 timed in its home module and alone in a module of its own must not read further apart than
@@ -125,14 +101,39 @@ the suite runs. Reject a change that adds such a placement effect unless it remo
 across the suite than it adds. A change may leave an existing effect in place. Record every
 remaining effect in its benchmark's specification.
 
+Batching a net-neutral body is sound only while the loop that repeats it times like a plain loop. A
+benchmark library's own batching loop can be the code the optimizing compiler works on. A batched
+reading then depends on how that loop compiles around the body, not on the body alone. The same
+function reads differently in its own module than copied into another. The driver therefore repeats
+the body inside the sample function, a loop that times like a plain loop on both engines. The plain
+loop that checks this runs at the calls per sample and sample count the driver usually settles on.
+On Node that is 8 calls and about 111,500 samples; on Bun, 15 calls and about 110,000 samples. Each
+side, batched and plain, ran in 12 processes, interleaved, with their order rotated from one round
+to the next. The [`throughput`](specifications/iteration.md#throughput) body batched this way read
+1104 ns against the plain loop's 1104 ns on Node, and 594 ns against 594 ns on Bun. A change that
+loses that match brings back the placement effect that the placement rule rejects.
+
+Batching is what buys resolution. `performance.now()` advances in steps, about 41.7 ns under both
+Node and Bun on the Apple M2 Max the suite was measured on. The driver measures the step at startup
+rather than assuming it, and warmup sizes every body's count so a sample spans at least 200 steps,
+which keeps one step at most 0.5 % of the span. A body that already spans 200 steps runs once per
+sample. A net-neutral sample times its calls back to back; a world-consuming sample sums the spans
+of its calls, each on a fresh world.
+
+A batched reading is the median over samples of each sample's span divided by its count, and it need
+not match the median of one call per sample. On Bun, `many/despawn_all` is a body near 1.0 µs. Over
+20 alternating pairs of processes, it read 2.2 % slower timed one call per sample than at its
+settled count of 8 to 9 calls. A change in count therefore moves a benchmark's reading even when the
+body's cost is unchanged.
+
 Consuming benchmarks report no heap statistic: the per-call world construction would dominate the
 delta rather than reporting what the body itself allocated.
 
 **Process isolation.** Every benchmark is measured in a process of its own, so its figure carries no
 residue from whatever ran before it and reading one benchmark against another is meaningful. Before
-it measures, the process loads only the driver and the suite of the benchmark it measures, because
-on Bun code loaded in the process can slow a reading even when none of it runs: with every suite and
-the code that spawns children loaded, `many/despawn` read 0.8 % slower over 20 alternating pairs of
+it measures, the process loads only the driver and the suite of the benchmark it measures. On Bun,
+code loaded in the process can slow a reading even when none of it runs. With every suite and the
+code that spawns children loaded, `many/despawn` read 0.8 % slower over 20 alternating pairs of
 processes, while `many/despawn_all` read no differently. See
 [`benchmarks/README.md`](../../benchmarks/README.md) for how the runner does this and what it costs.
 

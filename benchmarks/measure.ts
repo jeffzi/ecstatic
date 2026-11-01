@@ -155,13 +155,13 @@ export interface MeasureOptions {
  * reads the clock, and destroys the world, and its span is the sum of those per-call spans. Every
  * statistic is a sample's span divided by its count.
  *
- * Under Bun, the body and the per-sample function go through `noInline` (`bun:jsc`'s, unless
- * `options` passes one) before any sample runs. Without it on the body, JavaScriptCore compiles the
- * body into the loop that repeats it, so a short body's reading includes the loop; the per-sample
- * function keeps it because tinybench calls that function inside a try/finally.
+ * Under Bun, the body and the per-sample function go through `noInline` before any sample runs.
+ * Without it on the body, JavaScriptCore compiles the body into the loop that repeats it, so a
+ * short body's reading includes the loop; the per-sample function keeps it because tinybench calls
+ * that function inside a try/finally.
  *
  * @param lifecycle - The benchmark to measure.
- * @param options - Overrides for what the engine provides.
+ * @param options - Overrides for what the engine provides; its `noInline` replaces `bun:jsc`'s.
  * @returns The timed samples' statistics, in nanoseconds per body call; every percentile is
  * linearly interpolated from the retained samples.
  * @throws Error when no garbage collector is exposed, before anything runs.
