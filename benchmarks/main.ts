@@ -44,15 +44,7 @@ import { fileURLToPath } from "node:url";
 
 import { errorMessage } from "../scripts/caught.js";
 import { type Measurement, runningEngine } from "./measure.js";
-import {
-  type BenchReport,
-  type Engine,
-  FAILURE_EXIT,
-  measureBench,
-  parseArgs,
-  USAGE_EXIT,
-  UsageError,
-} from "./runner.js";
+import { type BenchReport, type Engine, exitCodeFor, measureBench, parseArgs } from "./runner.js";
 import { loadSuite } from "./suite-loader.js";
 
 /** The one layout collection (index 0, no argument types) every entry belongs to. */
@@ -153,5 +145,5 @@ try {
   }
 } catch (error) {
   console.error(errorMessage(error));
-  process.exitCode = error instanceof UsageError ? USAGE_EXIT : FAILURE_EXIT;
+  process.exitCode = exitCodeFor(error);
 }

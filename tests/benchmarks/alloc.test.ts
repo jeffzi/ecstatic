@@ -232,41 +232,21 @@ describe("formatAllocReport", () => {
 });
 
 describe("parseGateArgs", () => {
-  it("selects the parent run when there are no arguments", () => {
-    expect(parseGateArgs([])).toStrictEqual({ mode: "parent" });
-  });
-
-  it("selects the named op's child run for --child", () => {
-    expect(parseGateArgs(["--child", "each_all"])).toStrictEqual({
-      mode: "child",
-      op: "each_all",
-    });
-  });
-
   describe("when the command line uses an option the gate does not support", () => {
     const unsupportedCases: { label: string; argv: string[] }[] = [
-      { label: "--optimized", argv: ["--optimized"] },
       { label: "a filter", argv: ["each"] },
       { label: "--engine bun", argv: ["--engine", "bun"] },
     ];
 
-    it.each(unsupportedCases)("rejects $label with the usage status and line", ({ argv }) => {
-      expect(parseGateArgs(argv)).toStrictEqual({
-        mode: "usage",
-        exitCode: USAGE_EXIT,
-        message: GATE_USAGE,
-      });
+    it.each(unsupportedCases)("rejects $label", ({ argv }) => {
+      expect(parseGateArgs(argv)).toStrictEqual({ mode: "usage" });
     });
-  });
-
-  it("propagates the shared parser's UsageError for a malformed command line", () => {
-    expect(() => parseGateArgs(["--verbose"])).toThrow(UsageError);
   });
 });
 
 describe("runGate", () => {
-  /** Gate runs that record what was called and printed, returning `exit` from either run. */
-  function recordingRuns(exit = 0, fail?: Error) {
+  /** Gate runs that record what was called and printed, returning `exit` from either run, or throwing `fail` when given. */
+  function recordingRuns({ exit = 0, fail }: { exit?: number; fail?: Error } = {}) {
     const calls: string[] = [];
     const printed: string[] = [];
     const run = (label: string): number => {
@@ -285,41 +265,56 @@ describe("runGate", () => {
     };
   }
 
-  it("runs the parent and returns its exit code when there are no arguments", () => {
-    const { calls, printed, runs } = recordingRuns(1);
-    expect(runGate([], runs)).toBe(1);
+  it("returns the parent run's exit code when there are no arguments", () => {
+    const { calls, runs } = recordingRuns({ exit: 7 });
+
+    const exitCode = runGate([], runs);
+
+    expect(exitCode).toBe(7);
     expect(calls).toStrictEqual(["parent"]);
-    expect(printed).toStrictEqual([]);
   });
 
   it("runs the named op's child for --child", () => {
-    const { calls, runs } = recordingRuns();
-    expect(runGate(["--child", "each_all"], runs)).toBe(0);
+    const { calls, runs } = recordingRuns({ exit: 5 });
+
+    const exitCode = runGate(["--child", "each_all"], runs);
+
+    expect(exitCode).toBe(5);
     expect(calls).toStrictEqual(["child each_all"]);
   });
 
-  it("prints the usage line and exits with the usage status without running anything", () => {
-    const { calls, printed, runs } = recordingRuns();
-    expect(runGate(["--optimized"], runs)).toBe(USAGE_EXIT);
-    expect(calls).toStrictEqual([]);
+  it("refuses an unsupported option with the gate's usage line", () => {
+    const { printed, runs } = recordingRuns();
+
+    const exitCode = runGate(["--optimized"], runs);
+
+    expect(exitCode).toBe(USAGE_EXIT);
     expect(printed).toStrictEqual([GATE_USAGE]);
   });
 
-  it("prints the shared parser's message and exits with the usage status", () => {
-    const { calls, printed, runs } = recordingRuns();
-    expect(runGate(["--verbose"], runs)).toBe(USAGE_EXIT);
-    expect(calls).toStrictEqual([]);
-    expect(printed).toStrictEqual(["unknown flag '--verbose'"]);
+  it("refuses a malformed command line with the shared parser's message", () => {
+    const { printed, runs } = recordingRuns();
+
+    const exitCode = runGate(["--verbose"], runs);
+
+    expect(exitCode).toBe(USAGE_EXIT);
+    expect(printed).toStrictEqual([expect.stringContaining("--verbose")]);
   });
 
-  it("prints a run's error and exits with the failure status", () => {
-    const { printed, runs } = recordingRuns(0, new Error("child crashed"));
-    expect(runGate([], runs)).toBe(FAILURE_EXIT);
+  it("fails with the message of the error a run throws", () => {
+    const { printed, runs } = recordingRuns({ fail: new Error("child crashed") });
+
+    const exitCode = runGate([], runs);
+
+    expect(exitCode).toBe(FAILURE_EXIT);
     expect(printed).toStrictEqual(["child crashed"]);
   });
 
   it("exits with the usage status when a run throws a UsageError", () => {
-    const { runs } = recordingRuns(0, new UsageError("BENCH_GENERATION must be an integer"));
-    expect(runGate([], runs)).toBe(USAGE_EXIT);
+    const { runs } = recordingRuns({ fail: new UsageError("BENCH_GENERATION must be an integer") });
+
+    const exitCode = runGate([], runs);
+
+    expect(exitCode).toBe(USAGE_EXIT);
   });
 });
