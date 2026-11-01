@@ -108,7 +108,7 @@ benchmark's number comparable to another's.
 Before it measures, a child loads only the driver and the suite of the benchmark it measures, and
 none of the code that spawns children. On Bun, code loaded in the process can slow a reading even
 when none of it runs: with every suite and the spawning code loaded, `many/despawn` read 0.8 %
-slower over 20 alternating pairs of processes.
+slower over 20 alternating pairs of processes, while `many/despawn_all` read no differently.
 
 The cost is roughly 150–300 ms of startup per child. The runner prints nothing but the report on
 success; the first child failure aborts the run with the child's diagnostics on stderr.

@@ -133,8 +133,8 @@ residue from whatever ran before it and reading one benchmark against another is
 it measures, the process loads only the driver and the suite of the benchmark it measures, because
 on Bun code loaded in the process can slow a reading even when none of it runs: with every suite and
 the code that spawns children loaded, `many/despawn` read 0.8 % slower over 20 alternating pairs of
-processes. See [`benchmarks/README.md`](../../benchmarks/README.md) for how the runner does this and
-what it costs.
+processes, while `many/despawn_all` read no differently. See
+[`benchmarks/README.md`](../../benchmarks/README.md) for how the runner does this and what it costs.
 
 ---
 
