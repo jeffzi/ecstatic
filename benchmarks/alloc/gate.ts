@@ -31,15 +31,7 @@ import { fileURLToPath } from "node:url";
 
 import { errorMessage } from "../../scripts/caught.js";
 import { DEFAULT_N } from "../helpers.js";
-import {
-  childSpawnSpec,
-  describeAbnormalExit,
-  FAILURE_EXIT,
-  isDefaultEngines,
-  parseArgs,
-  USAGE_EXIT,
-  UsageError,
-} from "../runner.js";
+import { childSpawnSpec, describeAbnormalExit, FAILURE_EXIT } from "../runner.js";
 import {
   ALLOC_BUDGETS,
   allocGatePasses,
@@ -47,6 +39,7 @@ import {
   evaluateAlloc,
   formatAllocReport,
 } from "./budgets.js";
+import { gateExitStatus, parseGateArgs } from "./cli.js";
 import { ALLOC_OPS, type OpBuilder } from "./ops.js";
 
 /**
@@ -186,12 +179,11 @@ function runParent(): number {
 }
 
 function main(argv: readonly string[]): number {
-  const args = parseArgs(argv);
-  if (args.mode === "child") return runChild(args.benchName);
-  // The shared parser also accepts a filter and engines; the gate has neither.
-  if (args.filter !== undefined || !isDefaultEngines(args.engines)) {
-    console.error("usage: gate.ts [--child <op>]");
-    return USAGE_EXIT;
+  const command = parseGateArgs(argv);
+  if (command.mode === "child") return runChild(command.op);
+  if (command.mode === "usage") {
+    console.error(command.message);
+    return command.exitCode;
   }
   return runParent();
 }
@@ -200,5 +192,5 @@ try {
   process.exitCode = main(process.argv.slice(2));
 } catch (error) {
   console.error(errorMessage(error));
-  process.exitCode = error instanceof UsageError ? USAGE_EXIT : FAILURE_EXIT;
+  process.exitCode = gateExitStatus(error);
 }

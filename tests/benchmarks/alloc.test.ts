@@ -9,6 +9,8 @@ import {
   evaluateAlloc,
   formatAllocReport,
 } from "../../benchmarks/alloc/budgets.js";
+import { GATE_USAGE, gateExitStatus, parseGateArgs } from "../../benchmarks/alloc/cli.js";
+import { FAILURE_EXIT, USAGE_EXIT, UsageError } from "../../benchmarks/runner.js";
 
 const BUDGET = 100;
 const EPSILON = 8;
@@ -226,5 +228,48 @@ describe("formatAllocReport", () => {
     expect(reportLines(report).at(-1)).toBe(
       "alloc gate: FAIL — each_all, alive, spawn_despawn, rel_link",
     );
+  });
+});
+
+describe("parseGateArgs", () => {
+  it("selects the parent run when there are no arguments", () => {
+    expect(parseGateArgs([])).toStrictEqual({ mode: "parent" });
+  });
+
+  it("selects the named op's child run for --child", () => {
+    expect(parseGateArgs(["--child", "each_all"])).toStrictEqual({
+      mode: "child",
+      op: "each_all",
+    });
+  });
+
+  describe("when the command line uses an option the gate does not support", () => {
+    const unsupportedCases: { label: string; argv: string[] }[] = [
+      { label: "--optimized", argv: ["--optimized"] },
+      { label: "a filter", argv: ["each"] },
+      { label: "--engine bun", argv: ["--engine", "bun"] },
+    ];
+
+    it.each(unsupportedCases)("rejects $label with the usage status and line", ({ argv }) => {
+      expect(parseGateArgs(argv)).toStrictEqual({
+        mode: "usage",
+        exitCode: USAGE_EXIT,
+        message: GATE_USAGE,
+      });
+    });
+  });
+
+  it("propagates the shared parser's UsageError for a malformed command line", () => {
+    expect(() => parseGateArgs(["--verbose"])).toThrow(UsageError);
+  });
+});
+
+describe("gateExitStatus", () => {
+  it("exits with the usage status for a UsageError", () => {
+    expect(gateExitStatus(new UsageError("unknown flag '--verbose'"))).toBe(USAGE_EXIT);
+  });
+
+  it("exits with the failure status for any other error", () => {
+    expect(gateExitStatus(new Error("child crashed"))).toBe(FAILURE_EXIT);
   });
 });
