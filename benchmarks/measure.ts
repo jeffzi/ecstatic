@@ -165,7 +165,8 @@ export interface MeasureOptions {
  * @returns The timed samples' statistics, in nanoseconds per body call; every percentile is
  * linearly interpolated from the retained samples.
  * @throws Error when no garbage collector is exposed, before anything runs.
- * @throws Error when Bun is running but `bun:jsc` cannot be loaded, before anything runs.
+ * @throws Error when Bun is running, `options.noInline` is not given, and `bun:jsc` cannot be
+ * loaded, before anything runs.
  * @throws Error when tinybench loses the task, ends the run in a state other than completed, or
  * keeps no samples.
  * @throws Error when warmup asks for more calls per warmed sample than `WARMED_CAP` allows, or more
