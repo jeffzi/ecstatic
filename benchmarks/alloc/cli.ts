@@ -5,6 +5,7 @@
  * package, so the command line can be checked without building it.
  */
 
+import { errorMessage } from "../../scripts/caught.js";
 import { FAILURE_EXIT, isDefaultEngines, parseArgs, USAGE_EXIT, UsageError } from "../runner.js";
 
 /** Usage line the gate prints on stderr for a command line it does not support. */
@@ -40,12 +41,35 @@ export function parseGateArgs(argv: readonly string[]): GateCommand {
   return { mode: "parent" };
 }
 
+/** The gate's two runs, and where it prints an error line. */
+export interface GateRuns {
+  readonly parent: () => number;
+  readonly child: (op: string) => number;
+  readonly reportError: (line: string) => void;
+}
+
 /**
- * Exit status for an error that escapes the gate.
+ * Run the gate for a command line: the parent run, one op's child run, or a refusal.
  *
- * @param error - The caught value.
- * @returns `USAGE_EXIT` for a `UsageError`, `FAILURE_EXIT` for anything else.
+ * A refused command line prints {@link GATE_USAGE}, or the shared parser's message, and runs
+ * nothing. An error a run throws is printed too; it never escapes.
+ *
+ * @param argv - Argument list after the executable and script, i.e. `process.argv.slice(2)`.
+ * @param runs - The parent and child runs, and the sink for error lines (stderr in the gate).
+ * @returns The run's exit code; `USAGE_EXIT` for a refused command line or a `UsageError`;
+ * `FAILURE_EXIT` for any other error.
  */
-export function gateExitStatus(error: unknown): number {
-  return error instanceof UsageError ? USAGE_EXIT : FAILURE_EXIT;
+export function runGate(argv: readonly string[], runs: GateRuns): number {
+  try {
+    const command = parseGateArgs(argv);
+    if (command.mode === "child") return runs.child(command.op);
+    if (command.mode === "usage") {
+      runs.reportError(command.message);
+      return command.exitCode;
+    }
+    return runs.parent();
+  } catch (error) {
+    runs.reportError(errorMessage(error));
+    return error instanceof UsageError ? USAGE_EXIT : FAILURE_EXIT;
+  }
 }

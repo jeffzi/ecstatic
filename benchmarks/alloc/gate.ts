@@ -29,7 +29,6 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { errorMessage } from "../../scripts/caught.js";
 import { DEFAULT_N } from "../helpers.js";
 import { childSpawnSpec, describeAbnormalExit, FAILURE_EXIT } from "../runner.js";
 import {
@@ -39,7 +38,7 @@ import {
   evaluateAlloc,
   formatAllocReport,
 } from "./budgets.js";
-import { gateExitStatus, parseGateArgs } from "./cli.js";
+import { runGate } from "./cli.js";
 import { ALLOC_OPS, type OpBuilder } from "./ops.js";
 
 /**
@@ -178,19 +177,10 @@ function runParent(): number {
   return allocGatePasses(results) ? 0 : FAILURE_EXIT;
 }
 
-function main(argv: readonly string[]): number {
-  const command = parseGateArgs(argv);
-  if (command.mode === "child") return runChild(command.op);
-  if (command.mode === "usage") {
-    console.error(command.message);
-    return command.exitCode;
-  }
-  return runParent();
-}
-
-try {
-  process.exitCode = main(process.argv.slice(2));
-} catch (error) {
-  console.error(errorMessage(error));
-  process.exitCode = gateExitStatus(error);
-}
+process.exitCode = runGate(process.argv.slice(2), {
+  parent: runParent,
+  child: runChild,
+  reportError: (line) => {
+    console.error(line);
+  },
+});

@@ -9,7 +9,7 @@ import {
   evaluateAlloc,
   formatAllocReport,
 } from "../../benchmarks/alloc/budgets.js";
-import { GATE_USAGE, gateExitStatus, parseGateArgs } from "../../benchmarks/alloc/cli.js";
+import { GATE_USAGE, parseGateArgs, runGate } from "../../benchmarks/alloc/cli.js";
 import { FAILURE_EXIT, USAGE_EXIT, UsageError } from "../../benchmarks/runner.js";
 
 const BUDGET = 100;
@@ -264,12 +264,62 @@ describe("parseGateArgs", () => {
   });
 });
 
-describe("gateExitStatus", () => {
-  it("exits with the usage status for a UsageError", () => {
-    expect(gateExitStatus(new UsageError("unknown flag '--verbose'"))).toBe(USAGE_EXIT);
+describe("runGate", () => {
+  /** Gate runs that record what was called and printed, returning `exit` from either run. */
+  function recordingRuns(exit = 0, fail?: Error) {
+    const calls: string[] = [];
+    const printed: string[] = [];
+    const run = (label: string): number => {
+      calls.push(label);
+      if (fail !== undefined) throw fail;
+      return exit;
+    };
+    return {
+      calls,
+      printed,
+      runs: {
+        parent: () => run("parent"),
+        child: (op: string) => run(`child ${op}`),
+        reportError: (line: string) => printed.push(line),
+      },
+    };
+  }
+
+  it("runs the parent and returns its exit code when there are no arguments", () => {
+    const { calls, printed, runs } = recordingRuns(1);
+    expect(runGate([], runs)).toBe(1);
+    expect(calls).toStrictEqual(["parent"]);
+    expect(printed).toStrictEqual([]);
   });
 
-  it("exits with the failure status for any other error", () => {
-    expect(gateExitStatus(new Error("child crashed"))).toBe(FAILURE_EXIT);
+  it("runs the named op's child for --child", () => {
+    const { calls, runs } = recordingRuns();
+    expect(runGate(["--child", "each_all"], runs)).toBe(0);
+    expect(calls).toStrictEqual(["child each_all"]);
+  });
+
+  it("prints the usage line and exits with the usage status without running anything", () => {
+    const { calls, printed, runs } = recordingRuns();
+    expect(runGate(["--optimized"], runs)).toBe(USAGE_EXIT);
+    expect(calls).toStrictEqual([]);
+    expect(printed).toStrictEqual([GATE_USAGE]);
+  });
+
+  it("prints the shared parser's message and exits with the usage status", () => {
+    const { calls, printed, runs } = recordingRuns();
+    expect(runGate(["--verbose"], runs)).toBe(USAGE_EXIT);
+    expect(calls).toStrictEqual([]);
+    expect(printed).toStrictEqual(["unknown flag '--verbose'"]);
+  });
+
+  it("prints a run's error and exits with the failure status", () => {
+    const { printed, runs } = recordingRuns(0, new Error("child crashed"));
+    expect(runGate([], runs)).toBe(FAILURE_EXIT);
+    expect(printed).toStrictEqual(["child crashed"]);
+  });
+
+  it("exits with the usage status when a run throws a UsageError", () => {
+    const { runs } = recordingRuns(0, new UsageError("BENCH_GENERATION must be an integer"));
+    expect(runGate([], runs)).toBe(USAGE_EXIT);
   });
 });
