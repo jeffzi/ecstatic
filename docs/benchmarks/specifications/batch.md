@@ -123,11 +123,6 @@ remain. A final pass bumps generations and pushes the freelist, leaving the 4N b
 The world builder shuffles the ID order to defeat sequential access. The delta from
 [`entity/despawn`](entity.md#despawn) is the per-call overhead the batch phases amortize.
 
-**Placement:** On Bun, this body reads 0.2 % slower in a benchmark child than alone in a module of
-its own (median of 20 processes per placement). An earlier run of 20 read equal medians for the two
-placements. Compare Bun readings of this benchmark with each other, not with a copy of its body
-measured elsewhere.
-
 ---
 
 ## despawn_half
@@ -176,10 +171,6 @@ despawnMany(storage)
 and pushing the freelist in a single pass. The delta from [`many/despawn`](#despawn) — same entities
 removed, no ID list to validate — prices the per-ID work the caller can skip when clearing
 everything.
-
-**Placement:** On Bun, this body reads 1.5 % slower in a benchmark child than alone in a module of
-its own (median of 20 processes per placement). An earlier run of 20 read 1.3 % slower. Compare Bun
-readings of this benchmark with each other, not with a copy of its body measured elsewhere.
 
 ---
 

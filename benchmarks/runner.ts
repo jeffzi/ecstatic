@@ -57,8 +57,18 @@ export const FAILURE_EXIT = 1;
 /** Exit status of a run whose command line is malformed. */
 export const USAGE_EXIT = 2;
 
-/** Thrown for a malformed command line; the caller maps it to {@link USAGE_EXIT}. */
+/** Thrown for a malformed command line; {@link exitCodeFor} maps it to {@link USAGE_EXIT}. */
 export class UsageError extends Error {}
+
+/**
+ * Map an error an entry point caught to its process exit status.
+ *
+ * @param error - The caught value.
+ * @returns {@link USAGE_EXIT} for a `UsageError`, {@link FAILURE_EXIT} for anything else.
+ */
+export function exitCodeFor(error: unknown): number {
+  return error instanceof UsageError ? USAGE_EXIT : FAILURE_EXIT;
+}
 
 const GENERATION_PATTERN = /^[1-9]\d*$/;
 

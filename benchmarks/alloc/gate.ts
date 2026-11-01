@@ -29,17 +29,8 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { errorMessage } from "../../scripts/caught.js";
 import { DEFAULT_N } from "../helpers.js";
-import {
-  childSpawnSpec,
-  describeAbnormalExit,
-  FAILURE_EXIT,
-  isDefaultEngines,
-  parseArgs,
-  USAGE_EXIT,
-  UsageError,
-} from "../runner.js";
+import { childSpawnSpec, describeAbnormalExit, FAILURE_EXIT } from "../runner.js";
 import {
   ALLOC_BUDGETS,
   allocGatePasses,
@@ -47,6 +38,7 @@ import {
   evaluateAlloc,
   formatAllocReport,
 } from "./budgets.js";
+import { runGate } from "./cli.js";
 import { ALLOC_OPS, type OpBuilder } from "./ops.js";
 
 /**
@@ -185,20 +177,10 @@ function runParent(): number {
   return allocGatePasses(results) ? 0 : FAILURE_EXIT;
 }
 
-function main(argv: readonly string[]): number {
-  const args = parseArgs(argv);
-  if (args.mode === "child") return runChild(args.benchName);
-  // The shared parser also accepts a filter and engines; the gate has neither.
-  if (args.filter !== undefined || !isDefaultEngines(args.engines)) {
-    console.error("usage: gate.ts [--child <op>]");
-    return USAGE_EXIT;
-  }
-  return runParent();
-}
-
-try {
-  process.exitCode = main(process.argv.slice(2));
-} catch (error) {
-  console.error(errorMessage(error));
-  process.exitCode = error instanceof UsageError ? USAGE_EXIT : FAILURE_EXIT;
-}
+process.exitCode = runGate(process.argv.slice(2), {
+  parent: runParent,
+  child: runChild,
+  reportError: (line) => {
+    console.error(line);
+  },
+});

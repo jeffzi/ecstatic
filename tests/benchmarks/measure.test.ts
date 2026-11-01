@@ -706,14 +706,18 @@ describe("measure's batch cap", () => {
 
 describe("measure's noInline", () => {
   it.each(KINDS)(
-    "applies an injected noInline to exactly the function a %s benchmark hands tinybench, before handing it over",
+    "applies an injected noInline to exactly a %s benchmark's body and the function it hands tinybench, before handing it over",
     async (kind) => {
       const noInline = vi.fn<NoInline>();
       const { lifecycle } = recorder({ kind });
 
       await measure(lifecycle, { noInline });
 
-      expect(noInline.mock.calls).toStrictEqual(taskAdds.mock.calls.map(([, task]) => [task]));
+      const handed = taskAdds.mock.calls.map(([, task]) => [task]);
+      expect(noInline.mock.calls).toHaveLength(1 + handed.length);
+      expect(noInline.mock.calls).toStrictEqual(
+        expect.arrayContaining([[lifecycle.body], ...handed]),
+      );
       expect(Math.max(...noInline.mock.invocationCallOrder)).toBeLessThan(
         Math.min(...taskAdds.mock.invocationCallOrder),
       );
@@ -721,14 +725,15 @@ describe("measure's noInline", () => {
   );
 
   it.each(KINDS)(
-    "applies bun:jsc's noInline under Bun to exactly the function a %s benchmark hands tinybench",
+    "applies bun:jsc's noInline under Bun to a %s benchmark's body and the function it hands tinybench",
     async (kind) => {
       pretendBun();
       const { lifecycle } = recorder({ kind });
 
       await measure(lifecycle);
 
-      expect(sim.noInlined).toStrictEqual(taskAdds.mock.calls.map(([, task]) => task));
+      const handed = taskAdds.mock.calls.map(([, task]) => task);
+      expect(sim.noInlined).toStrictEqual(expect.arrayContaining([lifecycle.body, ...handed]));
     },
   );
 

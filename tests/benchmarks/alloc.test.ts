@@ -9,6 +9,8 @@ import {
   evaluateAlloc,
   formatAllocReport,
 } from "../../benchmarks/alloc/budgets.js";
+import { GATE_USAGE, parseGateArgs, runGate } from "../../benchmarks/alloc/cli.js";
+import { FAILURE_EXIT, USAGE_EXIT, UsageError } from "../../benchmarks/runner.js";
 
 const BUDGET = 100;
 const EPSILON = 8;
@@ -226,5 +228,93 @@ describe("formatAllocReport", () => {
     expect(reportLines(report).at(-1)).toBe(
       "alloc gate: FAIL — each_all, alive, spawn_despawn, rel_link",
     );
+  });
+});
+
+describe("parseGateArgs", () => {
+  describe("when the command line uses an option the gate does not support", () => {
+    const unsupportedCases: { label: string; argv: string[] }[] = [
+      { label: "a filter", argv: ["each"] },
+      { label: "--engine bun", argv: ["--engine", "bun"] },
+    ];
+
+    it.each(unsupportedCases)("rejects $label", ({ argv }) => {
+      expect(parseGateArgs(argv)).toStrictEqual({ mode: "usage" });
+    });
+  });
+});
+
+describe("runGate", () => {
+  /** Gate runs that record what was called and printed, returning `exit` from either run, or throwing `fail` when given. */
+  function recordingRuns({ exit = 0, fail }: { exit?: number; fail?: Error } = {}) {
+    const calls: string[] = [];
+    const printed: string[] = [];
+    const run = (label: string): number => {
+      calls.push(label);
+      if (fail !== undefined) throw fail;
+      return exit;
+    };
+    return {
+      calls,
+      printed,
+      runs: {
+        parent: () => run("parent"),
+        child: (op: string) => run(`child ${op}`),
+        reportError: (line: string) => printed.push(line),
+      },
+    };
+  }
+
+  it("returns the parent run's exit code when there are no arguments", () => {
+    const { calls, runs } = recordingRuns({ exit: 7 });
+
+    const exitCode = runGate([], runs);
+
+    expect(exitCode).toBe(7);
+    expect(calls).toStrictEqual(["parent"]);
+  });
+
+  it("runs the named op's child for --child", () => {
+    const { calls, runs } = recordingRuns({ exit: 5 });
+
+    const exitCode = runGate(["--child", "each_all"], runs);
+
+    expect(exitCode).toBe(5);
+    expect(calls).toStrictEqual(["child each_all"]);
+  });
+
+  it("refuses an unsupported option with the gate's usage line", () => {
+    const { printed, runs } = recordingRuns();
+
+    const exitCode = runGate(["--optimized"], runs);
+
+    expect(exitCode).toBe(USAGE_EXIT);
+    expect(printed).toStrictEqual([GATE_USAGE]);
+  });
+
+  it("refuses a malformed command line with the shared parser's message", () => {
+    const { printed, runs } = recordingRuns();
+
+    const exitCode = runGate(["--verbose"], runs);
+
+    expect(exitCode).toBe(USAGE_EXIT);
+    expect(printed).toStrictEqual([expect.stringContaining("--verbose")]);
+  });
+
+  it("fails with the message of the error a run throws", () => {
+    const { printed, runs } = recordingRuns({ fail: new Error("child crashed") });
+
+    const exitCode = runGate([], runs);
+
+    expect(exitCode).toBe(FAILURE_EXIT);
+    expect(printed).toStrictEqual(["child crashed"]);
+  });
+
+  it("exits with the usage status when a run throws a UsageError", () => {
+    const { runs } = recordingRuns({ fail: new UsageError("BENCH_GENERATION must be an integer") });
+
+    const exitCode = runGate([], runs);
+
+    expect(exitCode).toBe(USAGE_EXIT);
   });
 });
