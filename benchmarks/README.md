@@ -37,12 +37,12 @@ world-consuming benchmark times its calls one fresh world at a time: each world 
 call and destroyed after it, outside the clock, and the sample's span is the sum of its calls'
 spans.
 
-A batched reading is the median over samples of each sample's span divided by its count. That
-average takes in the slow calls a single call's median leaves out, so a benchmark whose count is
-above 1 reads higher than the median of one call: about 7.5 % for `many/despawn_all` on Bun, a body
-near 1.1 µs. A change in count therefore moves a benchmark's reading even when the body's cost is
-unchanged. [Timing lifecycle](../docs/benchmarks/rationale.md#conventions) explains why each kind is
-timed the way it is.
+A batched reading is the median over samples of each sample's span divided by its count, and it need
+not match the median of one call per sample. On Bun, `many/despawn_all`, a body near 1.0 µs, read
+2.2 % slower timed one call per sample than at its settled count of 8 to 9 calls, over 20
+alternating pairs of processes. A change in count therefore moves a benchmark's reading even when
+the body's cost is unchanged. [Timing lifecycle](../docs/benchmarks/rationale.md#conventions)
+explains why each kind is timed the way it is.
 
 Bare `"ecstatic"` imports resolve through the package's own `exports` map to `dist/`, so both the
 suite and the allocation gate measure the last compiled output; build before running the suite by
@@ -106,12 +106,9 @@ reads around 240 µs; measured first in its own process, around 9 µs. Isolation
 benchmark's number comparable to another's.
 
 Before it measures, a child loads only the driver and the suite of the benchmark it measures, and
-none of the code that spawns children. On Bun, code loaded in the process slows a reading even when
-none of it runs: with every suite and the spawning code loaded, `many/despawn_all` read about 3–4 %
-and `many/despawn` about 1 % slower. Even so, those two still read about 1.5 % and 0.2 % slower than
-alone in a module of their own, as the
-[`despawn_all`](../docs/benchmarks/specifications/batch.md#despawn_all) and
-[`despawn`](../docs/benchmarks/specifications/batch.md#despawn) specifications record.
+none of the code that spawns children. On Bun, code loaded in the process can slow a reading even
+when none of it runs: with every suite and the spawning code loaded, `many/despawn` read 0.8 %
+slower over 20 alternating pairs of processes.
 
 The cost is roughly 150–300 ms of startup per child. The runner prints nothing but the report on
 success; the first child failure aborts the run with the child's diagnostics on stderr.

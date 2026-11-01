@@ -64,10 +64,9 @@ k fields means k full resolve chains — the entity is resolved k times, not onc
 `get_1field` is therefore a second complete resolve plus a second column read. Both fields belong to
 the same component (Position), so the two calls resolve the same column map entry.
 
-**Placement:** On Bun, this body reads 5.2 % faster in `access-bench.ts` than alone in a module of
-its own (median of ten processes per placement). A rerun of ten more reads 2.4 % faster. Timed one
-call per sample it reads 1.0 % faster, so batching does not cause it. Compare Bun readings of this
-benchmark with each other, not with a copy of its body measured elsewhere.
+**Placement:** On Bun, this body reads 7.0 % faster in a benchmark child than alone in a module of
+its own (20 alternating pairs of processes). Compare Bun readings of this benchmark with each other,
+not with a copy of its body measured elsewhere.
 
 ---
 
@@ -98,6 +97,10 @@ carries its own component reference, so the column lookup runs per call against 
 components. The delta from `get_2field` reveals whether crossing components adds overhead beyond the
 per-call baseline — separate entries in the storage's column map, separate backing arrays.
 
+**Placement:** On Bun, this body reads 3.4 % faster in a benchmark child than alone in a module of
+its own (20 alternating pairs of processes). Compare Bun readings of this benchmark with each other,
+not with a copy of its body measured elsewhere.
+
 ---
 
 ## set_1field
@@ -121,6 +124,10 @@ for (let i = 0; i < N; i++) {
 write, including the per-write check of whether the field's declared default is a boolean (booleans
 are stored as 0/1). The delta from `get_1field` isolates the write-side cost. `set` stores values by
 reference: no component write path clones them.
+
+**Placement:** On Bun, this body reads 2.3 % faster in a benchmark child than alone in a module of
+its own (20 alternating pairs of processes). Compare Bun readings of this benchmark with each other,
+not with a copy of its body measured elsewhere.
 
 ---
 
